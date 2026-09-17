@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase2.3.3",
-  "versionCode": 30000303,
-  "requiresSetup": false,
-  "publicInstaller": false,
-  "notes": "Experience hotfix: keeps repair launches fully hidden, makes Activity concise and self-explanatory, and fixes tray Exit shutdown. Existing 2.3.2 installs receive the new Setup bridge user-level; the first repair may request one normal Windows approval to convert the legacy scheduled task, then future repairs stay silent. Repair and network behaviour are unchanged."
+  "version": "3.0.0-phase2.3.4",
+  "versionCode": 30000304,
+  "requiresSetup": true,
+  "publicInstaller": true,
+  "notes": "Recovery release restoring the last known-good protected 2.3.2 code path after the 2.3.3 field regression. No new repair or network behavior is introduced."
 }

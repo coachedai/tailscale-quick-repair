@@ -1,21 +1,15 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase2.3.3",
-  "versionCode": 30000303,
+  "version": "3.0.0-phase2.3.4",
+  "versionCode": 30000304,
   "published": false,
   "publishedAt": null,
   "mandatory": false,
-  "requiresSetup": false,
-  "notes": "2.3.3 is paused after a field regression in repair-task migration. Do not install this build.",
-  "package": {
-    "url": null,
-    "sha256": null,
-    "size": 0
-  },
-  "bootstrap": {
-    "url": null,
-    "sha256": null,
-    "size": 0
-  }
+  "requiresSetup": true,
+  "notes": "Recovery release restoring the last known-good protected 2.3.2 code path after the 2.3.3 field regression. No new repair or network behavior is introduced.",
+  "package": {"url": null, "sha256": null, "size": 0},
+  "bootstrap": {"url": null, "sha256": null, "size": 0},
+  "setup": {"url": null, "sha256": null, "size": 0},
+  "installer": {"url": null, "sha256": null, "size": 0}
 }
