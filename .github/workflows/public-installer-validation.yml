@@ -1,0 +1,61 @@
+name: Validate public installer
+
+on:
+  push:
+    branches:
+      - phase-2.3-public-installer
+    paths:
+      - "src/**"
+      - "release/**"
+      - ".github/workflows/public-installer-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-public-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout only this repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Repository isolation guard
+        shell: pwsh
+        env:
+          EXPECTED_REPOSITORY: coachedai/tailscale-quick-repair
+          EXPECTED_BRANCH: phase-2.3-public-installer
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne $env:EXPECTED_REPOSITORY) {
+            throw "Wrong repository. Expected $env:EXPECTED_REPOSITORY; got $env:GITHUB_REPOSITORY."
+          }
+
+          if ($env:GITHUB_REF -ne "refs/heads/$env:EXPECTED_BRANCH") {
+            throw "Public-installer validation may only run on $env:EXPECTED_BRANCH."
+          }
+
+          $origin = (git remote get-url origin).Trim()
+
+          if ($origin -notmatch '(?i)(github\.com[:/])coachedai/tailscale-quick-repair(?:\.git)?$') {
+            throw "Unexpected git origin: $origin"
+          }
+
+      - name: Privacy and project-isolation scan
+        shell: powershell
+        run: |
+          .\release\privacy-scan.ps1 -Root .
+
+      - name: Build and self-test native public installer
+        shell: powershell
+        run: |
+          .\release\build-public.ps1 -OutputDirectory .\dist-public
+
+      - name: Upload native validation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quick-repair-public-installer-validation
+          path: dist-public/*.exe
+          if-no-files-found: error
