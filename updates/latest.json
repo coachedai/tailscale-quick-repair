@@ -1,20 +1,20 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase2.2.3",
-  "versionCode": 30000213,
-  "published": false,
-  "publishedAt": null,
+  "version": "3.0.0-phase2.2.4",
+  "versionCode": 30000214,
+  "published": true,
+  "publishedAt": "2026-09-17T14:54:18.3054792Z",
   "mandatory": false,
-  "notes": "Phase 2.2.3 is paused because its inner package manifest contained malformed relative paths. No update should be installed from this release.",
+  "notes": "Fixes malformed inner package-manifest paths and adds a strict manifest round-trip gate. Native TLS updater and repair/network behaviour remain unchanged.",
   "package": {
-    "url": null,
-    "sha256": null,
-    "size": null
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.4/TailscaleQuickRepair-3.0.0-phase2.2.4.zip",
+    "sha256": "abc6f794aa11e02840ed3462debce82299f81575c328e4b81ec6465b31c80414",
+    "size": 38645
   },
   "bootstrap": {
-    "url": null,
-    "sha256": null,
-    "size": null
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.4/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.2.4.exe",
+    "sha256": "0e27963d637c22889941367e19d6bc23a27ad2d433db54744ffcc692491c1950",
+    "size": 23040
   }
 }
