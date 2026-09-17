@@ -209,7 +209,8 @@ try {
     }
 
     if ($disco.Output -match '(?i)([0-9]+(?:\.[0-9]+)?)ms') {
-        $script:Result.latency = ([Math]::Round([double]$Matches[1])) .ToString() + ' ms'
+        $roundedLatency = [Math]::Round([double]$Matches[1])
+        $script:Result.latency = ([string]$roundedLatency) + ' ms'
     }
 
     Publish 'Checking peer protocols' 62
