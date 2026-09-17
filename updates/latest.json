@@ -3,29 +3,29 @@
   "channel": "preview",
   "version": "3.0.0-phase2.3.0",
   "versionCode": 30000300,
-  "published": true,
-  "publishedAt": "2026-09-17T21:18:13.8545690Z",
+  "published": false,
+  "publishedAt": null,
   "mandatory": false,
   "requiresSetup": true,
-  "notes": "Adds the public native installer, per-device Tailscale target configuration, Change target, generic protected repair tooling, automatic repair support and read-only advanced diagnostics. Target settings stay local to each PC.",
+  "notes": "2.3.0 is temporarily paused while the native Setup host is hardened for self-replacement during protected upgrades.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.0/TailscaleQuickRepair-3.0.0-phase2.3.0.zip",
-    "sha256": "23cd0e9773a75bd2b2e1e6a713bbc6bc9ea2f6ca14cbfaecb550cfe12709ee53",
-    "size": 54498
+    "url": null,
+    "sha256": null,
+    "size": 0
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.0/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.3.0.exe",
-    "sha256": "826f393d7ad91e9863b4dea4452e8bfce513af9f2dc320fe2bfcd1fdb506fa19",
-    "size": 23040
+    "url": null,
+    "sha256": null,
+    "size": 0
   },
   "setup": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.0/TailscaleQuickRepair-SetupPackage-3.0.0-phase2.3.0.zip",
-    "sha256": "72f5c1af351835d0e436fe8410bf6dc0ab0ebf5255992fb8eb8440848e7beb3d",
-    "size": 68872
+    "url": null,
+    "sha256": null,
+    "size": 0
   },
   "installer": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.0/TailscaleQuickRepair-Setup-3.0.0-phase2.3.0.exe",
-    "sha256": "bdb68618e374d5da1df5aaadcba663cb0f7609233325633a804c6ef2197ad178",
-    "size": 34816
+    "url": null,
+    "sha256": null,
+    "size": 0
   }
 }
