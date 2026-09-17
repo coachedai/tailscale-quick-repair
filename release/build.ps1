@@ -29,7 +29,6 @@ if ([int]$packageSpec.schema -ne 1) {
 
 $required = @(
     'src\app\Tailscale-Repair-UI.ps1',
-    'src\program\Update-Installer.ps1',
     'src\native\UpdaterHost.cs'
 )
 
@@ -44,9 +43,6 @@ foreach ($relative in $required) {
 function Normalize-UiForWindowsPowerShell {
     param([string]$Text)
 
-    # Two legacy helper-call forms survived from the pre-CI builds. They run
-    # through the embedded host path but are not valid standalone Windows
-    # PowerShell 5.1 syntax. Normalize them only for the shipped package.
     $oldResetApp = "        Set-Step `$AppDot `$AppStep (if ([string]`$preflight.Client -eq 'Running') { 'good' } elseif ([string]`$preflight.Client -eq 'Closed') { 'warn' } else { 'bad' })"
     $newResetApp = @"
         `$appStepState = if ([string]`$preflight.Client -eq 'Running') {
@@ -133,15 +129,7 @@ function Normalize-UiForWindowsPowerShell {
 $uiPath = Join-Path $repo 'src\app\Tailscale-Repair-UI.ps1'
 $uiText = [IO.File]::ReadAllText($uiPath, [Text.Encoding]::UTF8)
 $uiText = Normalize-UiForWindowsPowerShell $uiText
-
-$updateInstallerPath = Join-Path $repo 'src\program\Update-Installer.ps1'
-$updateInstallerText = [IO.File]::ReadAllText(
-    $updateInstallerPath,
-    [Text.Encoding]::UTF8
-)
-
 [void][scriptblock]::Create($uiText)
-[void][scriptblock]::Create($updateInstallerText)
 
 $xamlMatch = [regex]::Match(
     $uiText,
@@ -188,13 +176,23 @@ if (-not $compiler) {
     throw 'The .NET Framework C# compiler could not be located.'
 }
 
+$frameworkDir = Split-Path -Parent $compiler
+$webExtensions = Join-Path $frameworkDir 'System.Web.Extensions.dll'
+$compression = Join-Path $frameworkDir 'System.IO.Compression.dll'
+$compressionFs = Join-Path $frameworkDir 'System.IO.Compression.FileSystem.dll'
+$windowsForms = Join-Path $frameworkDir 'System.Windows.Forms.dll'
+
+foreach ($assembly in @($webExtensions, $compression, $compressionFs, $windowsForms)) {
+    if (-not (Test-Path -LiteralPath $assembly)) {
+        throw "Required .NET Framework reference is missing: $assembly"
+    }
+}
+
 $work = Join-Path $env:TEMP ('TQR-Release-' + [Guid]::NewGuid().ToString('N'))
 $packageRoot = Join-Path $work 'package'
 $packageApp = Join-Path $packageRoot 'app'
-$packageProgram = Join-Path $packageRoot 'program'
 
 New-Item -ItemType Directory -Path $packageApp -Force | Out-Null
-New-Item -ItemType Directory -Path $packageProgram -Force | Out-Null
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 
 try {
@@ -208,6 +206,10 @@ try {
         '/target:winexe'
         '/platform:anycpu'
         '/optimize+'
+        ('/reference:"{0}"' -f $webExtensions)
+        ('/reference:"{0}"' -f $compression)
+        ('/reference:"{0}"' -f $compressionFs)
+        ('/reference:"{0}"' -f $windowsForms)
         ('/out:"{0}"' -f $updaterExe)
         ('"{0}"' -f $updaterSource)
     )
@@ -235,7 +237,22 @@ try {
             $details += Get-Content -LiteralPath $compileErr -Raw
         }
 
-        throw "Updater host compilation failed.`r`n$($details -join [Environment]::NewLine)"
+        throw "Native updater compilation failed.`r`n$($details -join [Environment]::NewLine)"
+    }
+
+    # The updater must be a normal native EXE. It must not contain the old
+    # PowerShell-installer invocation path.
+    $updaterSourceText = [IO.File]::ReadAllText($updaterSource, [Text.Encoding]::UTF8)
+
+    foreach ($forbidden in @(
+        '-EncodedCommand',
+        'Update-Installer.ps1',
+        'powershell.exe',
+        'runas'
+    )) {
+        if ($updaterSourceText -match [regex]::Escape($forbidden)) {
+            throw "Native updater still contains forbidden legacy execution pattern: $forbidden"
+        }
     }
 
     $utf8Bom = New-Object System.Text.UTF8Encoding($true)
@@ -243,12 +260,6 @@ try {
     [IO.File]::WriteAllText(
         (Join-Path $packageApp 'Tailscale-Repair-UI.ps1'),
         $uiText,
-        $utf8Bom
-    )
-
-    [IO.File]::WriteAllText(
-        (Join-Path $packageProgram 'Update-Installer.ps1'),
-        $updateInstallerText,
         $utf8Bom
     )
 
