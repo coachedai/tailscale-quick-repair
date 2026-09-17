@@ -132,14 +132,21 @@ jobs:
           name: quick-repair-${{ needs.validate.outputs.safe_version }}
           path: dist
 
-      - name: Require a real release package
+      - name: Require exact release artifacts
         shell: pwsh
         run: |
           $zip = Get-ChildItem dist -Filter '*.zip' | Select-Object -First 1
-          $shaFile = Get-ChildItem dist -Filter '*.sha256' | Select-Object -First 1
+          $bootstrap = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Bootstrap-*.exe' | Select-Object -First 1
 
-          if (-not $zip -or -not $shaFile) {
-            throw 'Publishing is blocked: validation produced only bootstrap metadata, not a complete release package.'
+          if (-not $zip -or -not $bootstrap) {
+            throw 'Publishing is blocked: validated ZIP/bootstrap artifacts are missing.'
+          }
+
+          $zipSha = Get-Item ($zip.FullName + '.sha256') -ErrorAction SilentlyContinue
+          $bootstrapSha = Get-Item ($bootstrap.FullName + '.sha256') -ErrorAction SilentlyContinue
+
+          if (-not $zipSha -or -not $bootstrapSha) {
+            throw 'Publishing is blocked: exact SHA-256 sidecars are missing.'
           }
 
       - name: Scan validated package before publishing
@@ -162,11 +169,14 @@ jobs:
         run: |
           $tag = "v$env:VERSION"
           $zip = Get-ChildItem dist -Filter '*.zip' | Select-Object -First 1
-          $shaFile = Get-ChildItem dist -Filter '*.sha256' | Select-Object -First 1
+          $bootstrap = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Bootstrap-*.exe' | Select-Object -First 1
 
-          if (-not $zip -or -not $shaFile) {
+          if (-not $zip -or -not $bootstrap) {
             throw 'Validated release artifacts are missing.'
           }
+
+          $zipSha = Get-Item ($zip.FullName + '.sha256') -ErrorAction Stop
+          $bootstrapSha = Get-Item ($bootstrap.FullName + '.sha256') -ErrorAction Stop
 
           $existing = gh release view $tag 2>$null
 
@@ -188,7 +198,9 @@ jobs:
             --title "Tailscale Quick Repair $env:VERSION" `
             --notes-file $notesFile `
             $zip.FullName `
-            $shaFile.FullName
+            $zipSha.FullName `
+            $bootstrap.FullName `
+            $bootstrapSha.FullName
 
       - name: Update stable manifest
         shell: pwsh
@@ -199,10 +211,18 @@ jobs:
         run: |
           $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
           $zip = Get-ChildItem dist -Filter '*.zip' | Select-Object -First 1
-          $shaFile = Get-ChildItem dist -Filter '*.sha256' | Select-Object -First 1
-          $sha = (Get-Content $shaFile.FullName -Raw).Trim().ToLowerInvariant()
+          $bootstrap = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Bootstrap-*.exe' | Select-Object -First 1
+
+          if (-not $zip -or -not $bootstrap) {
+            throw 'Validated release artifacts are missing.'
+          }
+
+          $zipShaFile = Get-Item ($zip.FullName + '.sha256') -ErrorAction Stop
+          $bootstrapShaFile = Get-Item ($bootstrap.FullName + '.sha256') -ErrorAction Stop
+          $sha = (Get-Content $zipShaFile.FullName -Raw).Trim().ToLowerInvariant()
+          $bootstrapSha = (Get-Content $bootstrapShaFile.FullName -Raw).Trim().ToLowerInvariant()
           $tag = "v$env:VERSION"
-          $assetUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$($zip.Name)"
+          $assetBase = "https://github.com/${{ github.repository }}/releases/download/$tag"
 
           $manifest = [ordered]@{
             schema = 1
@@ -214,9 +234,14 @@ jobs:
             mandatory = $false
             notes = [string]$publish.notes
             package = [ordered]@{
-              url = $assetUrl
+              url = "$assetBase/$($zip.Name)"
               sha256 = $sha
               size = $zip.Length
+            }
+            bootstrap = [ordered]@{
+              url = "$assetBase/$($bootstrap.Name)"
+              sha256 = $bootstrapSha
+              size = $bootstrap.Length
             }
           }
 
