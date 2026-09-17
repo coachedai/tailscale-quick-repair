@@ -1,7 +1,7 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase2.2.1",
-  "versionCode": 30000211,
-  "notes": "First trusted in-app self-update proof. Adds the staged updater package while keeping repair/network behaviour unchanged."
+  "version": "3.0.0-phase2.2.2",
+  "versionCode": 30000212,
+  "notes": "Native-only trusted self-update bridge and in-app updater. Removes the legacy PowerShell installer path while keeping repair/network behaviour unchanged."
 }
