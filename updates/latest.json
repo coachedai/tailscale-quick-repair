@@ -1,31 +1,21 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase2.3.1",
-  "versionCode": 30000301,
-  "published": false,
-  "publishedAt": null,
+  "version": "3.0.0-phase2.2.7",
+  "versionCode": 30000217,
+  "published": true,
+  "publishedAt": "2026-09-17T21:49:56.2102939Z",
   "mandatory": false,
-  "requiresSetup": true,
-  "notes": "2.3.1 is validated but temporarily held while existing 2.2.6 installations receive the hardened native Setup host through the user-level 2.2.7 bridge.",
+  "requiresSetup": false,
+  "notes": "Installs the hardened native Setup host through the existing user-level updater so 2.2.6 systems are ready for the protected 2.3.1 migration. Repair and network behavior are unchanged.",
   "package": {
-    "url": null,
-    "sha256": null,
-    "size": 0
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.7/TailscaleQuickRepair-3.0.0-phase2.2.7.zip",
+    "sha256": "db5bb8cf4101c9359144d19e5a93022e0ee384c9446a44dedb3f263935069c62",
+    "size": 56312
   },
   "bootstrap": {
-    "url": null,
-    "sha256": null,
-    "size": 0
-  },
-  "setup": {
-    "url": null,
-    "sha256": null,
-    "size": 0
-  },
-  "installer": {
-    "url": null,
-    "sha256": null,
-    "size": 0
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.7/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.2.7.exe",
+    "sha256": "1bfa2cf74258669fb44068327e4b14a299a8587517b1e95ab90220fe00a18e5b",
+    "size": 23040
   }
 }
