@@ -86,6 +86,20 @@ HorizontalScrollBarVisibility="Disabled"
 '@ `
     -Description 'main vertical panning'
 
+# Normalize only the semantic Remote-details header. This makes the later
+# public-target transform independent of cosmetic indentation in source.
+$remoteHeaderPattern = '(?s)<StackPanel\s+Grid\.Column="2">\s*<TextBlock\s+Text="Remote"\s+FontSize="15"\s+FontWeight="SemiBold"\s+Foreground="\{StaticResource Text\}"\s*/>\s*<Grid\s+Margin="0,16,0,0">'
+$remoteHeaderNormalized = @'
+<StackPanel Grid.Column="2">
+                                <TextBlock Text="Remote" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Text}"/>
+                                <Grid Margin="0,16,0,0">
+'@
+$text = Replace-RegexOnce `
+    -Text $text `
+    -Pattern $remoteHeaderPattern `
+    -Replace $remoteHeaderNormalized `
+    -Description 'Remote details header normalization'
+
 $themeAnchor = @'
     Add-Type -AssemblyName System.Drawing
 
