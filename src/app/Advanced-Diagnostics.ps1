@@ -165,10 +165,10 @@ function Detect-OtherVpns {
 
     foreach ($label in $names.Keys) {
         foreach ($name in $names[$label]) {
-            if (
-                Get-Process -Name $name -ErrorAction SilentlyContinue -or
-                Get-Service -Name $name -ErrorAction SilentlyContinue
-            ) {
+            $hasProcess = [bool](Get-Process -Name $name -ErrorAction SilentlyContinue)
+            $hasService = [bool](Get-Service -Name $name -ErrorAction SilentlyContinue)
+
+            if ($hasProcess -or $hasService) {
                 $found += $label
                 break
             }
