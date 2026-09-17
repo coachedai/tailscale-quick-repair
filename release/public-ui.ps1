@@ -13,6 +13,29 @@ function Replace-ExactOnce {
     return $Text.Remove($index, $Find.Length).Insert($index, $Replace)
 }
 
+function Replace-RegexLiteralOnce {
+    param([string]$Text,[string]$Pattern,[string]$Replacement,[string]$Description)
+
+    $regex = New-Object System.Text.RegularExpressions.Regex(
+        $Pattern,
+        [System.Text.RegularExpressions.RegexOptions]::Singleline
+    )
+    $matches = $regex.Matches($Text)
+
+    if ($matches.Count -ne 1) {
+        throw "Public UI regex expected one match for $Description; found $($matches.Count)."
+    }
+
+    # MatchEvaluator returns the text literally. This is critical because .NET
+    # replacement-string syntax treats $_ as 'the entire input string'.
+    $evaluator = [System.Text.RegularExpressions.MatchEvaluator]{
+        param($match)
+        return $Replacement
+    }
+
+    return $regex.Replace($Text, $evaluator, 1)
+}
+
 $text = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8)
 
 $text = [regex]::Replace(
@@ -278,9 +301,11 @@ $repairReplacement = @'
 
     function Update-DetailsToggleText {
 '@
-$updated = [regex]::Replace($text, $repairPattern, $repairReplacement, 1)
-if ($updated -eq $text) { throw 'Could not replace installation repair function.' }
-$text = $updated
+$text = Replace-RegexLiteralOnce `
+    -Text $text `
+    -Pattern $repairPattern `
+    -Replacement $repairReplacement `
+    -Description 'native installation repair function'
 
 $eventMarker = @'
     $RepairInstallationButton.Add_Click({
@@ -332,6 +357,23 @@ foreach ($required in @(
     if ($text -notmatch [regex]::Escape($required)) {
         throw "Public UI verification failed: $required"
     }
+}
+
+$headerCount = [regex]::Matches(
+    $text,
+    '(?m)^param\(\r?\n\s*\[switch\]\$StartInTray\r?\n\)'
+).Count
+$xamlCount = [regex]::Matches(
+    $text,
+    '(?m)^\s*\[xml\]\$xaml\s*=\s*@"'
+).Count
+$errorPreferenceCount = [regex]::Matches(
+    $text,
+    "(?m)^\$ErrorActionPreference = 'Stop'\s*$"
+).Count
+
+if ($headerCount -ne 1 -or $xamlCount -ne 1 -or $errorPreferenceCount -ne 1) {
+    throw "Packaged UI must contain one script only. Headers=$headerCount Xaml=$xamlCount ErrorPreference=$errorPreferenceCount"
 }
 
 [void][scriptblock]::Create($text)
