@@ -24,6 +24,8 @@ jobs:
 
     outputs:
       should_publish: ${{ steps.publish.outputs.should_publish }}
+      requires_setup: ${{ steps.publish.outputs.requires_setup }}
+      build_setup: ${{ steps.publish.outputs.build_setup }}
       version: ${{ steps.meta.outputs.version }}
       safe_version: ${{ steps.meta.outputs.safe_version }}
       version_code: ${{ steps.meta.outputs.version_code }}
@@ -42,14 +44,10 @@ jobs:
           if ($env:GITHUB_REPOSITORY -ne $env:EXPECTED_REPOSITORY) {
             throw "Wrong repository. Expected $env:EXPECTED_REPOSITORY; got $env:GITHUB_REPOSITORY."
           }
-
           $origin = (git remote get-url origin).Trim()
-
           if ($origin -notmatch '(?i)(github\.com[:/])coachedai/tailscale-quick-repair(?:\.git)?$') {
             throw "Unexpected git origin: $origin"
           }
-
-          Write-Host "Repository isolation passed: $env:GITHUB_REPOSITORY"
 
       - name: Privacy and personal-data preflight
         shell: powershell
@@ -71,15 +69,20 @@ jobs:
         run: |
           $version = Get-Content version.json -Raw | ConvertFrom-Json
           $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
-
           if (
             [string]$publish.version -ne [string]$version.version -or
             [int64]$publish.versionCode -ne [int64]$version.versionCode
           ) {
             throw 'release/publish.json does not match version.json.'
           }
-
+          $requiresSetup = $false
+          $publicInstaller = $false
+          if ($publish.PSObject.Properties.Name -contains 'requiresSetup') { $requiresSetup = [bool]$publish.requiresSetup }
+          if ($publish.PSObject.Properties.Name -contains 'publicInstaller') { $publicInstaller = [bool]$publish.publicInstaller }
+          $buildSetup = $requiresSetup -or $publicInstaller
           "should_publish=$(([bool]$publish.publish).ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "requires_setup=$($requiresSetup.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "build_setup=$($buildSetup.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Build and round-trip validate routed update package
         shell: powershell
@@ -87,6 +90,24 @@ jobs:
           .\release\build.ps1 -OutputDirectory .\dist
           .\release\finalize-package.ps1 -OutputDirectory .\dist
           .\release\add-native-setup-routing.ps1 -OutputDirectory .\dist
+
+      - name: Build and validate public Setup package
+        if: steps.publish.outputs.build_setup == 'true'
+        shell: powershell
+        run: |
+          .\release\build-public.ps1 -OutputDirectory .\dist-public
+          Copy-Item .\dist-public\* .\dist\ -Force
+
+      - name: Require protected-migration assets
+        if: steps.publish.outputs.requires_setup == 'true'
+        shell: pwsh
+        run: |
+          $setupZip = Get-ChildItem .\dist -Filter 'TailscaleQuickRepair-SetupPackage-*.zip' -File | Select-Object -First 1
+          $setupExe = Get-ChildItem .\dist -Filter 'TailscaleQuickRepair-Setup-*.exe' -File | Select-Object -First 1
+          if (-not $setupZip -or -not $setupExe) { throw 'Protected migration assets are missing.' }
+          if (-not (Test-Path ($setupZip.FullName + '.sha256')) -or -not (Test-Path ($setupExe.FullName + '.sha256'))) {
+            throw 'Protected migration SHA-256 sidecars are missing.'
+          }
 
       - name: Upload validation artifact
         uses: actions/upload-artifact@v4
@@ -116,9 +137,7 @@ jobs:
           if ($env:GITHUB_REPOSITORY -ne $env:EXPECTED_REPOSITORY) {
             throw "Wrong repository. Expected $env:EXPECTED_REPOSITORY; got $env:GITHUB_REPOSITORY."
           }
-
           $origin = (git remote get-url origin).Trim()
-
           if ($origin -notmatch '(?i)(github\.com[:/])coachedai/tailscale-quick-repair(?:\.git)?$') {
             throw "Unexpected git origin: $origin"
           }
@@ -136,95 +155,158 @@ jobs:
 
       - name: Require exact release artifacts
         shell: pwsh
+        env:
+          REQUIRES_SETUP: ${{ needs.validate.outputs.requires_setup }}
         run: |
-          $zip = Get-ChildItem dist -Filter '*.zip' | Select-Object -First 1
-          $bootstrap = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Bootstrap-*.exe' | Select-Object -First 1
-
-          if (-not $zip -or -not $bootstrap) {
-            throw 'Publishing is blocked: validated ZIP/bootstrap artifacts are missing.'
-          }
-
-          $zipSha = Get-Item ($zip.FullName + '.sha256') -ErrorAction SilentlyContinue
-          $bootstrapSha = Get-Item ($bootstrap.FullName + '.sha256') -ErrorAction SilentlyContinue
-
-          if (-not $zipSha -or -not $bootstrapSha) {
+          $zip = Get-ChildItem dist -Filter 'TailscaleQuickRepair-*.zip' -File |
+            Where-Object { $_.Name -notlike '*SetupPackage*' } |
+            Select-Object -First 1
+          $bootstrap = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Bootstrap-*.exe' -File | Select-Object -First 1
+          if (-not $zip -or -not $bootstrap) { throw 'Publishing is blocked: validated ZIP/bootstrap artifacts are missing.' }
+          if (-not (Test-Path ($zip.FullName + '.sha256')) -or -not (Test-Path ($bootstrap.FullName + '.sha256'))) {
             throw 'Publishing is blocked: exact SHA-256 sidecars are missing.'
           }
+          if ($env:REQUIRES_SETUP -eq 'true') {
+            $setupZip = Get-ChildItem dist -Filter 'TailscaleQuickRepair-SetupPackage-*.zip' -File | Select-Object -First 1
+            $setupExe = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Setup-*.exe' -File | Select-Object -First 1
+            if (-not $setupZip -or -not $setupExe) { throw 'Publishing is blocked: Setup assets are missing.' }
+            if (-not (Test-Path ($setupZip.FullName + '.sha256')) -or -not (Test-Path ($setupExe.FullName + '.sha256'))) {
+              throw 'Publishing is blocked: Setup SHA-256 sidecars are missing.'
+            }
+          }
 
-      - name: Scan validated package before publishing
+      - name: Scan validated packages before publishing
         shell: powershell
+        env:
+          REQUIRES_SETUP: ${{ needs.validate.outputs.requires_setup }}
         run: |
-          $zip = Get-ChildItem dist -Filter '*.zip' | Select-Object -First 1
+          $zip = Get-ChildItem dist -Filter 'TailscaleQuickRepair-*.zip' -File |
+            Where-Object { $_.Name -notlike '*SetupPackage*' } |
+            Select-Object -First 1
           $scanRoot = Join-Path $env:RUNNER_TEMP 'tqr-package-scan'
-
           Remove-Item $scanRoot -Recurse -Force -ErrorAction SilentlyContinue
           Expand-Archive -LiteralPath $zip.FullName -DestinationPath $scanRoot
-
           .\release\privacy-scan.ps1 -Root $scanRoot -SkipRepositoryIdentity
 
-      - name: Create GitHub Release
+          if ($env:REQUIRES_SETUP -eq 'true') {
+            $setupZip = Get-ChildItem dist -Filter 'TailscaleQuickRepair-SetupPackage-*.zip' -File | Select-Object -First 1
+            $setupRoot = Join-Path $env:RUNNER_TEMP 'tqr-setup-scan'
+            Remove-Item $setupRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Expand-Archive -LiteralPath $setupZip.FullName -DestinationPath $setupRoot
+            .\release\privacy-scan.ps1 -Root $setupRoot -SkipRepositoryIdentity
+          }
+
+      - name: Create or resume exact GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.validate.outputs.version }}
-          SAFE_VERSION: ${{ needs.validate.outputs.safe_version }}
+          REQUIRES_SETUP: ${{ needs.validate.outputs.requires_setup }}
         run: |
           $tag = "v$env:VERSION"
-          $zip = Get-ChildItem dist -Filter '*.zip' | Select-Object -First 1
-          $bootstrap = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Bootstrap-*.exe' | Select-Object -First 1
+          $zip = Get-ChildItem dist -Filter 'TailscaleQuickRepair-*.zip' -File |
+            Where-Object { $_.Name -notlike '*SetupPackage*' } |
+            Select-Object -First 1
+          $bootstrap = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Bootstrap-*.exe' -File | Select-Object -First 1
+          $assets = @(
+            $zip,
+            (Get-Item ($zip.FullName + '.sha256')),
+            $bootstrap,
+            (Get-Item ($bootstrap.FullName + '.sha256'))
+          )
 
-          if (-not $zip -or -not $bootstrap) {
-            throw 'Validated release artifacts are missing.'
-          }
-
-          $zipSha = Get-Item ($zip.FullName + '.sha256') -ErrorAction Stop
-          $bootstrapSha = Get-Item ($bootstrap.FullName + '.sha256') -ErrorAction Stop
-
-          $existing = gh release view $tag 2>$null
-
-          if ($LASTEXITCODE -eq 0) {
-            throw "Release $tag already exists. Bump version/versionCode before publishing again."
+          if ($env:REQUIRES_SETUP -eq 'true') {
+            $setupZip = Get-ChildItem dist -Filter 'TailscaleQuickRepair-SetupPackage-*.zip' -File | Select-Object -First 1
+            $setupExe = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Setup-*.exe' -File | Select-Object -First 1
+            $assets += @(
+              $setupZip,
+              (Get-Item ($setupZip.FullName + '.sha256')),
+              $setupExe,
+              (Get-Item ($setupExe.FullName + '.sha256'))
+            )
+            $metadata = Get-Item dist\public-setup-metadata.json -ErrorAction SilentlyContinue
+            if ($metadata) { $assets += $metadata }
           }
 
           $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
           $notes = [string]$publish.notes
-
-          if ([string]::IsNullOrWhiteSpace($notes)) {
-            $notes = "Tailscale Quick Repair $env:VERSION"
-          }
-
+          if ([string]::IsNullOrWhiteSpace($notes)) { $notes = "Tailscale Quick Repair $env:VERSION" }
           $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.txt'
           Set-Content -LiteralPath $notesFile -Value $notes -Encoding UTF8
 
-          gh release create $tag `
-            --title "Tailscale Quick Repair $env:VERSION" `
-            --notes-file $notesFile `
-            $zip.FullName `
-            $zipSha.FullName `
-            $bootstrap.FullName `
-            $bootstrapSha.FullName
+          function Get-Release {
+            $json = & gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>$null
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($json)) { return $null }
+            return ($json | ConvertFrom-Json)
+          }
+
+          function Test-RemoteAsset {
+            param($Release,[System.IO.FileInfo]$Local)
+            $remote = @($Release.assets | Where-Object { [string]$_.name -eq $Local.Name }) | Select-Object -First 1
+            if (-not $remote) { return $false }
+            if ([int64]$remote.size -ne [int64]$Local.Length) {
+              throw "Existing release asset has wrong size: $($Local.Name)"
+            }
+            if ($remote.PSObject.Properties.Name -contains 'digest' -and -not [string]::IsNullOrWhiteSpace([string]$remote.digest)) {
+              $expected = 'sha256:' + (Get-FileHash -LiteralPath $Local.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ([string]$remote.digest -ne $expected) {
+                throw "Existing release asset has wrong digest: $($Local.Name)"
+              }
+            }
+            return $true
+          }
+
+          $release = Get-Release
+          if (-not $release) {
+            $created = $false
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              & gh release create $tag --title "Tailscale Quick Repair $env:VERSION" --notes-file $notesFile
+              if ($LASTEXITCODE -eq 0) { $created = $true; break }
+              Start-Sleep -Seconds (2 * $attempt)
+              $release = Get-Release
+              if ($release) { $created = $true; break }
+            }
+            if (-not $created) { throw "Could not create release $tag after three attempts." }
+            $release = Get-Release
+          }
+
+          foreach ($asset in $assets) {
+            if (Test-RemoteAsset -Release $release -Local $asset) { continue }
+            $uploaded = $false
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              & gh release upload $tag $asset.FullName
+              if ($LASTEXITCODE -eq 0) { $uploaded = $true; break }
+              Start-Sleep -Seconds (2 * $attempt)
+              $release = Get-Release
+              if ($release -and (Test-RemoteAsset -Release $release -Local $asset)) { $uploaded = $true; break }
+            }
+            if (-not $uploaded) { throw "Could not upload release asset: $($asset.Name)" }
+            $release = Get-Release
+          }
+
+          $release = Get-Release
+          foreach ($asset in $assets) {
+            if (-not (Test-RemoteAsset -Release $release -Local $asset)) {
+              throw "Release is missing validated asset: $($asset.Name)"
+            }
+          }
 
       - name: Update stable manifest
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.validate.outputs.version }}
           VERSION_CODE: ${{ needs.validate.outputs.version_code }}
+          REQUIRES_SETUP: ${{ needs.validate.outputs.requires_setup }}
         run: |
           $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
-          $zip = Get-ChildItem dist -Filter '*.zip' | Select-Object -First 1
-          $bootstrap = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Bootstrap-*.exe' | Select-Object -First 1
-
-          if (-not $zip -or -not $bootstrap) {
-            throw 'Validated release artifacts are missing.'
-          }
-
-          $zipShaFile = Get-Item ($zip.FullName + '.sha256') -ErrorAction Stop
-          $bootstrapShaFile = Get-Item ($bootstrap.FullName + '.sha256') -ErrorAction Stop
-          $sha = (Get-Content $zipShaFile.FullName -Raw).Trim().ToLowerInvariant()
-          $bootstrapSha = (Get-Content $bootstrapShaFile.FullName -Raw).Trim().ToLowerInvariant()
+          $zip = Get-ChildItem dist -Filter 'TailscaleQuickRepair-*.zip' -File |
+            Where-Object { $_.Name -notlike '*SetupPackage*' } |
+            Select-Object -First 1
+          $bootstrap = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Bootstrap-*.exe' -File | Select-Object -First 1
+          $zipSha = (Get-Content ($zip.FullName + '.sha256') -Raw).Trim().ToLowerInvariant()
+          $bootstrapSha = (Get-Content ($bootstrap.FullName + '.sha256') -Raw).Trim().ToLowerInvariant()
           $tag = "v$env:VERSION"
-          $assetBase = "https://github.com/${{ github.repository }}/releases/download/$tag"
+          $assetBase = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag"
 
           $manifest = [ordered]@{
             schema = 1
@@ -234,31 +316,43 @@ jobs:
             published = $true
             publishedAt = [DateTime]::UtcNow.ToString('o')
             mandatory = $false
+            requiresSetup = ($env:REQUIRES_SETUP -eq 'true')
             notes = [string]$publish.notes
             package = [ordered]@{
               url = "$assetBase/$($zip.Name)"
-              sha256 = $sha
-              size = $zip.Length
+              sha256 = $zipSha
+              size = [int64]$zip.Length
             }
             bootstrap = [ordered]@{
               url = "$assetBase/$($bootstrap.Name)"
               sha256 = $bootstrapSha
-              size = $bootstrap.Length
+              size = [int64]$bootstrap.Length
             }
           }
 
-          $manifest |
-            ConvertTo-Json -Depth 5 |
-            Set-Content updates/latest.json -Encoding UTF8
+          if ($env:REQUIRES_SETUP -eq 'true') {
+            $setupZip = Get-ChildItem dist -Filter 'TailscaleQuickRepair-SetupPackage-*.zip' -File | Select-Object -First 1
+            $setupExe = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Setup-*.exe' -File | Select-Object -First 1
+            $setupSha = (Get-Content ($setupZip.FullName + '.sha256') -Raw).Trim().ToLowerInvariant()
+            $setupExeSha = (Get-Content ($setupExe.FullName + '.sha256') -Raw).Trim().ToLowerInvariant()
+            $manifest['setup'] = [ordered]@{
+              url = "$assetBase/$($setupZip.Name)"
+              sha256 = $setupSha
+              size = [int64]$setupZip.Length
+            }
+            $manifest['installer'] = [ordered]@{
+              url = "$assetBase/$($setupExe.Name)"
+              sha256 = $setupExeSha
+              size = [int64]$setupExe.Length
+            }
+          }
 
+          $manifest | ConvertTo-Json -Depth 7 | Set-Content updates/latest.json -Encoding UTF8
           $publish.publish = $false
-          $publish |
-            ConvertTo-Json -Depth 4 |
-            Set-Content release/publish.json -Encoding UTF8
+          $publish | ConvertTo-Json -Depth 5 | Set-Content release/publish.json -Encoding UTF8
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           git add updates/latest.json release/publish.json
           git commit -m "Publish update manifest for $env:VERSION [skip ci]"
           git push

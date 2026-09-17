@@ -1,7 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase2.2.6",
-  "versionCode": 30000216,
-  "notes": "Adds the native Setup migration host and safe routing for future protected repair-engine updates. Repair and network behaviour are unchanged."
+  "version": "3.0.0-phase2.3.0",
+  "versionCode": 30000300,
+  "requiresSetup": true,
+  "publicInstaller": true,
+  "notes": "Adds the public native installer, per-device Tailscale target configuration, Change target, generic protected repair tooling, automatic repair support and read-only advanced diagnostics. Target settings stay local to each PC."
 }
