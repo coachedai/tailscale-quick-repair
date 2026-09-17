@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase2.3.1",
-  "versionCode": 30000301,
-  "requiresSetup": true,
-  "publicInstaller": true,
-  "notes": "Hardens protected upgrades by relocating the native Setup host before self-replacement. Keeps the public installer, per-device target configuration, Change target, generic repair tooling, automatic repair and read-only diagnostics from 2.3.0."
+  "version": "3.0.0-phase2.2.7",
+  "versionCode": 30000217,
+  "requiresSetup": false,
+  "publicInstaller": false,
+  "notes": "Installs the hardened native Setup host through the existing user-level updater so 2.2.6 systems are ready for the protected 2.3.1 migration. Repair and network behavior are unchanged."
 }
