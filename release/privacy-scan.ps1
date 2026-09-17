@@ -182,6 +182,24 @@ foreach ($relative in $tracked) {
             continue
         }
 
+        # AssemblyVersion / AssemblyFileVersion are four-part numeric version
+        # literals, not network addresses. Ignore them only when the matched
+        # value appears on that exact assembly attribute line.
+        $lineStart = $content.LastIndexOf("`n", [Math]::Max(0, $match.Index - 1))
+        if ($lineStart -lt 0) { $lineStart = 0 } else { $lineStart++ }
+
+        $lineEnd = $content.IndexOf("`n", $match.Index)
+        if ($lineEnd -lt 0) { $lineEnd = $content.Length }
+
+        $line = $content.Substring($lineStart, $lineEnd - $lineStart).Trim()
+
+        if (
+            $line -match '(?i)^\[assembly:\s*System\.Reflection\.Assembly(?:File)?Version\s*\(' -and
+            $line -match [regex]::Escape($value)
+        ) {
+            continue
+        }
+
         $octets = @($value.Split('.') | ForEach-Object { [int]$_ })
 
         if ($octets.Count -ne 4 -or ($octets | Where-Object { $_ -gt 255 }).Count -gt 0) {
