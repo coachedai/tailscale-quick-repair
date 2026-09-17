@@ -1,7 +1,7 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase1.1",
-  "versionCode": 30000101,
-  "notes": "Initial GitHub update-channel bootstrap."
+  "version": "3.0.0-phase2.1",
+  "versionCode": 30000201,
+  "notes": "Trusted self-update client bootstrap. Publishing remains disabled."
 }
