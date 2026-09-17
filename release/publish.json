@@ -1,7 +1,7 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase2.2.3",
-  "versionCode": 30000213,
-  "notes": "Native updater TLS 1.2 compatibility fix plus compiled HTTPS self-test and TEMP-launched in-app updater replacement safety. Repair/network behaviour remains unchanged."
+  "version": "3.0.0-phase2.2.4",
+  "versionCode": 30000214,
+  "notes": "Fixes malformed inner package-manifest paths and adds a strict manifest round-trip gate. Native TLS updater and repair/network behaviour remain unchanged."
 }
