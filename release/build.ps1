@@ -30,7 +30,8 @@ if ([int]$packageSpec.schema -ne 1) {
 
 $required = @(
     'src\app\Tailscale-Repair-UI.ps1',
-    'src\native\UpdaterHost.cs'
+    'src\native\UpdaterHost.cs',
+    'src\native\UpdaterEntry.cs'
 )
 
 foreach ($relative in $required) {
@@ -134,7 +135,6 @@ function Convert-UiToNativeUpdater {
         [int64]$ReleaseVersionCode
     )
 
-    # Release metadata comes from version.json, never from stale UI source text.
     $Text = [regex]::Replace(
         $Text,
         "(?m)^\$ProductVersion\s*=\s*'[^']+'\s*$",
@@ -156,7 +156,6 @@ function Convert-UiToNativeUpdater {
         1
     )
 
-    # No PowerShell installer is part of the trusted app update path anymore.
     $Text = [regex]::Replace(
         $Text,
         '(?m)^\$UpdateInstallerPath\s*=.*\r?\n',
@@ -189,8 +188,14 @@ function Convert-UiToNativeUpdater {
                 return
             }
 
+            # Run the updater from TEMP so Windows never locks the installed
+            # updater while the package replaces it.
+            $tempUpdater = Join-Path $env:TEMP 'TailscaleQuickRepairUpdater-Native.exe'
+            Remove-Item -LiteralPath $tempUpdater -Force -ErrorAction SilentlyContinue
+            Copy-Item -LiteralPath $UpdaterHostPath -Destination $tempUpdater -Force
+
             $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = $UpdaterHostPath
+            $psi.FileName = $tempUpdater
             $psi.Arguments = @(
                 '--silent'
                 '--current-pid'
@@ -260,8 +265,12 @@ function Convert-UiToNativeUpdater {
         }
     }
 
-    if ($Text -notmatch [regex]::Escape("$UpdaterHostPath")) {
+    if ($Text -notmatch [regex]::Escape('$UpdaterHostPath')) {
         throw 'Packaged UI no longer references the native updater host.'
+    }
+
+    if ($Text -notmatch 'TailscaleQuickRepairUpdater-Native\.exe') {
+        throw 'Packaged UI does not launch the updater from a disposable TEMP copy.'
     }
 
     return $Text
@@ -343,6 +352,7 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 
 try {
     $updaterSource = Join-Path $repo 'src\native\UpdaterHost.cs'
+    $updaterEntry = Join-Path $repo 'src\native\UpdaterEntry.cs'
     $updaterExe = Join-Path $packageApp 'TailscaleQuickRepairUpdater.exe'
     $compileOut = Join-Path $work 'compile.out'
     $compileErr = Join-Path $work 'compile.err'
@@ -352,12 +362,14 @@ try {
         '/target:winexe'
         '/platform:anycpu'
         '/optimize+'
+        '/main:UpdaterEntry'
         ('/reference:"{0}"' -f $webExtensions)
         ('/reference:"{0}"' -f $compression)
         ('/reference:"{0}"' -f $compressionFs)
         ('/reference:"{0}"' -f $windowsForms)
         ('/out:"{0}"' -f $updaterExe)
         ('"{0}"' -f $updaterSource)
+        ('"{0}"' -f $updaterEntry)
     )
 
     $compile = Start-Process `
@@ -386,8 +398,11 @@ try {
         throw "Native updater compilation failed.`r`n$($details -join [Environment]::NewLine)"
     }
 
-    # The updater must remain a normal native EXE with no PowerShell installer path.
-    $updaterSourceText = [IO.File]::ReadAllText($updaterSource, [Text.Encoding]::UTF8)
+    $updaterSourceText = (
+        [IO.File]::ReadAllText($updaterSource, [Text.Encoding]::UTF8) +
+        [Environment]::NewLine +
+        [IO.File]::ReadAllText($updaterEntry, [Text.Encoding]::UTF8)
+    )
 
     foreach ($forbidden in @(
         '-EncodedCommand',
@@ -398,6 +413,23 @@ try {
         if ($updaterSourceText -match [regex]::Escape($forbidden)) {
             throw "Native updater still contains forbidden legacy execution pattern: $forbidden"
         }
+    }
+
+    if ($updaterSourceText -notmatch 'SecurityProtocolType\)3072') {
+        throw 'Native updater does not explicitly force TLS 1.2.'
+    }
+
+    # Execute the exact compiled EXE against the same GitHub API endpoint the
+    # updater uses. A release cannot pass CI if TLS/HTTPS negotiation fails.
+    $selfTest = Start-Process `
+        -FilePath $updaterExe `
+        -ArgumentList '--network-self-test' `
+        -WindowStyle Hidden `
+        -Wait `
+        -PassThru
+
+    if ($selfTest.ExitCode -ne 0) {
+        throw "Native updater HTTPS self-test failed with exit code $($selfTest.ExitCode)."
     }
 
     $utf8Bom = New-Object System.Text.UTF8Encoding($true)
@@ -462,7 +494,6 @@ try {
             -LiteralPath "$zipPath.sha256" `
             -Encoding ASCII
 
-    # One-time native bridge for installations that predate self-update support.
     $bootstrapPath = Join-Path $OutputDirectory "TailscaleQuickRepair-Bootstrap-$safeVersion.exe"
     Copy-Item -LiteralPath $updaterExe -Destination $bootstrapPath -Force
 
