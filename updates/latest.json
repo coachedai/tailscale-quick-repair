@@ -1,31 +1,21 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase2.3.4",
-  "versionCode": 30000304,
+  "version": "3.0.0-phase2.3.5",
+  "versionCode": 30000305,
   "published": true,
-  "publishedAt": "2026-09-17T22:33:24.4521537Z",
+  "publishedAt": "2026-09-17T22:43:36.5712304Z",
   "mandatory": false,
-  "requiresSetup": true,
-  "notes": "Recovery release restoring the last known-good protected 2.3.2 code path after the 2.3.3 field regression. No new repair or network behavior is introduced.",
+  "requiresSetup": false,
+  "notes": "UI-only polish on the recovered 2.3.4 baseline: renames This session to Activity, removes duplicated peer-reachable noise, uses ASCII-safe in-progress text, and reserves status-row space so Check Again does not make the layout jump. Repair, setup, task and network behavior are unchanged.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.4/TailscaleQuickRepair-3.0.0-phase2.3.4.zip",
-    "sha256": "917bbf17b9d3a786b583869883b1af285bb6e519413f9b131ed939d2b8392216",
-    "size": 56315
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.5/TailscaleQuickRepair-3.0.0-phase2.3.5.zip",
+    "sha256": "a1cf56080ea8d4c2355d88083ca3c9f60962e33e8a0e6f5ef89c111f2eb5d328",
+    "size": 56560
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.4/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.3.4.exe",
-    "sha256": "080488bdf95fcac9ca2776e5b8760a8529ae8404893cc6daf85f45bfd133fa1a",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.5/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.3.5.exe",
+    "sha256": "ce9c3dac53cc78c9d067deec5e24365613d528aee0414c4ac033dff2f059c969",
     "size": 23040
-  },
-  "setup": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.4/TailscaleQuickRepair-SetupPackage-3.0.0-phase2.3.4.zip",
-    "sha256": "fc6beaf43b15b0845dbff1502db272a9a8f4ac2eb70827119929f94973bcfae2",
-    "size": 70692
-  },
-  "installer": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.4/TailscaleQuickRepair-Setup-3.0.0-phase2.3.4.exe",
-    "sha256": "ae3c2c6b93095af975ea90519af94807071855228fe6f1d1c0f25c718a9fbdb5",
-    "size": 38912
   }
 }
