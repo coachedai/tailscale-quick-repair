@@ -184,7 +184,7 @@ try {
     $cli = Get-TailscaleCli
     if (-not $cli) {
         $script:Result.error = 'tailscale.exe could not be found.'
-        Publish 'Complete' 100 $true 'failure' 'Tailscale CLI could not be found.'
+        Publish 'Complete' 100 $true 'bad' 'Tailscale CLI could not be found.'
         exit
     }
 
@@ -228,13 +228,13 @@ try {
     if ($script:Result.disco -ne 'Reachable') { $issues += 'peer path did not answer' }
 
     if ($issues.Count -gt 0) {
-        Publish 'Complete' 100 $true 'warning' ($issues -join ' · ')
+        Publish 'Complete' 100 $true 'warn' ($issues -join ' · ')
     }
     else {
-        Publish 'Complete' 100 $true 'success' 'Advanced diagnostics found no obvious connection issue.'
+        Publish 'Complete' 100 $true 'good' 'Advanced diagnostics found no obvious connection issue.'
     }
 }
 catch {
     $script:Result.error = $_.Exception.Message
-    Publish 'Complete' 100 $true 'failure' 'Advanced diagnostics could not complete.'
+    Publish 'Complete' 100 $true 'bad' 'Advanced diagnostics could not complete.'
 }
