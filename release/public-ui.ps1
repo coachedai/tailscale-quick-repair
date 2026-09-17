@@ -39,12 +39,12 @@ $stateReplacement = $stateMatch.Value + [Environment]::NewLine +
 $text = $text.Remove($stateMatch.Index, $stateMatch.Length).Insert($stateMatch.Index, $stateReplacement)
 
 $remoteMarker = @'
-                            <StackPanel Grid.Column="2">
+<StackPanel Grid.Column="2">
                                 <TextBlock Text="Remote" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Text}"/>
                                 <Grid Margin="0,16,0,0">
 '@
 $remoteReplacement = @'
-                            <StackPanel Grid.Column="2">
+<StackPanel Grid.Column="2">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
@@ -114,7 +114,7 @@ $targetFunctions = @'
 
         $script:Peer = $candidate
         $DetailPeerIp.Text = $candidate
-        try { $trayCopyPeerIpItem.Text = 'Peer IP' } catch {}
+        try { $RemotePeerIpText.Text = $candidate } catch {}
         try {
             $script:lastAppliedStateWriteUtc = [DateTime]::MinValue
             $script:lastData = $null
@@ -192,7 +192,7 @@ $targetFunctions = @'
 '@
 $text = Replace-ExactOnce $text '    function Invoke-InstallationRepair {' ($targetFunctions + '    function Invoke-InstallationRepair {') 'target functions'
 
-$repairPattern = '(?s)    function Invoke-InstallationRepair \{.*?\r?\n    function Set-AdvancedDiagnosticsSummaryColor \{'
+$repairPattern = '(?s)    function Invoke-InstallationRepair \{.*?\r?\n    function Update-DetailsToggleText \{'
 $repairReplacement = @'
     function Invoke-InstallationRepair {
         if (-not (Test-Path -LiteralPath $SetupHostPath)) {
@@ -231,7 +231,7 @@ $repairReplacement = @'
         }
     }
 
-    function Set-AdvancedDiagnosticsSummaryColor {
+    function Update-DetailsToggleText {
 '@
 $updated = [regex]::Replace($text, $repairPattern, $repairReplacement, 1)
 if ($updated -eq $text) { throw 'Could not replace installation repair function.' }
