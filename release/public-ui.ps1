@@ -28,16 +28,15 @@ $text = [regex]::Replace(
     1
 )
 
-$stateMarker = @'
-$StateDir = Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair'
-$StateFile = Join-Path $StateDir 'state.json'
-'@
-$stateReplacement = @'
-$StateDir = Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair'
-$SetupHostPath = Join-Path $StateDir 'TailscaleQuickRepairSetup.exe'
-$StateFile = Join-Path $StateDir 'state.json'
-'@
-$text = Replace-ExactOnce $text $stateMarker $stateReplacement 'native setup host path'
+$statePattern = '(?m)^\$StateDir\s*=\s*Join-Path\s+\$env:LOCALAPPDATA\s+''TailscaleQuickRepair''\s*$'
+$stateMatch = [regex]::Match($text, $statePattern)
+if (-not $stateMatch.Success) {
+    throw 'Public UI marker was not found: native setup host path'
+}
+
+$stateReplacement = $stateMatch.Value + [Environment]::NewLine +
+    '$SetupHostPath = Join-Path $StateDir ''TailscaleQuickRepairSetup.exe'''
+$text = $text.Remove($stateMatch.Index, $stateMatch.Length).Insert($stateMatch.Index, $stateReplacement)
 
 $remoteMarker = @'
                             <StackPanel Grid.Column="2">
