@@ -1,7 +1,7 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase2.2.2",
-  "versionCode": 30000212,
-  "notes": "Native-only trusted self-update bridge and in-app updater. Removes the legacy PowerShell installer path while keeping repair/network behaviour unchanged."
+  "version": "3.0.0-phase2.2.3",
+  "versionCode": 30000213,
+  "notes": "Native updater TLS 1.2 compatibility fix plus compiled HTTPS self-test and TEMP-launched in-app updater replacement safety. Repair/network behaviour remains unchanged."
 }
