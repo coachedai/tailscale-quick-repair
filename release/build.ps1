@@ -18,6 +18,7 @@ $packageSpec = Get-Content -LiteralPath $packageSpecPath -Raw | ConvertFrom-Json
 
 $version = [string]$versionInfo.version
 $versionCode = [int64]$versionInfo.versionCode
+$safeVersion = $version -replace '[^A-Za-z0-9._-]', '-'
 
 if ([string]::IsNullOrWhiteSpace($version) -or $versionCode -le 0) {
     throw 'version.json does not contain a valid version/versionCode.'
@@ -126,9 +127,154 @@ function Normalize-UiForWindowsPowerShell {
     return $Text
 }
 
+function Convert-UiToNativeUpdater {
+    param(
+        [string]$Text,
+        [string]$ReleaseVersion,
+        [int64]$ReleaseVersionCode
+    )
+
+    # Release metadata comes from version.json, never from stale UI source text.
+    $Text = [regex]::Replace(
+        $Text,
+        "(?m)^\$ProductVersion\s*=\s*'[^']+'\s*$",
+        ('$ProductVersion = ''' + $ReleaseVersion + ''''),
+        1
+    )
+
+    $Text = [regex]::Replace(
+        $Text,
+        '(?m)^\$ProductVersionCode\s*=\s*\[int64\]\d+\s*$',
+        ('$ProductVersionCode = [int64]' + $ReleaseVersionCode),
+        1
+    )
+
+    $Text = [regex]::Replace(
+        $Text,
+        'Text="Current [^"]+ · Check GitHub for updates\."',
+        ('Text="Current ' + $ReleaseVersion + ' · Check GitHub for updates."'),
+        1
+    )
+
+    # No PowerShell installer is part of the trusted app update path anymore.
+    $Text = [regex]::Replace(
+        $Text,
+        '(?m)^\$UpdateInstallerPath\s*=.*\r?\n',
+        '',
+        1
+    )
+
+    $nativeInstall = @'
+    function Start-UpdateInstall {
+        if (
+            $script:repairActive -or
+            -not $script:updateManifest
+        ) {
+            return
+        }
+
+        if (-not (Test-Path -LiteralPath $UpdaterHostPath)) {
+            $UpdateStatusText.Text = 'Updater component is missing'
+            $UpdateStatusText.Foreground = Get-Brush 'Amber'
+            $UpdateDetailText.Text = 'Install the native updater bridge once, then check for updates again.'
+            $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
+            return
+        }
+
+        try {
+            $targetCode = [int64]$script:updateManifest.versionCode
+
+            if ($targetCode -le $ProductVersionCode) {
+                Start-UpdateCheck
+                return
+            }
+
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $UpdaterHostPath
+            $psi.Arguments = @(
+                '--silent'
+                '--current-pid'
+                ([string]$PID)
+                '--current-code'
+                ([string]$ProductVersionCode)
+            ) -join ' '
+            $psi.UseShellExecute = $true
+
+            $updaterProcess = [System.Diagnostics.Process]::Start($psi)
+
+            if (-not $updaterProcess) {
+                throw 'The native updater could not start.'
+            }
+
+            $CheckForUpdatesButton.IsEnabled = $false
+            $UpdateNowButton.IsEnabled = $false
+            $UpdateNowButton.Content = 'Updating…'
+            $UpdateStatusText.Text = 'Installing update…'
+            $UpdateStatusText.Foreground = Get-Brush 'Blue'
+            $UpdateDetailText.Text = 'The native updater is verifying and installing the trusted release. Quick Repair will restart automatically.'
+            $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
+
+            $script:allowFullExit = $true
+
+            $window.Dispatcher.BeginInvoke(
+                [System.Windows.Threading.DispatcherPriority]::Background,
+                [Action]{
+                    $window.Close()
+                }
+            ) | Out-Null
+        }
+        catch {
+            $CheckForUpdatesButton.IsEnabled = $true
+            $UpdateNowButton.IsEnabled = $true
+            $UpdateNowButton.Content = 'Update now'
+            $UpdateStatusText.Text = 'Could not start update'
+            $UpdateStatusText.Foreground = Get-Brush 'Amber'
+            $UpdateDetailText.Text = 'Nothing was changed.'
+            $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
+        }
+    }
+
+    function Show-UpdateResult {
+'@
+
+    $pattern = '(?s)    function Start-UpdateInstall \{.*?\r?\n    function Show-UpdateResult \{'
+    $updated = [regex]::Replace($Text, $pattern, $nativeInstall, 1)
+
+    if ($updated -eq $Text) {
+        throw 'Could not replace the legacy self-update function.'
+    }
+
+    $Text = $updated.Replace(
+        'if ($script:updateCheckActive -or $script:updateDownloadActive) {',
+        'if ($script:updateCheckActive) {'
+    )
+
+    foreach ($forbidden in @(
+        'Update-Installer.ps1',
+        'DownloadFileTaskAsync',
+        "'--script'",
+        'Administrator approval may be requested'
+    )) {
+        if ($Text -match [regex]::Escape($forbidden)) {
+            throw "Packaged UI still contains legacy updater behaviour: $forbidden"
+        }
+    }
+
+    if ($Text -notmatch [regex]::Escape("$UpdaterHostPath")) {
+        throw 'Packaged UI no longer references the native updater host.'
+    }
+
+    return $Text
+}
+
 $uiPath = Join-Path $repo 'src\app\Tailscale-Repair-UI.ps1'
 $uiText = [IO.File]::ReadAllText($uiPath, [Text.Encoding]::UTF8)
 $uiText = Normalize-UiForWindowsPowerShell $uiText
+$uiText = Convert-UiToNativeUpdater `
+    -Text $uiText `
+    -ReleaseVersion $version `
+    -ReleaseVersionCode $versionCode
+
 [void][scriptblock]::Create($uiText)
 
 $xamlMatch = [regex]::Match(
@@ -240,8 +386,7 @@ try {
         throw "Native updater compilation failed.`r`n$($details -join [Environment]::NewLine)"
     }
 
-    # The updater must be a normal native EXE. It must not contain the old
-    # PowerShell-installer invocation path.
+    # The updater must remain a normal native EXE with no PowerShell installer path.
     $updaterSourceText = [IO.File]::ReadAllText($updaterSource, [Text.Encoding]::UTF8)
 
     foreach ($forbidden in @(
@@ -300,9 +445,7 @@ try {
         -Root $packageRoot `
         -SkipRepositoryIdentity
 
-    $safeVersion = $version -replace '[^A-Za-z0-9._-]', '-'
     $zipPath = Join-Path $OutputDirectory "TailscaleQuickRepair-$safeVersion.zip"
-
     Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
 
     Compress-Archive `
@@ -319,8 +462,23 @@ try {
             -LiteralPath "$zipPath.sha256" `
             -Encoding ASCII
 
+    # One-time native bridge for installations that predate self-update support.
+    $bootstrapPath = Join-Path $OutputDirectory "TailscaleQuickRepair-Bootstrap-$safeVersion.exe"
+    Copy-Item -LiteralPath $updaterExe -Destination $bootstrapPath -Force
+
+    $bootstrapSha = (
+        Get-FileHash -LiteralPath $bootstrapPath -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+
+    $bootstrapSha |
+        Set-Content `
+            -LiteralPath "$bootstrapPath.sha256" `
+            -Encoding ASCII
+
     Write-Host "PACKAGE=$zipPath"
     Write-Host "SHA256=$sha"
+    Write-Host "BOOTSTRAP=$bootstrapPath"
+    Write-Host "BOOTSTRAP_SHA256=$bootstrapSha"
 }
 finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
