@@ -1,15 +1,20 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase2.2.1",
-  "versionCode": 30000211,
-  "published": false,
-  "publishedAt": null,
+  "version": "3.0.0-phase2.2.2",
+  "versionCode": 30000212,
+  "published": true,
+  "publishedAt": "2026-09-17T14:35:44.8303728Z",
   "mandatory": false,
-  "notes": "Self-update temporarily disabled while the Windows bootstrap is being redesigned to avoid ClickFix-like PowerShell behaviour.",
+  "notes": "Native-only trusted self-update bridge and in-app updater. Removes the legacy PowerShell installer path while keeping repair/network behaviour unchanged.",
   "package": {
-    "url": null,
-    "sha256": null,
-    "size": null
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.2/TailscaleQuickRepair-3.0.0-phase2.2.2.zip",
+    "sha256": "cac1776c5fe28aae027147a5990fbbf513b85887635a68c358aa5746bb30cb33",
+    "size": 37809
+  },
+  "bootstrap": {
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.2/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.2.2.exe",
+    "sha256": "e31f2b45c835c78886e8f00a5449d0d8a961e9a57d5a7d4fa1522667c3b952df",
+    "size": 21504
   }
 }
