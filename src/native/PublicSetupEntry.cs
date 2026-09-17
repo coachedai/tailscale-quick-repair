@@ -12,6 +12,7 @@ using Microsoft.Win32;
 internal static class PublicSetupEntry
 {
     private const string DetachedPrefix = "TailscaleQuickRepair-Setup-Detached-";
+    private const string SelfTestAppDirEnvironment = "TQR_SETUP_RELOCATION_TEST_APPDIR";
     private const int MoveFileDelayUntilReboot = 0x00000004;
 
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
@@ -36,6 +37,15 @@ internal static class PublicSetupEntry
             if (HasSwitch(args, "--self-test-relocation-parent"))
             {
                 return RunRelocationSelfTestParent(args);
+            }
+
+            // build-public.ps1 already invokes this switch for every Setup
+            // build. Make it prove self-relocation as well as the host's basic
+            // manifest/HTTPS configuration so the lock regression stays
+            // release-blocking permanently.
+            if (HasSwitch(args, "--self-test-installer"))
+            {
+                return RunInstallerSelfTest();
             }
 
             CleanupStaleDetachedCopies();
@@ -77,18 +87,7 @@ internal static class PublicSetupEntry
                 return RelaunchDetached(args);
             }
 
-            MethodInfo main = typeof(PublicSetupHost).GetMethod(
-                "Main",
-                BindingFlags.Static | BindingFlags.NonPublic
-            );
-
-            if (main == null)
-            {
-                return 31;
-            }
-
-            object result = main.Invoke(null, new object[] { args });
-            return result is int ? (int)result : 32;
+            return InvokeSetupHost(args);
         }
         catch (TargetInvocationException ex)
         {
@@ -119,6 +118,22 @@ internal static class PublicSetupEntry
             catch { }
             return 34;
         }
+    }
+
+    private static int InvokeSetupHost(string[] args)
+    {
+        MethodInfo main = typeof(PublicSetupHost).GetMethod(
+            "Main",
+            BindingFlags.Static | BindingFlags.NonPublic
+        );
+
+        if (main == null)
+        {
+            return 31;
+        }
+
+        object result = main.Invoke(null, new object[] { args });
+        return result is int ? (int)result : 32;
     }
 
     private static int RelaunchDetached(string[] args)
@@ -227,8 +242,93 @@ internal static class PublicSetupEntry
         catch { }
     }
 
+    private static int RunInstallerSelfTest()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(),
+            "TailscaleQuickRepair-Setup-SelfTest-" + Guid.NewGuid().ToString("N")
+        );
+        string appDir = Path.Combine(root, "app");
+        string installedSetup = Path.Combine(appDir, "TailscaleQuickRepairSetup.exe");
+        string marker = Path.Combine(root, "relocation-ok.txt");
+
+        try
+        {
+            Directory.CreateDirectory(appDir);
+            File.Copy(GetCurrentExecutablePath(), installedSetup, true);
+
+            ProcessStartInfo psi = new ProcessStartInfo();
+            psi.FileName = installedSetup;
+            psi.Arguments = JoinArguments(new string[]
+            {
+                "--self-test-relocation-parent",
+                "--marker",
+                marker
+            });
+            psi.WorkingDirectory = appDir;
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            psi.EnvironmentVariables[SelfTestAppDirEnvironment] = appDir;
+
+            using (Process parent = Process.Start(psi))
+            {
+                if (parent == null)
+                {
+                    return 45;
+                }
+
+                if (!parent.WaitForExit(10000) || parent.ExitCode != 0)
+                {
+                    return 46;
+                }
+            }
+
+            for (int i = 0; i < 150 && !File.Exists(marker); i++)
+            {
+                Thread.Sleep(100);
+            }
+
+            if (!File.Exists(marker))
+            {
+                return 47;
+            }
+
+            string replaced = File.ReadAllText(installedSetup);
+            if (!String.Equals(replaced, "relocation-test-replaced", StringComparison.Ordinal))
+            {
+                return 48;
+            }
+
+            // Keep the host's original non-destructive self-test as part of the
+            // same release gate after self-replacement has been proven.
+            int hostResult = InvokeSetupHost(new string[] { "--self-test-installer" });
+            if (hostResult != 0)
+            {
+                return 49;
+            }
+
+            return 0;
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(SelfTestAppDirEnvironment, null);
+
+            try
+            {
+                Thread.Sleep(250);
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+            catch { }
+
+            CleanupStaleDetachedCopies();
+        }
+    }
+
     // Native acceptance test used by GitHub Actions. The parent executable is
-    // staged at the real installed Setup path. It launches a detached copy and
+    // staged at the installed Setup path. It launches a detached copy and
     // exits. The child then proves it can exclusively open, delete and replace
     // the original executable. This catches the Windows self-lock regression
     // that compile-only tests cannot detect.
@@ -383,6 +483,13 @@ internal static class PublicSetupEntry
 
     private static string GetAppDir()
     {
+        string selfTest = Environment.GetEnvironmentVariable(SelfTestAppDirEnvironment);
+
+        if (!String.IsNullOrWhiteSpace(selfTest))
+        {
+            return Path.GetFullPath(selfTest);
+        }
+
         return Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "TailscaleQuickRepair"
