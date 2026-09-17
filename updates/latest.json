@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase1.1",
-  "versionCode": 30000101,
+  "version": "3.0.0-phase2.1",
+  "versionCode": 30000201,
   "published": false,
   "publishedAt": null,
   "mandatory": false,
-  "notes": "Update channel bootstrap. In-app updater is not enabled yet.",
+  "notes": "Trusted self-update client bootstrap. No installable update is published yet.",
   "package": {
     "url": null,
     "sha256": null,
