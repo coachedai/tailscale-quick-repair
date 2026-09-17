@@ -1,0 +1,145 @@
+name: Validate 2.2.6 native setup bridge
+
+on:
+  push:
+    branches:
+      - phase-2.2.6-native-setup-bridge
+    paths:
+      - "src/native/PublicSetupHost.cs"
+      - "src/native/PublicSetupEntry.cs"
+      - "src/native/UpdaterHost.cs"
+      - "src/native/UpdaterEntry.cs"
+      - "src/app/Tailscale-Repair-UI.ps1"
+      - "release/build.ps1"
+      - "release/finalize-package.ps1"
+      - "release/add-native-setup-routing.ps1"
+      - "release/privacy-scan.ps1"
+      - "release/publish.json"
+      - ".github/workflows/bridge-validation.yml"
+      - "version.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-bridge:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout only this repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Repository and branch isolation
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne 'coachedai/tailscale-quick-repair') {
+            throw "Wrong repository: $env:GITHUB_REPOSITORY"
+          }
+
+          if ($env:GITHUB_REF -ne 'refs/heads/phase-2.2.6-native-setup-bridge') {
+            throw 'Bridge validation may only run on the isolated 2.2.6 branch.'
+          }
+
+      - name: Require exact bridge metadata
+        shell: pwsh
+        run: |
+          $version = Get-Content version.json -Raw | ConvertFrom-Json
+          $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
+
+          if ([string]$version.version -ne '3.0.0-phase2.2.6' -or [int64]$version.versionCode -ne 30000216) {
+            throw 'This workflow only validates the 2.2.6 bridge.'
+          }
+
+          if ([bool]$publish.publish) {
+            throw 'Bridge validation must never publish.'
+          }
+
+      - name: Privacy preflight
+        shell: powershell
+        run: |
+          .\release\privacy-scan.ps1 -Root .
+
+      - name: Build normal user-level update
+        shell: powershell
+        run: |
+          .\release\build.ps1 -OutputDirectory .\dist-bridge
+          .\release\finalize-package.ps1 -OutputDirectory .\dist-bridge
+
+      - name: Add native Setup routing
+        shell: powershell
+        run: |
+          .\release\add-native-setup-routing.ps1 -OutputDirectory .\dist-bridge
+
+      - name: Round-trip inspect bridge update
+        shell: powershell
+        run: |
+          $zip = @(Get-ChildItem .\dist-bridge -Filter 'TailscaleQuickRepair-*.zip' -File)
+          if ($zip.Count -ne 1) {
+            throw "Expected one routed bridge ZIP; found $($zip.Count)."
+          }
+
+          $root = Join-Path $env:RUNNER_TEMP 'tqr-226-bridge'
+          Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $zip[0].FullName -DestinationPath $root -Force
+
+          foreach ($relative in @(
+            'app\TailscaleQuickRepairSetup.exe',
+            'app\TailscaleQuickRepairUpdater.exe',
+            'app\Tailscale-Repair-UI.ps1',
+            'package-manifest.json',
+            'version.json'
+          )) {
+            if (-not (Test-Path -LiteralPath (Join-Path $root $relative) -PathType Leaf)) {
+              throw "Bridge update is missing: $relative"
+            }
+          }
+
+          $ui = [IO.File]::ReadAllText((Join-Path $root 'app\Tailscale-Repair-UI.ps1'), [Text.Encoding]::UTF8)
+          foreach ($marker in @(
+            '$SetupHostPath',
+            '$requiresSetup = $false',
+            "$psi.Arguments = '--upgrade'",
+            "`$ProductVersion = '3.0.0-phase2.2.6'",
+            '$ProductVersionCode = [int64]30000216'
+          )) {
+            if ($ui -notmatch [regex]::Escape($marker)) {
+              throw "Bridge update UI is missing: $marker"
+            }
+          }
+
+          $headerCount = [regex]::Matches($ui,'(?m)^param\(\r?\n\s*\[switch\]\$StartInTray\r?\n\)').Count
+          $xamlCount = [regex]::Matches($ui,'(?m)^\s*\[xml\]\$xaml\s*=\s*@"').Count
+          if ($headerCount -ne 1 -or $xamlCount -ne 1) {
+            throw "Bridge UI must remain one script. Headers=$headerCount Xaml=$xamlCount"
+          }
+
+          $manifest = Get-Content (Join-Path $root 'package-manifest.json') -Raw | ConvertFrom-Json
+          $paths = @($manifest.files | ForEach-Object { [string]$_.path })
+          if ('app/TailscaleQuickRepairSetup.exe' -notin $paths) {
+            throw 'Setup host is not protected by the package manifest.'
+          }
+
+          foreach ($entry in $manifest.files) {
+            $path = Join-Path $root ([string]$entry.path -replace '/', '\')
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Manifest path is missing: $($entry.path)"
+            }
+
+            $file = Get-Item -LiteralPath $path
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ([int64]$file.Length -ne [int64]$entry.size -or $hash -ne [string]$entry.sha256) {
+              throw "Manifest verification failed: $($entry.path)"
+            }
+          }
+
+          .\release\privacy-scan.ps1 -Root $root -SkipRepositoryIdentity
+
+      - name: Upload bridge validation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quick-repair-3.0.0-phase2.2.6-bridge
+          path: dist-bridge/*
+          if-no-files-found: error

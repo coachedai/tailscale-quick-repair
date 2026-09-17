@@ -81,11 +81,12 @@ jobs:
 
           "should_publish=$(([bool]$publish.publish).ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
-      - name: Build and round-trip validate update package
+      - name: Build and round-trip validate routed update package
         shell: powershell
         run: |
           .\release\build.ps1 -OutputDirectory .\dist
           .\release\finalize-package.ps1 -OutputDirectory .\dist
+          .\release\add-native-setup-routing.ps1 -OutputDirectory .\dist
 
       - name: Upload validation artifact
         uses: actions/upload-artifact@v4
