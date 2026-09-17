@@ -1,20 +1,20 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase2.2.2",
-  "versionCode": 30000212,
+  "version": "3.0.0-phase2.2.3",
+  "versionCode": 30000213,
   "published": true,
-  "publishedAt": "2026-09-17T14:35:44.8303728Z",
+  "publishedAt": "2026-09-17T14:42:32.3753747Z",
   "mandatory": false,
-  "notes": "Native-only trusted self-update bridge and in-app updater. Removes the legacy PowerShell installer path while keeping repair/network behaviour unchanged.",
+  "notes": "Native updater TLS 1.2 compatibility fix plus compiled HTTPS self-test and TEMP-launched in-app updater replacement safety. Repair/network behaviour remains unchanged.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.2/TailscaleQuickRepair-3.0.0-phase2.2.2.zip",
-    "sha256": "cac1776c5fe28aae027147a5990fbbf513b85887635a68c358aa5746bb30cb33",
-    "size": 37809
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.3/TailscaleQuickRepair-3.0.0-phase2.2.3.zip",
+    "sha256": "2823b2184cce67a97433eecc8cbf67a6f6b93bd43907dd6b111571e4eb0ea2d1",
+    "size": 38658
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.2/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.2.2.exe",
-    "sha256": "e31f2b45c835c78886e8f00a5449d0d8a961e9a57d5a7d4fa1522667c3b952df",
-    "size": 21504
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.3/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.2.3.exe",
+    "sha256": "635667d3ec31547cce141948141e185c01fa8011db542319b994d64305f251ca",
+    "size": 23040
   }
 }
