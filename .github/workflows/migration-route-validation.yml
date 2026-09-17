@@ -1,0 +1,122 @@
+name: Validate setup migration route
+
+on:
+  push:
+    branches:
+      - phase-2.3-public-installer
+    paths:
+      - "src/native/PublicSetupHost.cs"
+      - "src/native/PublicSetupEntry.cs"
+      - "src/native/UpdaterHost.cs"
+      - "src/native/UpdaterEntry.cs"
+      - "src/app/Tailscale-Repair-UI.ps1"
+      - "release/build.ps1"
+      - "release/finalize-package.ps1"
+      - "release/add-native-setup-routing.ps1"
+      - "release/privacy-scan.ps1"
+      - ".github/workflows/migration-route-validation.yml"
+      - "version.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-migration-route:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout only this repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Repository and branch isolation
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne 'coachedai/tailscale-quick-repair') {
+            throw "Wrong repository: $env:GITHUB_REPOSITORY"
+          }
+
+          if ($env:GITHUB_REF -ne 'refs/heads/phase-2.3-public-installer') {
+            throw "Migration validation may only run on the isolated feature branch."
+          }
+
+      - name: Privacy preflight
+        shell: powershell
+        run: |
+          .\release\privacy-scan.ps1 -Root .
+
+      - name: Build normal user-level update
+        shell: powershell
+        run: |
+          .\release\build.ps1 -OutputDirectory .\dist-migration
+          .\release\finalize-package.ps1 -OutputDirectory .\dist-migration
+
+      - name: Add native Setup routing
+        shell: powershell
+        run: |
+          .\release\add-native-setup-routing.ps1 -OutputDirectory .\dist-migration
+
+      - name: Round-trip inspect routed update
+        shell: powershell
+        run: |
+          $zip = @(Get-ChildItem .\dist-migration -Filter 'TailscaleQuickRepair-*.zip' -File)
+          if ($zip.Count -ne 1) {
+            throw "Expected one routed update ZIP; found $($zip.Count)."
+          }
+
+          $root = Join-Path $env:RUNNER_TEMP 'tqr-routed-update'
+          Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $zip[0].FullName -DestinationPath $root -Force
+
+          foreach ($relative in @(
+            'app\TailscaleQuickRepairSetup.exe',
+            'app\TailscaleQuickRepairUpdater.exe',
+            'app\Tailscale-Repair-UI.ps1',
+            'package-manifest.json',
+            'version.json'
+          )) {
+            if (-not (Test-Path -LiteralPath (Join-Path $root $relative) -PathType Leaf)) {
+              throw "Routed update is missing: $relative"
+            }
+          }
+
+          $ui = [IO.File]::ReadAllText((Join-Path $root 'app\Tailscale-Repair-UI.ps1'), [Text.Encoding]::UTF8)
+          foreach ($marker in @(
+            '$SetupHostPath',
+            '$requiresSetup = $false',
+            "$psi.Arguments = '--upgrade'"
+          )) {
+            if ($ui -notmatch [regex]::Escape($marker)) {
+              throw "Routed update UI is missing: $marker"
+            }
+          }
+
+          $manifest = Get-Content (Join-Path $root 'package-manifest.json') -Raw | ConvertFrom-Json
+          $paths = @($manifest.files | ForEach-Object { [string]$_.path })
+          if ('app/TailscaleQuickRepairSetup.exe' -notin $paths) {
+            throw 'Setup host is not protected by the package manifest.'
+          }
+
+          foreach ($entry in $manifest.files) {
+            $path = Join-Path $root ([string]$entry.path -replace '/', '\')
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Manifest path is missing: $($entry.path)"
+            }
+
+            $file = Get-Item -LiteralPath $path
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ([int64]$file.Length -ne [int64]$entry.size -or $hash -ne [string]$entry.sha256) {
+              throw "Manifest verification failed: $($entry.path)"
+            }
+          }
+
+          .\release\privacy-scan.ps1 -Root $root -SkipRepositoryIdentity
+
+      - name: Upload routed validation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quick-repair-native-setup-route
+          path: dist-migration/*
+          if-no-files-found: error
