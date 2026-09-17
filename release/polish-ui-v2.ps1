@@ -100,6 +100,150 @@ $text = Replace-RegexOnce `
     -Replace $remoteHeaderNormalized `
     -Description 'Remote details header normalization'
 
+# UI-only 2.3.5 polish. Do not touch repair tasks, setup routing, networking or
+# the proven repair engine. Keep new display strings ASCII-only for Windows
+# PowerShell 5.1 packaging safety.
+$activityHeader = @'
+<StackPanel>
+                                            <TextBlock Text="Activity" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Text}"/>
+                                            <TextBlock Text="Changes and repair actions from this app session."
+                                                       Margin="0,4,0,0"
+                                                       FontSize="11"
+                                                       Foreground="{StaticResource Faint}"
+                                                       TextWrapping="Wrap"/>
+                                        </StackPanel>
+'@
+$text = Replace-ExactOnce `
+    -Text $text `
+    -Find '<TextBlock Text="This session" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Text}"/>' `
+    -Replace $activityHeader `
+    -Description 'activity heading'
+
+$text = Replace-ExactOnce `
+    -Text $text `
+    -Find 'Text="No repair actions yet."/>' `
+    -Replace 'Text="No activity yet."/>' `
+    -Description 'activity empty state'
+
+$text = Replace-RegexOnce `
+    -Text $text `
+    -Pattern '(?s)\s*\$eventsText = ''''\s*\r?\n\s*if \(\$Data\.events\) \{.*?\r?\n\s*\$script:copyDiagnosticsText = @\(' `
+    -Replace @'
+
+        $activityItems = @()
+
+        if ($Data.events) {
+            foreach ($eventLine in @($Data.events)) {
+                $line = [string]$eventLine
+
+                if ([string]::IsNullOrWhiteSpace($line)) {
+                    continue
+                }
+
+                # Reachability is already visible in Remote. Keep Activity for
+                # changes and repair actions rather than duplicating status.
+                if ($line -match '\s+Peer reachable(?: via .+)?$') {
+                    continue
+                }
+
+                $activityItems += $line
+            }
+        }
+
+        if ($script:reliabilityEvents.Count -gt 0) {
+            $activityItems += @(
+                $script:reliabilityEvents |
+                    Select-Object -Last 3
+            )
+        }
+
+        if ($script:connectionEvents.Count -gt 0) {
+            $activityItems += @(
+                $script:connectionEvents |
+                    Select-Object -Last 3
+            )
+        }
+
+        $activityItems = @(
+            $activityItems |
+                Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+                Select-Object -Unique |
+                Select-Object -Last 5
+        )
+
+        if ($activityItems.Count -gt 0) {
+            $SessionText.Text = @(
+                $activityItems |
+                    ForEach-Object { '- ' + [string]$_ }
+            ) -join [Environment]::NewLine
+        }
+        elseif ([bool]$Data.done) {
+            $SessionText.Text = if ([bool]$Data.repairPerformed) {
+                'Repair completed successfully.'
+            }
+            else {
+                'No changes were needed.'
+            }
+        }
+        else {
+            $SessionText.Text = 'Check in progress.'
+        }
+
+        $script:copyDiagnosticsText = @(
+'@ `
+    -Description 'activity feed logic'
+
+$text = Replace-RegexOnce `
+    -Text $text `
+    -Pattern '(?m)^\s*''This session''\s*$' `
+    -Replace "            'Activity'" `
+    -Description 'activity copy heading'
+
+# Reserve the small status rows instead of collapsing them. This keeps the
+# hero and connection cards at one stable height while a check is running.
+$lastCheckedXaml = @'
+                            <TextBlock
+                                x:Name="LastCheckedText"
+                                Margin="0,9,0,0"
+                                MinHeight="14"
+                                FontSize="11"
+                                Foreground="{StaticResource Faint}"
+                                Visibility="Hidden"/>
+'@
+$text = Replace-RegexOnce `
+    -Text $text `
+    -Pattern '(?s)\s*<TextBlock\s+x:Name="LastCheckedText"\s+Margin="0,9,0,0"\s+FontSize="11"\s+Foreground="\{StaticResource Faint\}"\s+Visibility="Collapsed"/>' `
+    -Replace ([Environment]::NewLine + $lastCheckedXaml.TrimEnd("`r", "`n")) `
+    -Description 'stable hero freshness row'
+
+$connectionInsightXaml = @'
+                            <TextBlock
+                                x:Name="ConnectionInsightText"
+                                Grid.Row="3"
+                                Margin="0,15,0,0"
+                                MinHeight="18"
+                                FontSize="11.5"
+                                Foreground="{StaticResource Faint}"
+                                Visibility="Hidden"
+                                TextWrapping="Wrap"/>
+'@
+$text = Replace-RegexOnce `
+    -Text $text `
+    -Pattern '(?s)\s*<TextBlock\s+x:Name="ConnectionInsightText"\s+Grid\.Row="3"\s+Margin="0,15,0,0"\s+FontSize="11\.5"\s+Foreground="\{StaticResource Faint\}"\s+Visibility="Collapsed"\s+TextWrapping="Wrap"/>' `
+    -Replace ([Environment]::NewLine + $connectionInsightXaml.TrimEnd("`r", "`n")) `
+    -Description 'stable connection insight row'
+
+$text = $text.Replace(
+    '$LastCheckedText.Visibility = [System.Windows.Visibility]::Collapsed',
+    '$LastCheckedText.Visibility = [System.Windows.Visibility]::Hidden'
+)
+
+$text = Replace-ExactOnce `
+    -Text $text `
+    -Find '$ConnectionInsightText.Visibility = [System.Windows.Visibility]::Collapsed' `
+    -Replace '$ConnectionInsightText.Visibility = [System.Windows.Visibility]::Hidden' `
+    -Description 'stable connection insight visibility'
+
 $themeAnchor = @'
     Add-Type -AssemblyName System.Drawing
 
@@ -203,10 +347,26 @@ foreach ($required in @(
     'VerticalScrollBarVisibility="Hidden"',
     ('Current ' + $Version + ' - Check GitHub for updates.'),
     ('$ProductVersion = ''' + $Version + ''''),
-    ('$ProductVersionCode = [int64]' + $VersionCode)
+    ('$ProductVersionCode = [int64]' + $VersionCode),
+    'Text="Activity"',
+    'Check in progress.',
+    'MinHeight="14"',
+    'MinHeight="18"'
 )) {
     if ($text -notmatch [regex]::Escape($required)) {
         throw "UI polish verification failed: $required"
+    }
+}
+
+# Guard this release as UI-only. These strings belong to repair/setup behavior
+# and must not be introduced by the polish transform.
+foreach ($forbidden in @(
+    'Ensure-SilentRepairIntegration',
+    'HardenTaskLaunchers',
+    'Launch-Tailscale-Backend.vbs'' -and'
+)) {
+    if ($text -match [regex]::Escape($forbidden)) {
+        throw "UI-only polish unexpectedly contains repair migration code: $forbidden"
     }
 }
 

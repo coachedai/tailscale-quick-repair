@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase2.3.4",
-  "versionCode": 30000304,
-  "requiresSetup": true,
-  "publicInstaller": true,
-  "notes": "Recovery release restoring the last known-good protected 2.3.2 code path after the 2.3.3 field regression. No new repair or network behavior is introduced."
+  "version": "3.0.0-phase2.3.5",
+  "versionCode": 30000305,
+  "requiresSetup": false,
+  "publicInstaller": false,
+  "notes": "UI-only polish on the recovered 2.3.4 baseline: renames This session to Activity, removes duplicated peer-reachable noise, uses ASCII-safe in-progress text, and reserves status-row space so Check Again does not make the layout jump. Repair, setup, task and network behavior are unchanged."
 }
