@@ -1,7 +1,7 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase2.1.1",
-  "versionCode": 30000202,
-  "notes": "Trusted self-update client bootstrap hotfix. Publishing remains disabled."
+  "version": "3.0.0-phase2.1.2",
+  "versionCode": 30000203,
+  "notes": "Trusted update check + Details organisation refresh. Publishing remains disabled."
 }
