@@ -1,0 +1,196 @@
+name: Validate 2.3.1 Setup self-relocation
+
+on:
+  push:
+    branches:
+      - phase-2.3.1-setup-relocation
+    paths:
+      - "src/native/PublicSetupEntry.cs"
+      - "src/native/PublicSetupHost.cs"
+      - "src/**"
+      - "release/**"
+      - ".github/workflows/setup-relocation-validation.yml"
+      - "version.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-setup-relocation:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout only this repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Repository and branch isolation
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne 'coachedai/tailscale-quick-repair') {
+            throw "Wrong repository: $env:GITHUB_REPOSITORY"
+          }
+          if ($env:GITHUB_REF -ne 'refs/heads/phase-2.3.1-setup-relocation') {
+            throw 'Setup relocation validation may only run on its isolated branch.'
+          }
+
+      - name: Require exact 2.3.1 metadata and disabled publishing
+        shell: pwsh
+        run: |
+          $version = Get-Content version.json -Raw | ConvertFrom-Json
+          $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
+
+          if ([string]$version.version -ne '3.0.0-phase2.3.1' -or [int64]$version.versionCode -ne 30000301) {
+            throw 'Unexpected 2.3.1 version metadata.'
+          }
+          if ([string]$publish.version -ne [string]$version.version -or [int64]$publish.versionCode -ne [int64]$version.versionCode) {
+            throw 'release/publish.json does not match version.json.'
+          }
+          if ([bool]$publish.publish) {
+            throw 'Setup relocation validation must never publish.'
+          }
+          if (-not [bool]$publish.requiresSetup) {
+            throw '2.3.1 must remain a protected Setup migration.'
+          }
+
+      - name: Privacy and project-isolation preflight
+        shell: powershell
+        run: |
+          .\release\privacy-scan.ps1 -Root .
+
+      - name: Require native relocation implementation
+        shell: pwsh
+        run: |
+          $entry = Get-Content src\native\PublicSetupEntry.cs -Raw
+          foreach ($marker in @(
+            'RelaunchDetached',
+            'IsRunningFromInstalledSetup',
+            'TailscaleQuickRepair-Setup-Detached-',
+            'MoveFileDelayUntilReboot',
+            '--self-test-relocation-parent',
+            '--self-test-relocation-child'
+          )) {
+            if ($entry -notmatch [regex]::Escape($marker)) {
+              throw "Setup relocation source is missing: $marker"
+            }
+          }
+
+      - name: Build normal routed update
+        shell: powershell
+        run: |
+          .\release\build.ps1 -OutputDirectory .\dist-update
+          .\release\finalize-package.ps1 -OutputDirectory .\dist-update
+          .\release\add-native-setup-routing.ps1 -OutputDirectory .\dist-update
+
+      - name: Build complete public Setup bundle
+        shell: powershell
+        run: |
+          .\release\build-public.ps1 -OutputDirectory .\dist-public
+
+      - name: Native Windows self-relocation acceptance
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem .\dist-public -Filter 'TailscaleQuickRepair-Setup-*.exe' -File | Select-Object -First 1
+          if (-not $setup) { throw 'Compiled public Setup EXE is missing.' }
+
+          $installDir = Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair'
+          $installedSetup = Join-Path $installDir 'TailscaleQuickRepairSetup.exe'
+          $marker = Join-Path $env:RUNNER_TEMP 'tqr-setup-relocation-ok.txt'
+
+          Remove-Item $installDir -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item $marker -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+          Copy-Item -LiteralPath $setup.FullName -Destination $installedSetup -Force
+
+          $process = Start-Process `
+            -FilePath $installedSetup `
+            -ArgumentList @('--self-test-relocation-parent','--marker',('"' + $marker + '"')) `
+            -Wait `
+            -PassThru
+
+          if ($process.ExitCode -ne 0) {
+            throw "Relocation parent failed with exit code $($process.ExitCode)."
+          }
+
+          for ($i = 0; $i -lt 150 -and -not (Test-Path -LiteralPath $marker); $i++) {
+            Start-Sleep -Milliseconds 100
+          }
+
+          if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+            throw 'Detached Setup child never proved original-file replacement.'
+          }
+
+          $replacement = Get-Content -LiteralPath $installedSetup -Raw
+          if ($replacement -ne 'relocation-test-replaced') {
+            throw 'Detached Setup child did not replace the original installed executable.'
+          }
+
+          $detachedPath = (Get-Content -LiteralPath $marker -Raw).Trim()
+          if ([string]::IsNullOrWhiteSpace($detachedPath)) {
+            throw 'Relocation marker did not record the detached executable.'
+          }
+          if ($detachedPath -notmatch 'TailscaleQuickRepair-Setup-Detached-[0-9a-f]{32}\.exe$') {
+            throw "Unexpected detached Setup path: $detachedPath"
+          }
+          if ([string]::Equals([IO.Path]::GetFullPath($detachedPath), [IO.Path]::GetFullPath($installedSetup), [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Relocation child was still running from the installed Setup path.'
+          }
+
+          Write-Host "Native self-relocation acceptance passed: $detachedPath"
+
+          Remove-Item $installDir -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item $marker -Force -ErrorAction SilentlyContinue
+          Get-ChildItem $env:TEMP -Filter 'TailscaleQuickRepair-Setup-Detached-*.exe' -File -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+
+      - name: Verify package manifests and privacy
+        shell: powershell
+        run: |
+          $updateZip = @(Get-ChildItem .\dist-update -Filter 'TailscaleQuickRepair-*.zip' -File)
+          if ($updateZip.Count -ne 1) { throw "Expected one update ZIP; found $($updateZip.Count)." }
+
+          $updateRoot = Join-Path $env:RUNNER_TEMP 'tqr-231-update'
+          Remove-Item $updateRoot -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $updateZip[0].FullName -DestinationPath $updateRoot -Force
+
+          $setupMetadata = Get-Content .\dist-public\public-setup-metadata.json -Raw | ConvertFrom-Json
+          if ([string]$setupMetadata.version -ne '3.0.0-phase2.3.1' -or [int64]$setupMetadata.versionCode -ne 30000301) {
+            throw 'Public Setup metadata is not 2.3.1.'
+          }
+
+          $setupZip = Get-Item (Join-Path .\dist-public ([string]$setupMetadata.setupPackage.file))
+          $setupRoot = Join-Path $env:RUNNER_TEMP 'tqr-231-setup'
+          Remove-Item $setupRoot -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $setupZip.FullName -DestinationPath $setupRoot -Force
+
+          foreach ($root in @($updateRoot,$setupRoot)) {
+            $manifest = Get-Content (Join-Path $root 'package-manifest.json') -Raw | ConvertFrom-Json
+            if ([string]$manifest.version -ne '3.0.0-phase2.3.1' -or [int64]$manifest.versionCode -ne 30000301) {
+              throw "Package metadata is not 2.3.1: $root"
+            }
+
+            foreach ($entry in $manifest.files) {
+              $path = Join-Path $root ([string]$entry.path -replace '/', '\\')
+              if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                throw "Manifest path is missing: $($entry.path)"
+              }
+              $item = Get-Item -LiteralPath $path
+              $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ([int64]$item.Length -ne [int64]$entry.size -or $hash -ne [string]$entry.sha256) {
+                throw "Manifest verification failed: $($entry.path)"
+              }
+            }
+
+            .\release\privacy-scan.ps1 -Root $root -SkipRepositoryIdentity
+          }
+
+      - name: Upload validated 2.3.1 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: quick-repair-3.0.0-phase2.3.1-relocation
+          path: |
+            dist-update/*
+            dist-public/*
+          if-no-files-found: error
