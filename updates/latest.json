@@ -1,20 +1,20 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase2.2.5",
-  "versionCode": 30000215,
+  "version": "3.0.0-phase2.2.6",
+  "versionCode": 30000216,
   "published": true,
-  "publishedAt": "2026-09-17T15:11:54.4546222Z",
+  "publishedAt": "2026-09-17T20:52:02.6310363Z",
   "mandatory": false,
-  "notes": "Restores dark native window chrome, removes the visible white scrollbar while keeping wheel scrolling, and fixes displayed version metadata. Repair/network behaviour remains unchanged.",
+  "notes": "Adds the native Setup migration host and safe routing for future protected repair-engine updates. Repair and network behaviour are unchanged.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.5/TailscaleQuickRepair-3.0.0-phase2.2.5.zip",
-    "sha256": "f4b6fabcd660d6aa04ac88204852c6cbaa83272f5bf601928b85c467e5a91520",
-    "size": 39083
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.6/TailscaleQuickRepair-3.0.0-phase2.2.6.zip",
+    "sha256": "1bdff0c93d47f5abdf33694213f11fbf92282a9acffffd5c7a363f852cb6c7c5",
+    "size": 54285
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.5/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.2.5.exe",
-    "sha256": "0320f15f29123b96f860a6e01811b15377c9234e511bc6f9ba2c7714ed5a7d37",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.6/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.2.6.exe",
+    "sha256": "82f93756995a8189fd0fb80bd732be4a460e2b373b08f3a1c47400782a8306d6",
     "size": 23040
   }
 }
