@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "description": "Phase 2.2 trusted self-update package",
+  "files": [
+    {
+      "source": "src/app/Tailscale-Repair-UI.ps1",
+      "target": "app/Tailscale-Repair-UI.ps1"
+    },
+    {
+      "source": "src/program/Update-Installer.ps1",
+      "target": "program/Update-Installer.ps1"
+    },
+    {
+      "source": "src/native/UpdaterHost.cs",
+      "target": "app/TailscaleQuickRepairUpdater.exe",
+      "build": "csc"
+    }
+  ]
+}
