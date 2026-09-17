@@ -3,13 +3,13 @@
   "channel": "preview",
   "version": "3.0.0-phase2.2.1",
   "versionCode": 30000211,
-  "published": true,
-  "publishedAt": "2026-09-17T10:39:40.8732224Z",
+  "published": false,
+  "publishedAt": null,
   "mandatory": false,
-  "notes": "First trusted in-app self-update proof. Adds the staged updater package while keeping repair/network behaviour unchanged.",
+  "notes": "Self-update temporarily disabled while the Windows bootstrap is being redesigned to avoid ClickFix-like PowerShell behaviour.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.1/TailscaleQuickRepair-3.0.0-phase2.2.1.zip",
-    "sha256": "82d1f15a28e123c5b126f2cd06f424174c78c4d662587e0a92583252daebb89b",
-    "size": 36010
+    "url": null,
+    "sha256": null,
+    "size": null
   }
 }
