@@ -1,62 +1,57 @@
 # Tailscale Quick Repair
 
-A focused Windows utility for checking local Tailscale health, verifying a remote Tailscale peer, and applying a narrow Tailscale-only repair when needed.
+A focused Windows utility for checking local Tailscale health, verifying a remote Tailscale peer, and applying the proven Tailscale-only repair when needed.
 
-This repository contains the public source, release assets, and trusted update channel for **Tailscale Quick Repair**.
+This repository is the public source and update channel for **Tailscale Quick Repair**.
 
 ## Install
 
-From the 2.3 public release onward, new users can install Quick Repair with the native Windows Setup executable from the newest GitHub Release.
+New users install with the native Windows Setup release asset. Setup asks for the Tailscale target this PC should check — either a Tailscale IP or a MagicDNS device name — and can optionally start Quick Repair with Windows.
 
-1. Install Tailscale and sign in on this PC.
-2. Download `TailscaleQuickRepair-Setup-<version>.exe` from the latest release.
-3. Run Setup and approve the Windows administrator prompt.
-4. Enter the Tailscale IP or MagicDNS name of the remote PC, server, or VPS you want Quick Repair to check.
-5. Choose whether Quick Repair should start with Windows.
+Existing installs update from **Details → Maintenance → Check again → Update now**. Ordinary app updates stay user-level. Releases that update the protected repair engine hand off to the native Setup host and request normal Windows administrator approval.
 
-The target can be changed later from **Details → Remote → Change**. The target is saved only on that PC under `%LOCALAPPDATA%\TailscaleQuickRepair\config.json`.
-
-See [docs/INSTALL.md](docs/INSTALL.md) for the full install and update flow.
-
-## What it does
-
-Quick Repair checks four parts of the path:
-
-- the local Tailscale desktop client
-- the local Tailscale service/backend
-- the configured remote Tailscale device
-- the current direct or DERP-relayed path and latency
-
-The repair engine is intentionally narrow. It may restart the local Tailscale service when Tailscale reports the configured peer online but the peer cannot actually be reached. A peer reported offline does not trigger that recovery. Quick Repair does not reset Winsock, TCP/IP, or unrelated network adapters.
-
-The configured remote machine is a health target only; Quick Repair does not modify that remote machine.
-
-## Automatic repair and diagnostics
-
-Automatic repair is optional and local-only. It watches the local Tailscale client/service and uses the same protected repair path when recovery is actually needed.
-
-Advanced Diagnostics is read-only. It can inspect Tailscale path, protocol and local VPN/network conditions, but it does not change the main health result or network settings.
-
-## Updates
-
-Quick Repair uses `updates/latest.json` as its public update channel. The app downloads release assets only from this repository and verifies the published file size and SHA-256 before installation.
-
-Every update ZIP also contains `package-manifest.json`. Each packaged file is checked for its relative path, size, and SHA-256. The release pipeline extracts the finished ZIP and repeats those checks before publication.
-
-Normal app/UI updates stay user-level and do not require elevation. If a release needs to replace the protected repair engine or scheduled tasks, Quick Repair hands the update to the native Setup host and Windows asks for administrator approval once.
-
-The retired BAT/encoded-PowerShell update path is not used by the current native updater.
+See `docs/INSTALL.md` for the full installation and upgrade flow.
 
 ## Privacy
 
-Machine-specific values such as peer addresses, usernames, local paths, and settings are not stored in this repository or uploaded by Quick Repair. The configured target stays in local configuration on the PC running the app.
+Machine-specific values such as peer addresses, usernames, local paths and settings are not stored in this repository. Each PC keeps its selected target in:
 
-The release pipeline performs repository-isolation and privacy scans before validation and again before publication. See [docs/PRIVACY.md](docs/PRIVACY.md).
+`%LOCALAPPDATA%\TailscaleQuickRepair\config.json`
 
-## Release status
+The target can be changed later inside Quick Repair. It is not uploaded to GitHub.
 
-The current published version and exact trusted hashes are always defined by [`updates/latest.json`](updates/latest.json) and the corresponding GitHub Release. Development keeps `release/publish.json` disabled until the release candidate passes its Windows, WPF, native-host, privacy, package-manifest, SHA-256, and round-trip validation gates.
+The release pipeline performs repository-isolation and privacy scans before validation and again immediately before publication.
 
-## Preview software
+## Repair scope
 
-Quick Repair is still in preview. Current binaries are not Authenticode code-signed, so Windows SmartScreen may show an unfamiliar-app warning on a fresh download. Release hashes are published and independently verified by the build pipeline.
+The repair engine is intentionally narrow. Quick Repair checks local Tailscale health and the configured remote peer. It may recycle the Tailscale service when the peer is reported online by Tailscale but cannot actually be reached. An offline peer does not trigger that recovery.
+
+The product does not perform broad Windows network resets as part of normal repair.
+
+## Updates and verification
+
+Quick Repair reads the public update manifest through the GitHub API and only accepts release assets from this repository.
+
+Before installation it verifies the published package size and SHA-256. The package also contains an inner manifest, and every packaged file is checked for its exact relative path, size and SHA-256.
+
+The release pipeline then extracts the finished package again and repeats those checks before publication. Protected-engine releases also build and verify a separate full Setup package.
+
+Updates are applied transactionally with rollback protection. The update path is native and does not use the retired encoded-PowerShell/BAT bridge.
+
+## Main components
+
+- Native desktop host
+- Tailscale-only repair engine
+- Optional automatic repair monitor
+- Read-only advanced diagnostics
+- Native self-updater
+- Native Setup / repair-integration host
+- Per-device target configuration
+
+## Build and release safety
+
+Normal development keeps `release/publish.json` at `"publish": false`.
+
+A release is only published after repository isolation, privacy checks, PowerShell/WPF validation, native compilation, HTTPS/TLS checks, package-manifest round-trip verification, independent setup-package verification and final package scanning pass.
+
+Preview Windows executables are not currently Authenticode/code-signed, so Windows may show the standard publisher warning on a fresh download. The SHA-256 hashes published with each release are the integrity source until signing is added.
