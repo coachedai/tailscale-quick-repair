@@ -20,6 +20,7 @@ $required = @(
     'src\program\Auto-Repair-Monitor.ps1',
     'src\native\NativeHost.cs',
     'src\native\PublicSetupHost.cs',
+    'src\native\PublicSetupEntry.cs',
     'src\native\UpdaterHost.cs',
     'src\native\UpdaterEntry.cs',
     'release\public-ui.ps1'
@@ -146,9 +147,12 @@ try {
         -References @($automation,$windowsForms) -MainType 'NativeHost'
 
     Invoke-CSharpBuild -Output $setupHostInstalled `
-        -Sources @((Join-Path $repo 'src\native\PublicSetupHost.cs')) `
+        -Sources @(
+            (Join-Path $repo 'src\native\PublicSetupHost.cs'),
+            (Join-Path $repo 'src\native\PublicSetupEntry.cs')
+        ) `
         -References @($webExtensions,$compression,$compressionFs,$windowsForms,$drawing) `
-        -MainType 'PublicSetupHost'
+        -MainType 'PublicSetupEntry'
 
     Copy-Item -LiteralPath $setupHostInstalled -Destination $setupAsset -Force
 
