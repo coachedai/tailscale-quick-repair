@@ -6,20 +6,20 @@ This repository is the source and update channel for **Tailscale Quick Repair**.
 
 ## Current track
 
-- Current development baseline: `3.0.0-phase1.1`
+- Current development baseline: `3.0.0-phase2.1`
 - Frozen stable base: `2.0.0`
 - Update manifest: `updates/latest.json`
 - Releases are validated by GitHub Actions before they can be published.
 
 ## Update architecture
 
-Quick Repair will use one stable public manifest URL:
+Quick Repair uses one stable public manifest URL:
 
 `https://raw.githubusercontent.com/coachedai/tailscale-quick-repair/main/updates/latest.json`
 
-A published update will contain a version, monotonically increasing `versionCode`, release notes, a ZIP release asset, the ZIP SHA-256, and an inner package manifest with SHA-256 hashes for every shipped file.
+A published update contains a version, monotonically increasing `versionCode`, release notes, a ZIP release asset, the ZIP SHA-256, and an inner package manifest with SHA-256 hashes for every shipped file.
 
-The desktop app will download to a staging directory, verify hashes, preflight the package, create a rollback checkpoint, install transactionally, and restart itself.
+The desktop app downloads to a staging directory, verifies hashes, preflights the package, creates a rollback checkpoint, installs transactionally, and restarts itself.
 
 ## Privacy
 
@@ -33,4 +33,4 @@ The release pipeline must not publish if validation fails. The working repair ba
 
 Normal development commits leave `release/publish.json` with `"publish": false`.
 
-When a release is ready, source/version metadata is updated and the publish switch is enabled. GitHub Actions validates the repository, the staged package and the final artifact before a release can be published.
+When a release is ready, source/version metadata is updated and the publish switch is enabled. GitHub Actions validates repository isolation, privacy, source/package integrity and the final artifact before a release can be published.
