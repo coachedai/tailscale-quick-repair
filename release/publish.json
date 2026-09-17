@@ -1,7 +1,7 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase2.2.5",
-  "versionCode": 30000215,
-  "notes": "Restores dark native window chrome, removes the visible white scrollbar while keeping wheel scrolling, and fixes displayed version metadata. Repair/network behaviour remains unchanged."
+  "version": "3.0.0-phase2.3.0",
+  "versionCode": 30000300,
+  "notes": "Public installer generation: generic target configuration, native Setup, complete local repair tooling and private-on-device target settings. Publishing remains disabled during validation."
 }
