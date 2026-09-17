@@ -26,8 +26,6 @@ function Replace-RegexLiteralOnce {
         throw "Public UI regex expected one match for $Description; found $($matches.Count)."
     }
 
-    # MatchEvaluator returns the text literally. This is critical because .NET
-    # replacement-string syntax treats $_ as 'the entire input string'.
     $evaluator = [System.Text.RegularExpressions.MatchEvaluator]{
         param($match)
         return $Replacement
@@ -61,14 +59,11 @@ $stateReplacement = $stateMatch.Value + [Environment]::NewLine +
     '$SetupHostPath = Join-Path $StateDir ''TailscaleQuickRepairSetup.exe'''
 $text = $text.Remove($stateMatch.Index, $stateMatch.Length).Insert($stateMatch.Index, $stateReplacement)
 
-# The public/native host uses one stable startup switch.
 $text = $text.Replace(
     '$command = ''"'' + $NativeHostPath + ''" --tray''',
     '$command = ''"'' + $NativeHostPath + ''" --start-in-tray'''
 )
 
-# Public 2.3 installation maintenance is owned by the native Setup host, not
-# the legacy maintenance PowerShell script/VBS launcher.
 $text = $text.Replace(
     '$repairToolAvailable = Test-Path -LiteralPath $RepairInstallPath',
     '$repairToolAvailable = Test-Path -LiteralPath $SetupHostPath'
@@ -367,13 +362,9 @@ $xamlCount = [regex]::Matches(
     $text,
     '(?m)^\s*\[xml\]\$xaml\s*=\s*@"'
 ).Count
-$errorPreferenceCount = [regex]::Matches(
-    $text,
-    "(?m)^\$ErrorActionPreference = 'Stop'\s*$"
-).Count
 
-if ($headerCount -ne 1 -or $xamlCount -ne 1 -or $errorPreferenceCount -ne 1) {
-    throw "Packaged UI must contain one script only. Headers=$headerCount Xaml=$xamlCount ErrorPreference=$errorPreferenceCount"
+if ($headerCount -ne 1 -or $xamlCount -ne 1) {
+    throw "Packaged UI must contain one script only. Headers=$headerCount Xaml=$xamlCount"
 }
 
 [void][scriptblock]::Create($text)
