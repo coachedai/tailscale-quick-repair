@@ -1,0 +1,745 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.IO.Compression;
+using System.Net;
+using System.Security.Cryptography;
+using System.Security.Principal;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Web.Script.Serialization;
+using System.Windows.Forms;
+using Microsoft.Win32;
+
+[assembly: System.Reflection.AssemblyTitle("Tailscale Quick Repair Setup")]
+[assembly: System.Reflection.AssemblyProduct("Tailscale Quick Repair")]
+[assembly: System.Reflection.AssemblyVersion("3.0.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("3.0.0.0")]
+
+internal static class PublicSetupHost
+{
+    private const string ManifestApiUrl =
+        "https://api.github.com/repos/coachedai/tailscale-quick-repair/contents/updates/latest.json?ref=main";
+    private const string TrustedHost = "github.com";
+    private const string TrustedReleasePrefix = "/coachedai/tailscale-quick-repair/releases/download/";
+    private const string RepairTaskName = "Tailscale Quick Repair";
+    private const string AutoTaskName = "Tailscale Quick Repair Auto Monitor";
+    private const string StartupName = "Tailscale Quick Repair";
+
+    private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
+
+    [STAThread]
+    private static int Main(string[] args)
+    {
+        try
+        {
+            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+
+            if (HasSwitch(args, "--self-test-installer"))
+            {
+                Uri uri;
+                return Uri.TryCreate(ManifestApiUrl, UriKind.Absolute, out uri) && uri.Scheme == "https"
+                    ? 0
+                    : 2;
+            }
+
+            bool repairOnly = HasSwitch(args, "--repair");
+            string peer = ReadArg(args, "--peer");
+            bool startup = !String.Equals(ReadArg(args, "--startup"), "false", StringComparison.OrdinalIgnoreCase);
+
+            if (repairOnly && String.IsNullOrWhiteSpace(peer))
+            {
+                peer = ReadConfiguredPeer();
+                startup = IsStartupEnabled();
+            }
+
+            if (!repairOnly && String.IsNullOrWhiteSpace(peer))
+            {
+                SetupChoice choice = ShowSetupDialog();
+                if (choice == null) return 0;
+                peer = choice.Peer;
+                startup = choice.StartWithWindows;
+            }
+
+            peer = NormalizePeer(peer);
+
+            if (!IsAdministrator())
+            {
+                return RelaunchElevated(peer, startup, repairOnly);
+            }
+
+            return repairOnly
+                ? RepairIntegration(peer, startup)
+                : Install(peer, startup);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                "Setup could not complete.\r\n\r\n" + ex.Message,
+                "Tailscale Quick Repair Setup",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error
+            );
+            return 10;
+        }
+    }
+
+    private static int Install(string peer, bool startup)
+    {
+        string work = Path.Combine(Path.GetTempPath(), "TailscaleQuickRepair-Setup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(work);
+
+        try
+        {
+            SetupManifest manifest = FetchSetupManifest();
+            string zip = Path.Combine(work, "setup.zip");
+            DownloadFile(manifest.Url, zip);
+
+            FileInfo file = new FileInfo(zip);
+            if (file.Length != manifest.Size)
+                throw new InvalidDataException("Setup package size did not match the trusted manifest.");
+
+            if (!String.Equals(Sha256File(zip), manifest.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Setup package failed SHA-256 verification.");
+
+            string extract = Path.Combine(work, "package");
+            Directory.CreateDirectory(extract);
+            ZipFile.ExtractToDirectory(zip, extract);
+
+            PackageManifest package = ReadPackageManifest(extract);
+            if (package.VersionCode != manifest.VersionCode || !String.Equals(package.Version, manifest.Version, StringComparison.Ordinal))
+                throw new InvalidDataException("Setup package metadata does not match the trusted channel.");
+
+            List<InstallFile> files = VerifyPackage(extract, package);
+
+            StopQuickRepair();
+            ApplyFiles(files, work);
+            WriteLocalConfig(peer);
+            RegisterRepairTask();
+            RegisterAutoRepairTask();
+            ConfigureStartup(startup);
+            CreateStartMenuShortcut();
+            StartQuickRepair();
+
+            MessageBox.Show(
+                "Tailscale Quick Repair is ready.\r\n\r\nTarget: " + peer,
+                "Tailscale Quick Repair Setup",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information
+            );
+
+            return 0;
+        }
+        finally
+        {
+            try { if (Directory.Exists(work)) Directory.Delete(work, true); } catch { }
+        }
+    }
+
+    private static int RepairIntegration(string peer, bool startup)
+    {
+        RequireInstalledFile(Path.Combine(GetAppDir(), "TailscaleQuickRepair.exe"));
+        RequireInstalledFile(Path.Combine(GetAppDir(), "Tailscale-Repair-UI.ps1"));
+        RequireInstalledFile(Path.Combine(GetProgramDir(), "Repair-Backend.ps1"));
+        RequireInstalledFile(Path.Combine(GetProgramDir(), "Auto-Repair-Monitor.ps1"));
+
+        WriteLocalConfig(peer);
+        RegisterRepairTask();
+        RegisterAutoRepairTask();
+        ConfigureStartup(startup);
+        CreateStartMenuShortcut();
+        StartQuickRepair();
+
+        MessageBox.Show(
+            "Quick Repair's Windows integration was rebuilt successfully.",
+            "Tailscale Quick Repair Setup",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information
+        );
+
+        return 0;
+    }
+
+    private static SetupManifest FetchSetupManifest()
+    {
+        string apiJson = DownloadString(ManifestApiUrl, true);
+        Dictionary<string, object> api = Deserialize(apiJson);
+        string encoding = ReadString(api, "encoding");
+        string content = ReadString(api, "content").Replace("\r", "").Replace("\n", "");
+
+        if (!String.Equals(encoding, "base64", StringComparison.OrdinalIgnoreCase) || String.IsNullOrWhiteSpace(content))
+            throw new InvalidDataException("GitHub returned an unexpected setup-channel response.");
+
+        Dictionary<string, object> root = Deserialize(Encoding.UTF8.GetString(Convert.FromBase64String(content)));
+        if (ReadInt(root, "schema") != 1 || !ReadBool(root, "published"))
+            throw new InvalidDataException("No installable Quick Repair release is currently published.");
+
+        Dictionary<string, object> setup = ReadDictionary(root, "setup");
+        SetupManifest result = new SetupManifest();
+        result.Version = ReadString(root, "version");
+        result.VersionCode = ReadLong(root, "versionCode");
+        result.Url = ReadString(setup, "url");
+        result.Sha256 = ReadString(setup, "sha256").ToLowerInvariant();
+        result.Size = ReadLong(setup, "size");
+
+        if (String.IsNullOrWhiteSpace(result.Version) || result.VersionCode <= 0 || result.Size <= 0 ||
+            !IsSha256(result.Sha256) || !IsTrustedReleaseUrl(result.Url))
+            throw new InvalidDataException("The setup manifest failed trust validation.");
+
+        return result;
+    }
+
+    private static PackageManifest ReadPackageManifest(string root)
+    {
+        string path = Path.Combine(root, "package-manifest.json");
+        if (!File.Exists(path)) throw new InvalidDataException("Setup package is missing package-manifest.json.");
+
+        Dictionary<string, object> data = Deserialize(File.ReadAllText(path, Encoding.UTF8));
+        if (ReadInt(data, "schema") != 1) throw new InvalidDataException("Unsupported setup package schema.");
+
+        PackageManifest manifest = new PackageManifest();
+        manifest.Version = ReadString(data, "version");
+        manifest.VersionCode = ReadLong(data, "versionCode");
+        manifest.Files = new List<PackageFile>();
+
+        object raw;
+        if (!data.TryGetValue("files", out raw)) throw new InvalidDataException("Setup package contains no file list.");
+
+        object[] array = raw as object[];
+        if (array == null)
+        {
+            ArrayList list = raw as ArrayList;
+            if (list != null) array = list.ToArray();
+        }
+        if (array == null) throw new InvalidDataException("Setup package file list is invalid.");
+
+        foreach (object item in array)
+        {
+            Dictionary<string, object> entry = item as Dictionary<string, object>;
+            if (entry == null) throw new InvalidDataException("Setup package contains an invalid file entry.");
+
+            PackageFile packageFile = new PackageFile();
+            packageFile.Path = ReadString(entry, "path");
+            packageFile.Sha256 = ReadString(entry, "sha256").ToLowerInvariant();
+            packageFile.Size = ReadLong(entry, "size");
+
+            if (String.IsNullOrWhiteSpace(packageFile.Path) || packageFile.Size < 0 || !IsSha256(packageFile.Sha256))
+                throw new InvalidDataException("Setup package contains invalid file metadata.");
+
+            manifest.Files.Add(packageFile);
+        }
+
+        return manifest;
+    }
+
+    private static List<InstallFile> VerifyPackage(string extractRoot, PackageManifest package)
+    {
+        string trustedRoot = EnsureTrailingSeparator(Path.GetFullPath(extractRoot));
+        List<InstallFile> verified = new List<InstallFile>();
+
+        foreach (PackageFile file in package.Files)
+        {
+            string relative = file.Path.Replace('/', Path.DirectorySeparatorChar);
+            string source = Path.GetFullPath(Path.Combine(extractRoot, relative));
+
+            if (!source.StartsWith(trustedRoot, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Setup package path escapes staging: " + file.Path);
+            if (!File.Exists(source)) throw new InvalidDataException("Setup package file is missing: " + file.Path);
+
+            FileInfo info = new FileInfo(source);
+            if (info.Length != file.Size || !String.Equals(Sha256File(source), file.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Setup package verification failed: " + file.Path);
+
+            verified.Add(new InstallFile {
+                Source = source,
+                Target = ResolveInstallTarget(file.Path),
+                RelativePath = file.Path,
+                Sha256 = file.Sha256
+            });
+        }
+
+        RequirePackageFile(verified, "app/TailscaleQuickRepair.exe");
+        RequirePackageFile(verified, "app/Tailscale-Repair-UI.ps1");
+        RequirePackageFile(verified, "app/TailscaleQuickRepairUpdater.exe");
+        RequirePackageFile(verified, "app/TailscaleQuickRepairSetup.exe");
+        RequirePackageFile(verified, "app/Advanced-Diagnostics.ps1");
+        RequirePackageFile(verified, "program/Repair-Backend.ps1");
+        RequirePackageFile(verified, "program/Auto-Repair-Monitor.ps1");
+        return verified;
+    }
+
+    private static string ResolveInstallTarget(string relativePath)
+    {
+        string normalized = relativePath.Replace('\\', '/');
+        if (String.Equals(normalized, "version.json", StringComparison.OrdinalIgnoreCase))
+            return Path.Combine(GetAppDir(), "version.user.json");
+        if (normalized.StartsWith("app/", StringComparison.OrdinalIgnoreCase))
+            return ResolveUnder(GetAppDir(), normalized.Substring(4));
+        if (normalized.StartsWith("program/", StringComparison.OrdinalIgnoreCase))
+            return ResolveUnder(GetProgramDir(), normalized.Substring(8));
+        throw new InvalidDataException("Unsupported setup package path: " + relativePath);
+    }
+
+    private static string ResolveUnder(string root, string relative)
+    {
+        string trusted = EnsureTrailingSeparator(Path.GetFullPath(root));
+        string target = Path.GetFullPath(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
+        if (!target.StartsWith(trusted, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Setup target path escapes its install root.");
+        return target;
+    }
+
+    private static void ApplyFiles(List<InstallFile> files, string work)
+    {
+        string backup = Path.Combine(work, "backup");
+        Directory.CreateDirectory(backup);
+        List<BackupEntry> backups = new List<BackupEntry>();
+        int index = 0;
+
+        try
+        {
+            foreach (InstallFile file in files)
+            {
+                index++;
+                bool existed = File.Exists(file.Target);
+                string backupPath = Path.Combine(backup, index.ToString() + ".bak");
+                if (existed) File.Copy(file.Target, backupPath, true);
+                backups.Add(new BackupEntry { Target = file.Target, Backup = backupPath, Existed = existed });
+
+                string parent = Path.GetDirectoryName(file.Target);
+                if (!String.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+                string next = file.Target + ".setup.new";
+                File.Copy(file.Source, next, true);
+                if (File.Exists(file.Target)) File.Delete(file.Target);
+                File.Move(next, file.Target);
+            }
+
+            foreach (InstallFile file in files)
+            {
+                if (!File.Exists(file.Target) || !String.Equals(Sha256File(file.Target), file.Sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("Installed file verification failed: " + file.RelativePath);
+            }
+        }
+        catch
+        {
+            foreach (BackupEntry entry in backups)
+            {
+                try
+                {
+                    if (entry.Existed) File.Copy(entry.Backup, entry.Target, true);
+                    else if (File.Exists(entry.Target)) File.Delete(entry.Target);
+                }
+                catch { }
+            }
+            throw;
+        }
+    }
+
+    private static void RegisterRepairTask()
+    {
+        RegisterTask(RepairTaskName, Path.Combine(GetProgramDir(), "Repair-Backend.ps1"), false);
+    }
+
+    private static void RegisterAutoRepairTask()
+    {
+        RegisterTask(AutoTaskName, Path.Combine(GetProgramDir(), "Auto-Repair-Monitor.ps1"), true);
+    }
+
+    private static void RegisterTask(string name, string script, bool recurring)
+    {
+        RequireInstalledFile(script);
+        string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), @"System32\WindowsPowerShell\v1.0\powershell.exe");
+        object serviceObject = null;
+        object rootObject = null;
+        object taskObject = null;
+
+        try
+        {
+            Type schedulerType = Type.GetTypeFromProgID("Schedule.Service");
+            dynamic service = Activator.CreateInstance(schedulerType);
+            serviceObject = service;
+            service.Connect();
+            dynamic root = service.GetFolder("\\");
+            rootObject = root;
+            dynamic task = service.NewTask(0);
+            taskObject = task;
+
+            task.RegistrationInfo.Description = recurring
+                ? "Tailscale Quick Repair optional automatic repair monitor"
+                : "Tailscale Quick Repair protected on-demand repair task";
+            task.Settings.Enabled = true;
+            task.Settings.AllowDemandStart = true;
+            task.Settings.DisallowStartIfOnBatteries = false;
+            task.Settings.StopIfGoingOnBatteries = false;
+            task.Settings.ExecutionTimeLimit = recurring ? "PT2M" : "PT5M";
+            task.Settings.MultipleInstances = 2; // IgnoreNew
+
+            dynamic principal = task.Principal;
+            principal.UserId = WindowsIdentity.GetCurrent().Name;
+            principal.LogonType = 3;
+            principal.RunLevel = 1;
+
+            dynamic action = task.Actions.Create(0);
+            action.Path = powershell;
+            action.Arguments = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \"" + script + "\"";
+            action.WorkingDirectory = Path.GetDirectoryName(script);
+
+            if (recurring)
+            {
+                dynamic trigger = task.Triggers.Create(1); // TASK_TRIGGER_TIME
+                trigger.StartBoundary = DateTime.Now.AddMinutes(1).ToString("s");
+                trigger.Repetition.Interval = "PT5M";
+                trigger.Repetition.Duration = "P3650D";
+            }
+
+            root.RegisterTaskDefinition(name, task, 6, null, null, 3, null);
+        }
+        finally
+        {
+            ReleaseCom(taskObject);
+            ReleaseCom(rootObject);
+            ReleaseCom(serviceObject);
+        }
+    }
+
+    private static void WriteLocalConfig(string peer)
+    {
+        Directory.CreateDirectory(GetAppDir());
+        string path = Path.Combine(GetAppDir(), "config.json");
+        string temp = path + ".setup.tmp";
+        File.WriteAllText(temp, Json.Serialize(new Dictionary<string, object> { { "peer", peer } }), new UTF8Encoding(false));
+        if (File.Exists(path)) File.Delete(path);
+        File.Move(temp, path);
+    }
+
+    private static string ReadConfiguredPeer()
+    {
+        string path = Path.Combine(GetAppDir(), "config.json");
+        if (!File.Exists(path)) throw new InvalidDataException("No target is configured. Run Setup again and choose a target.");
+        Dictionary<string, object> config = Deserialize(File.ReadAllText(path, Encoding.UTF8));
+        return NormalizePeer(ReadString(config, "peer"));
+    }
+
+    private static void ConfigureStartup(bool enabled)
+    {
+        using (RegistryKey run = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
+        {
+            if (enabled)
+            {
+                string command = "\"" + Path.Combine(GetAppDir(), "TailscaleQuickRepair.exe") + "\" --start-in-tray";
+                run.SetValue(StartupName, command, RegistryValueKind.String);
+            }
+            else run.DeleteValue(StartupName, false);
+        }
+    }
+
+    private static bool IsStartupEnabled()
+    {
+        using (RegistryKey run = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
+        {
+            object value = run == null ? null : run.GetValue(StartupName);
+            return value != null && !String.IsNullOrWhiteSpace(Convert.ToString(value));
+        }
+    }
+
+    private static void CreateStartMenuShortcut()
+    {
+        string shortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Tailscale Quick Repair.lnk");
+        Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+        object shellObject = null;
+        object shortcutObject = null;
+        try
+        {
+            dynamic shell = Activator.CreateInstance(shellType);
+            shellObject = shell;
+            dynamic link = shell.CreateShortcut(shortcut);
+            shortcutObject = link;
+            link.TargetPath = Path.Combine(GetAppDir(), "TailscaleQuickRepair.exe");
+            link.WorkingDirectory = GetAppDir();
+            link.Description = "Tailscale Quick Repair";
+            link.Save();
+        }
+        finally
+        {
+            ReleaseCom(shortcutObject);
+            ReleaseCom(shellObject);
+        }
+    }
+
+    private static void StopQuickRepair()
+    {
+        foreach (Process process in Process.GetProcessesByName("TailscaleQuickRepair"))
+        {
+            try { process.CloseMainWindow(); if (!process.WaitForExit(2500)) process.Kill(); } catch { }
+            finally { process.Dispose(); }
+        }
+    }
+
+    private static void StartQuickRepair()
+    {
+        string exe = Path.Combine(GetAppDir(), "TailscaleQuickRepair.exe");
+        if (File.Exists(exe)) Process.Start(new ProcessStartInfo { FileName = exe, UseShellExecute = true });
+    }
+
+    private static SetupChoice ShowSetupDialog()
+    {
+        using (Form form = new Form())
+        using (Label title = new Label())
+        using (Label description = new Label())
+        using (TextBox peer = new TextBox())
+        using (CheckBox startup = new CheckBox())
+        using (Label error = new Label())
+        using (Button install = new Button())
+        using (Button cancel = new Button())
+        {
+            form.Text = "Tailscale Quick Repair Setup";
+            form.StartPosition = FormStartPosition.CenterScreen;
+            form.FormBorderStyle = FormBorderStyle.FixedDialog;
+            form.MaximizeBox = false;
+            form.MinimizeBox = false;
+            form.ClientSize = new Size(520, 280);
+            form.BackColor = Color.FromArgb(10, 13, 18);
+            form.ForeColor = Color.FromArgb(247, 248, 250);
+            form.Font = new Font("Segoe UI", 9F);
+
+            title.Text = "Choose the Tailscale target";
+            title.Font = new Font("Segoe UI Semibold", 16F);
+            title.AutoSize = true;
+            title.Location = new Point(28, 24);
+
+            description.Text = "Enter the Tailscale IP or MagicDNS name of the machine you want Quick Repair to check — for example the PC or VPS you use for RDP.";
+            description.ForeColor = Color.FromArgb(143, 155, 168);
+            description.Location = new Point(30, 66);
+            description.Size = new Size(455, 48);
+
+            peer.Location = new Point(32, 124);
+            peer.Size = new Size(452, 28);
+            peer.BackColor = Color.FromArgb(21, 26, 33);
+            peer.ForeColor = Color.White;
+            peer.BorderStyle = BorderStyle.FixedSingle;
+
+            startup.Text = "Start Quick Repair with Windows";
+            startup.Checked = true;
+            startup.AutoSize = true;
+            startup.Location = new Point(32, 166);
+            startup.BackColor = form.BackColor;
+            startup.ForeColor = form.ForeColor;
+
+            error.Location = new Point(32, 194);
+            error.Size = new Size(452, 20);
+            error.ForeColor = Color.FromArgb(255, 107, 120);
+
+            cancel.Text = "Cancel";
+            cancel.Location = new Point(310, 226);
+            cancel.Size = new Size(82, 34);
+            cancel.DialogResult = DialogResult.Cancel;
+
+            install.Text = "Install";
+            install.Location = new Point(400, 226);
+            install.Size = new Size(84, 34);
+            install.BackColor = Color.FromArgb(8, 102, 255);
+            install.ForeColor = Color.White;
+            install.FlatStyle = FlatStyle.Flat;
+            install.FlatAppearance.BorderSize = 0;
+
+            form.Controls.AddRange(new Control[] { title, description, peer, startup, error, cancel, install });
+            form.CancelButton = cancel;
+            form.AcceptButton = install;
+
+            SetupChoice choice = null;
+            install.Click += delegate
+            {
+                try
+                {
+                    choice = new SetupChoice { Peer = NormalizePeer(peer.Text), StartWithWindows = startup.Checked };
+                    form.DialogResult = DialogResult.OK;
+                    form.Close();
+                }
+                catch (Exception ex)
+                {
+                    error.Text = ex.Message;
+                    peer.Focus();
+                    peer.SelectAll();
+                }
+            };
+
+            return form.ShowDialog() == DialogResult.OK ? choice : null;
+        }
+    }
+
+    private static string NormalizePeer(string value)
+    {
+        if (String.IsNullOrWhiteSpace(value)) throw new ArgumentException("Enter a Tailscale IP or MagicDNS name.");
+        string candidate = value.Trim();
+        if (candidate.Length > 255 || Regex.IsMatch(candidate, @"\s")) throw new ArgumentException("Enter a valid Tailscale IP or MagicDNS name.");
+
+        IPAddress address;
+        if (IPAddress.TryParse(candidate, out address)) return address.ToString();
+        if (!Regex.IsMatch(candidate, @"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,253}[A-Za-z0-9])?$"))
+            throw new ArgumentException("Enter a valid Tailscale IP or MagicDNS name.");
+        return candidate;
+    }
+
+    private static int RelaunchElevated(string peer, bool startup, bool repairOnly)
+    {
+        try
+        {
+            ProcessStartInfo psi = new ProcessStartInfo();
+            psi.FileName = Process.GetCurrentProcess().MainModule.FileName;
+            psi.Arguments = (repairOnly ? "--repair " : "") + "--peer " + Quote(peer) + " --startup " + (startup ? "true" : "false");
+            psi.Verb = "runas";
+            psi.UseShellExecute = true;
+            Process child = Process.Start(psi);
+            return child == null ? 5 : 0;
+        }
+        catch { return 5; }
+    }
+
+    private static bool IsAdministrator()
+    {
+        WindowsPrincipal principal = new WindowsPrincipal(WindowsIdentity.GetCurrent());
+        return principal.IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    private static string DownloadString(string url, bool api)
+    {
+        HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+        request.Method = "GET";
+        request.UserAgent = "TailscaleQuickRepairSetup/3.0";
+        request.Timeout = 15000;
+        request.ReadWriteTimeout = 15000;
+        request.Proxy = WebRequest.DefaultWebProxy;
+        if (request.Proxy != null) request.Proxy.Credentials = CredentialCache.DefaultNetworkCredentials;
+        if (api)
+        {
+            request.Accept = "application/vnd.github+json";
+            request.Headers["X-GitHub-Api-Version"] = "2022-11-28";
+        }
+        using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+        using (Stream stream = response.GetResponseStream())
+        using (StreamReader reader = new StreamReader(stream, Encoding.UTF8)) return reader.ReadToEnd();
+    }
+
+    private static void DownloadFile(string url, string destination)
+    {
+        if (!IsTrustedReleaseUrl(url)) throw new InvalidDataException("Refusing an untrusted setup URL.");
+        HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+        request.Method = "GET";
+        request.UserAgent = "TailscaleQuickRepairSetup/3.0";
+        request.Timeout = 30000;
+        request.ReadWriteTimeout = 30000;
+        request.AllowAutoRedirect = true;
+        request.Proxy = WebRequest.DefaultWebProxy;
+        if (request.Proxy != null) request.Proxy.Credentials = CredentialCache.DefaultNetworkCredentials;
+        using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+        using (Stream input = response.GetResponseStream())
+        using (FileStream output = File.Create(destination)) input.CopyTo(output);
+    }
+
+    private static bool IsTrustedReleaseUrl(string value)
+    {
+        Uri uri;
+        return Uri.TryCreate(value, UriKind.Absolute, out uri) &&
+               uri.Scheme == "https" &&
+               String.Equals(uri.Host, TrustedHost, StringComparison.OrdinalIgnoreCase) &&
+               uri.AbsolutePath.StartsWith(TrustedReleasePrefix, StringComparison.Ordinal);
+    }
+
+    private static string Sha256File(string path)
+    {
+        using (SHA256 sha = SHA256.Create())
+        using (FileStream stream = File.OpenRead(path))
+        {
+            byte[] hash = sha.ComputeHash(stream);
+            StringBuilder value = new StringBuilder(hash.Length * 2);
+            foreach (byte b in hash) value.Append(b.ToString("x2"));
+            return value.ToString();
+        }
+    }
+
+    private static bool IsSha256(string value)
+    {
+        return !String.IsNullOrEmpty(value) && Regex.IsMatch(value, "^[0-9a-fA-F]{64}$");
+    }
+
+    private static void RequirePackageFile(List<InstallFile> files, string path)
+    {
+        foreach (InstallFile file in files)
+            if (String.Equals(file.RelativePath.Replace('\\', '/'), path, StringComparison.OrdinalIgnoreCase)) return;
+        throw new InvalidDataException("Required setup component is missing: " + path);
+    }
+
+    private static void RequireInstalledFile(string path)
+    {
+        if (!File.Exists(path)) throw new FileNotFoundException("Quick Repair is missing a required component. Run Setup again.", path);
+    }
+
+    private static Dictionary<string, object> Deserialize(string json)
+    {
+        Dictionary<string, object> value = Json.Deserialize<Dictionary<string, object>>(json);
+        if (value == null) throw new InvalidDataException("Invalid JSON response.");
+        return value;
+    }
+
+    private static Dictionary<string, object> ReadDictionary(Dictionary<string, object> source, string key)
+    {
+        object value;
+        if (!source.TryGetValue(key, out value)) throw new InvalidDataException("Missing JSON object: " + key);
+        Dictionary<string, object> result = value as Dictionary<string, object>;
+        if (result == null) throw new InvalidDataException("Invalid JSON object: " + key);
+        return result;
+    }
+
+    private static string ReadString(Dictionary<string, object> source, string key)
+    {
+        object value;
+        return source.TryGetValue(key, out value) && value != null ? Convert.ToString(value) : String.Empty;
+    }
+
+    private static long ReadLong(Dictionary<string, object> source, string key)
+    {
+        object value;
+        return source.TryGetValue(key, out value) && value != null ? Convert.ToInt64(value) : 0;
+    }
+
+    private static int ReadInt(Dictionary<string, object> source, string key) { return (int)ReadLong(source, key); }
+    private static bool ReadBool(Dictionary<string, object> source, string key)
+    {
+        object value;
+        return source.TryGetValue(key, out value) && value != null && Convert.ToBoolean(value);
+    }
+
+    private static string ReadArg(string[] args, string name)
+    {
+        for (int i = 0; i < args.Length - 1; i++)
+            if (String.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) return args[i + 1];
+        return String.Empty;
+    }
+
+    private static bool HasSwitch(string[] args, string name)
+    {
+        foreach (string arg in args) if (String.Equals(arg, name, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    private static string Quote(string value) { return "\"" + (value ?? "").Replace("\"", "\\\"") + "\""; }
+    private static string EnsureTrailingSeparator(string path) { return path.EndsWith(Path.DirectorySeparatorChar.ToString()) ? path : path + Path.DirectorySeparatorChar; }
+    private static string GetAppDir() { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TailscaleQuickRepair"); }
+    private static string GetProgramDir() { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "TailscaleQuickRepair"); }
+
+    private static void ReleaseCom(object value)
+    {
+        if (value == null) return;
+        try { System.Runtime.InteropServices.Marshal.FinalReleaseComObject(value); } catch { }
+    }
+
+    private sealed class SetupChoice { public string Peer; public bool StartWithWindows; }
+    private sealed class SetupManifest { public string Version; public long VersionCode; public string Url; public string Sha256; public long Size; }
+    private sealed class PackageManifest { public string Version; public long VersionCode; public List<PackageFile> Files; }
+    private sealed class PackageFile { public string Path; public string Sha256; public long Size; }
+    private sealed class InstallFile { public string Source; public string Target; public string RelativePath; public string Sha256; }
+    private sealed class BackupEntry { public string Target; public string Backup; public bool Existed; }
+}
