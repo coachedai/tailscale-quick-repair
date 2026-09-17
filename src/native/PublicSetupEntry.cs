@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
@@ -14,6 +15,10 @@ internal static class PublicSetupEntry
     private const string DetachedPrefix = "TailscaleQuickRepair-Setup-Detached-";
     private const string SelfTestAppDirEnvironment = "TQR_SETUP_RELOCATION_TEST_APPDIR";
     private const int MoveFileDelayUntilReboot = 0x00000004;
+    private const string RepairTaskName = "Tailscale Quick Repair";
+    private const string AutoTaskName = "Tailscale Quick Repair Auto Monitor";
+    private const string RepairLauncherName = "Launch-Tailscale-Backend.vbs";
+    private const string AutoLauncherName = "Launch-Auto-Repair-Monitor.vbs";
 
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
 
@@ -132,8 +137,24 @@ internal static class PublicSetupEntry
             return 31;
         }
 
-        object result = main.Invoke(null, new object[] { args });
-        return result is int ? (int)result : 32;
+        object rawResult = main.Invoke(null, new object[] { args });
+        int result = rawResult is int ? (int)rawResult : 32;
+
+        // PublicSetupHost owns the validated install/repair transaction. Once
+        // that succeeds in the elevated process, switch the scheduled tasks to
+        // WScript launchers that keep PowerShell completely hidden while still
+        // waiting for the real worker to exit. The non-elevated parent skips
+        // this step; its elevated child performs it after Setup completes.
+        if (
+            result == 0 &&
+            IsAdministrator() &&
+            !HasSwitch(args, "--self-test-installer")
+        )
+        {
+            HardenTaskLaunchers();
+        }
+
+        return result;
     }
 
     private static int RelaunchDetached(string[] args)
@@ -307,6 +328,20 @@ internal static class PublicSetupEntry
                 return 49;
             }
 
+            string launcherProbe = BuildHiddenLauncherContent(
+                @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                @"C:\ProgramData\TailscaleQuickRepair\Repair-Backend.ps1"
+            );
+
+            if (
+                launcherProbe.IndexOf("shell.Run", StringComparison.Ordinal) < 0 ||
+                launcherProbe.IndexOf(", 0, True", StringComparison.Ordinal) < 0 ||
+                launcherProbe.IndexOf("WScript.Quit", StringComparison.Ordinal) < 0
+            )
+            {
+                return 50;
+            }
+
             return 0;
         }
         finally
@@ -419,6 +454,153 @@ internal static class PublicSetupEntry
         return 44;
     }
 
+    private static void HardenTaskLaunchers()
+    {
+        string programDir = GetProgramDir();
+        Directory.CreateDirectory(programDir);
+
+        string repairScript = Path.Combine(programDir, "Repair-Backend.ps1");
+        string autoScript = Path.Combine(programDir, "Auto-Repair-Monitor.ps1");
+
+        if (!File.Exists(repairScript))
+        {
+            throw new FileNotFoundException("The protected repair backend is missing.", repairScript);
+        }
+
+        if (!File.Exists(autoScript))
+        {
+            throw new FileNotFoundException("The automatic repair monitor is missing.", autoScript);
+        }
+
+        string repairLauncher = WriteHiddenLauncher(
+            RepairLauncherName,
+            repairScript
+        );
+        string autoLauncher = WriteHiddenLauncher(
+            AutoLauncherName,
+            autoScript
+        );
+
+        HardenTaskLauncher(RepairTaskName, repairLauncher);
+        HardenTaskLauncher(AutoTaskName, autoLauncher);
+    }
+
+    private static string WriteHiddenLauncher(string launcherName, string scriptPath)
+    {
+        string programDir = GetProgramDir();
+        string launcherPath = Path.Combine(programDir, launcherName);
+        string tempPath = launcherPath + ".setup.tmp";
+        string powershell = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            @"System32\WindowsPowerShell\v1.0\powershell.exe"
+        );
+
+        string content = BuildHiddenLauncherContent(powershell, scriptPath);
+        File.WriteAllText(tempPath, content, new UTF8Encoding(false));
+
+        if (File.Exists(launcherPath))
+        {
+            File.Delete(launcherPath);
+        }
+
+        File.Move(tempPath, launcherPath);
+        return launcherPath;
+    }
+
+    private static string BuildHiddenLauncherContent(string powershellPath, string scriptPath)
+    {
+        string ps = EscapeVbString(powershellPath);
+        string script = EscapeVbString(scriptPath);
+
+        return
+            "Option Explicit\r\n" +
+            "Dim shell, q, exitCode\r\n" +
+            "q = Chr(34)\r\n" +
+            "Set shell = CreateObject(\"WScript.Shell\")\r\n" +
+            "exitCode = shell.Run(q & \"" + ps + "\" & q & \" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \" & q & \"" + script + "\" & q, 0, True)\r\n" +
+            "Set shell = Nothing\r\n" +
+            "WScript.Quit exitCode\r\n";
+    }
+
+    private static string EscapeVbString(string value)
+    {
+        return (value ?? String.Empty).Replace("\"", "\"\"");
+    }
+
+    private static void HardenTaskLauncher(string taskName, string launcherPath)
+    {
+        string wscript = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            @"System32\wscript.exe"
+        );
+
+        object serviceObject = null;
+        object rootObject = null;
+        object registeredObject = null;
+        object definitionObject = null;
+        object actionsObject = null;
+        object actionObject = null;
+
+        try
+        {
+            Type schedulerType = Type.GetTypeFromProgID("Schedule.Service");
+            if (schedulerType == null)
+            {
+                throw new InvalidOperationException("Windows Task Scheduler is unavailable.");
+            }
+
+            dynamic service = Activator.CreateInstance(schedulerType);
+            serviceObject = service;
+            service.Connect();
+
+            dynamic root = service.GetFolder("\\");
+            rootObject = root;
+
+            dynamic registered = root.GetTask(taskName);
+            registeredObject = registered;
+            if (registered == null)
+            {
+                throw new InvalidOperationException("Quick Repair scheduled task is missing: " + taskName);
+            }
+
+            dynamic definition = registered.Definition;
+            definitionObject = definition;
+            dynamic actions = definition.Actions;
+            actionsObject = actions;
+
+            if (actions == null || actions.Count < 1)
+            {
+                throw new InvalidOperationException("Quick Repair scheduled task has no executable action: " + taskName);
+            }
+
+            dynamic action = actions.Item(1);
+            actionObject = action;
+            action.Path = wscript;
+            action.Arguments = "//B //Nologo \"" + launcherPath + "\"";
+            action.WorkingDirectory = GetProgramDir();
+            definition.Settings.Hidden = true;
+
+            root.RegisterTaskDefinition(
+                taskName,
+                definition,
+                6,
+                null,
+                null,
+                3,
+                null
+            );
+        }
+        finally
+        {
+            ReleaseCom(actionObject);
+            ReleaseCom(actionsObject);
+            ReleaseCom(definitionObject);
+            ReleaseCom(registeredObject);
+            ReleaseCom(rootObject);
+            ReleaseCom(serviceObject);
+        }
+    }
+
     private static string ReadConfiguredPeer()
     {
         string path = Path.Combine(
@@ -468,6 +650,19 @@ internal static class PublicSetupEntry
         }
     }
 
+    private static bool IsAdministrator()
+    {
+        try
+        {
+            WindowsPrincipal principal = new WindowsPrincipal(WindowsIdentity.GetCurrent());
+            return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static string GetCurrentExecutablePath()
     {
         using (Process process = Process.GetCurrentProcess())
@@ -494,6 +689,28 @@ internal static class PublicSetupEntry
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "TailscaleQuickRepair"
         );
+    }
+
+    private static string GetProgramDir()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "TailscaleQuickRepair"
+        );
+    }
+
+    private static void ReleaseCom(object value)
+    {
+        if (value == null)
+        {
+            return;
+        }
+
+        try
+        {
+            Marshal.FinalReleaseComObject(value);
+        }
+        catch { }
     }
 
     private static string ReadArg(string[] args, string name)
