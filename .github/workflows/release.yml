@@ -81,10 +81,11 @@ jobs:
 
           "should_publish=$(([bool]$publish.publish).ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
-      - name: Validate update channel and build when source is complete
+      - name: Build and round-trip validate update package
         shell: powershell
         run: |
           .\release\build.ps1 -OutputDirectory .\dist
+          .\release\finalize-package.ps1 -OutputDirectory .\dist
 
       - name: Upload validation artifact
         uses: actions/upload-artifact@v4
@@ -249,7 +250,6 @@ jobs:
             ConvertTo-Json -Depth 5 |
             Set-Content updates/latest.json -Encoding UTF8
 
-          # Reset the switch so later development pushes only validate.
           $publish.publish = $false
           $publish |
             ConvertTo-Json -Depth 4 |
