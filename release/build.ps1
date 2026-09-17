@@ -41,23 +41,107 @@ foreach ($relative in $required) {
     }
 }
 
-foreach ($relative in @(
-    'src\app\Tailscale-Repair-UI.ps1',
-    'src\program\Update-Installer.ps1'
-)) {
-    $path = Join-Path $repo $relative
-    $text = [IO.File]::ReadAllText(
-        $path,
-        [Text.Encoding]::UTF8
-    )
-    [void][scriptblock]::Create($text)
+function Normalize-UiForWindowsPowerShell {
+    param([string]$Text)
+
+    # Two legacy helper-call forms survived from the pre-CI builds. They run
+    # through the embedded host path but are not valid standalone Windows
+    # PowerShell 5.1 syntax. Normalize them only for the shipped package.
+    $oldResetApp = "        Set-Step `$AppDot `$AppStep (if ([string]`$preflight.Client -eq 'Running') { 'good' } elseif ([string]`$preflight.Client -eq 'Closed') { 'warn' } else { 'bad' })"
+    $newResetApp = @"
+        `$appStepState = if ([string]`$preflight.Client -eq 'Running') {
+            'good'
+        } elseif ([string]`$preflight.Client -eq 'Closed') {
+            'warn'
+        } else {
+            'bad'
+        }
+        Set-Step `$AppDot `$AppStep `$appStepState
+"@
+
+    $oldResetService = "        Set-Step `$ServiceDot `$ServiceStep (if ([string]`$preflight.Service -eq 'Running') { 'good' } elseif ([string]`$preflight.Service -eq 'Stopped') { 'warn' } elseif ([string]`$preflight.Service -eq 'Missing') { 'bad' } else { 'idle' })"
+    $newResetService = @"
+        `$serviceStepState = if ([string]`$preflight.Service -eq 'Running') {
+            'good'
+        } elseif ([string]`$preflight.Service -eq 'Stopped') {
+            'warn'
+        } elseif ([string]`$preflight.Service -eq 'Missing') {
+            'bad'
+        } else {
+            'idle'
+        }
+        Set-Step `$ServiceDot `$ServiceStep `$serviceStepState
+"@
+
+    $oldCardApp = @"
+        Set-Step `$AppDot `$AppStep (
+            if ([string]`$Data.client -eq 'Running') { 'good' }
+            elseif ([string]`$Data.client -eq 'Closed') { 'warn' }
+            elseif ([int]`$Data.progress -ge 22) { 'bad' }
+            else { 'active' }
+        )
+"@
+    $newCardApp = @"
+        `$appStepState = if ([string]`$Data.client -eq 'Running') {
+            'good'
+        } elseif ([string]`$Data.client -eq 'Closed') {
+            'warn'
+        } elseif ([int]`$Data.progress -ge 22) {
+            'bad'
+        } else {
+            'active'
+        }
+        Set-Step `$AppDot `$AppStep `$appStepState
+"@
+
+    $oldCardService = @"
+        Set-Step `$ServiceDot `$ServiceStep (
+            if ([string]`$Data.service -eq 'Running') { 'good' }
+            elseif ([string]`$Data.service -eq 'Stopped') { 'warn' }
+            elseif ([int]`$Data.progress -ge 48) { 'bad' }
+            else { 'active' }
+        )
+"@
+    $newCardService = @"
+        `$serviceStepState = if ([string]`$Data.service -eq 'Running') {
+            'good'
+        } elseif ([string]`$Data.service -eq 'Stopped') {
+            'warn'
+        } elseif ([int]`$Data.progress -ge 48) {
+            'bad'
+        } else {
+            'active'
+        }
+        Set-Step `$ServiceDot `$ServiceStep `$serviceStepState
+"@
+
+    $Text = $Text.Replace($oldResetApp, $newResetApp.TrimEnd("`r", "`n"))
+    $Text = $Text.Replace($oldResetService, $newResetService.TrimEnd("`r", "`n"))
+    $Text = $Text.Replace($oldCardApp.TrimEnd("`r", "`n"), $newCardApp.TrimEnd("`r", "`n"))
+    $Text = $Text.Replace($oldCardService.TrimEnd("`r", "`n"), $newCardService.TrimEnd("`r", "`n"))
+
+    if (
+        $Text -match 'Set-Step\s+\$AppDot\s+\$AppStep\s+\(' -or
+        $Text -match 'Set-Step\s+\$ServiceDot\s+\$ServiceStep\s+\('
+    ) {
+        throw 'Legacy Set-Step expression syntax remains after normalization.'
+    }
+
+    return $Text
 }
 
 $uiPath = Join-Path $repo 'src\app\Tailscale-Repair-UI.ps1'
-$uiText = [IO.File]::ReadAllText(
-    $uiPath,
+$uiText = [IO.File]::ReadAllText($uiPath, [Text.Encoding]::UTF8)
+$uiText = Normalize-UiForWindowsPowerShell $uiText
+
+$updateInstallerPath = Join-Path $repo 'src\program\Update-Installer.ps1'
+$updateInstallerText = [IO.File]::ReadAllText(
+    $updateInstallerPath,
     [Text.Encoding]::UTF8
 )
+
+[void][scriptblock]::Create($uiText)
+[void][scriptblock]::Create($updateInstallerText)
 
 $xamlMatch = [regex]::Match(
     $uiText,
@@ -156,24 +240,15 @@ try {
 
     $utf8Bom = New-Object System.Text.UTF8Encoding($true)
 
-    $uiPackagePath = Join-Path $packageApp 'Tailscale-Repair-UI.ps1'
-    $installerPackagePath = Join-Path $packageProgram 'Update-Installer.ps1'
-
     [IO.File]::WriteAllText(
-        $uiPackagePath,
-        [IO.File]::ReadAllText(
-            (Join-Path $repo 'src\app\Tailscale-Repair-UI.ps1'),
-            [Text.Encoding]::UTF8
-        ),
+        (Join-Path $packageApp 'Tailscale-Repair-UI.ps1'),
+        $uiText,
         $utf8Bom
     )
 
     [IO.File]::WriteAllText(
-        $installerPackagePath,
-        [IO.File]::ReadAllText(
-            (Join-Path $repo 'src\program\Update-Installer.ps1'),
-            [Text.Encoding]::UTF8
-        ),
+        (Join-Path $packageProgram 'Update-Installer.ps1'),
+        $updateInstallerText,
         $utf8Bom
     )
 
@@ -182,9 +257,7 @@ try {
     $entries = @()
 
     Get-ChildItem -LiteralPath $packageRoot -File -Recurse |
-        Where-Object {
-            $_.Name -ne 'package-manifest.json'
-        } |
+        Where-Object { $_.Name -ne 'package-manifest.json' } |
         Sort-Object FullName |
         ForEach-Object {
             $relative = $_.FullName.Substring($packageRoot.Length).TrimStart('\') -replace '\\','/'
