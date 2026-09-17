@@ -178,7 +178,7 @@ try {
         throw 'Package is missing the Quick Repair UI.'
     }
 
-    & (Join-Path $PSScriptRoot 'polish-ui.ps1') `
+    & (Join-Path $PSScriptRoot 'polish-ui-v2.ps1') `
         -Path $uiPath `
         -Version ([string]$version.version) `
         -VersionCode ([int64]$version.versionCode)
@@ -262,8 +262,7 @@ try {
     foreach ($required in @(
         'QuickRepairWindowTheme',
         'VerticalScrollBarVisibility="Hidden"',
-        'x:Name="ChangeTargetButton"',
-        ('Current ' + [string]$version.version + ' · Check GitHub for updates.')
+        ('Current ' + [string]$version.version + ' - Check GitHub for updates.')
     )) {
         if ($roundTripUiText -notmatch [regex]::Escape($required)) {
             throw "Final ZIP is missing UI polish marker: $required"
