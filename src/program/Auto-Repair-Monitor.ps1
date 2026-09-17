@@ -206,7 +206,7 @@ if ($cooldown -gt 0) {
 
 if (Start-ProtectedRepair) {
     Write-State `
-        -Status 'repairing' `
+        -Status 'repaired' `
         -Message 'Automatic repair started.' `
         -Service $health.Service `
         -Client $health.Client `
@@ -216,7 +216,7 @@ if (Start-ProtectedRepair) {
 }
 else {
     Write-State `
-        -Status 'unavailable' `
+        -Status 'error' `
         -Message 'The protected repair task could not be started.' `
         -Service $health.Service `
         -Client $health.Client `
