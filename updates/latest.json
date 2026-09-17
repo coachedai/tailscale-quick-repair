@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "channel": "preview",
+  "version": "3.0.0-phase2.2.5",
+  "versionCode": 30000215,
+  "published": true,
+  "publishedAt": "2026-09-17T15:11:54.4546222Z",
+  "mandatory": false,
+  "notes": "Restores dark native window chrome, removes the visible white scrollbar while keeping wheel scrolling, and fixes displayed version metadata. Repair/network behaviour remains unchanged.",
+  "package": {
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.5/TailscaleQuickRepair-3.0.0-phase2.2.5.zip",
+    "sha256": "f4b6fabcd660d6aa04ac88204852c6cbaa83272f5bf601928b85c467e5a91520",
+    "size": 39083
+  },
+  "bootstrap": {
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.5/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.2.5.exe",
+    "sha256": "0320f15f29123b96f860a6e01811b15377c9234e511bc6f9ba2c7714ed5a7d37",
+    "size": 23040
+  }
+}
