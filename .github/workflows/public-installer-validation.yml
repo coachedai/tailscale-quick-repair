@@ -48,14 +48,25 @@ jobs:
         run: |
           .\release\privacy-scan.ps1 -Root .
 
-      - name: Build and self-test native public installer
+      - name: Build and self-test full public installer
         shell: powershell
         run: |
           .\release\build-public.ps1 -OutputDirectory .\dist-public
 
-      - name: Upload native validation artifact
+      - name: Require full public bundle
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem .\dist-public -Filter 'TailscaleQuickRepair-Setup-*.exe' | Select-Object -First 1
+          $package = Get-ChildItem .\dist-public -Filter 'TailscaleQuickRepair-SetupPackage-*.zip' | Select-Object -First 1
+          $metadata = Test-Path .\dist-public\public-setup-metadata.json
+
+          if (-not $setup -or -not $package -or -not $metadata) {
+            throw 'The full public setup bundle was not produced.'
+          }
+
+      - name: Upload public installer validation artifact
         uses: actions/upload-artifact@v4
         with:
           name: quick-repair-public-installer-validation
-          path: dist-public/*.exe
+          path: dist-public/*
           if-no-files-found: error
