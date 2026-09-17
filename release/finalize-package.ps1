@@ -172,6 +172,17 @@ try {
         throw 'Package version.json is invalid.'
     }
 
+    $uiPath = Join-Path $root 'app\Tailscale-Repair-UI.ps1'
+
+    if (-not (Test-Path -LiteralPath $uiPath -PathType Leaf)) {
+        throw 'Package is missing the Quick Repair UI.'
+    }
+
+    & (Join-Path $PSScriptRoot 'polish-ui.ps1') `
+        -Path $uiPath `
+        -Version ([string]$version.version) `
+        -VersionCode ([int64]$version.versionCode)
+
     $entries = @(
         Get-ChildItem -LiteralPath $root -File -Recurse |
             Where-Object { $_.Name -ne 'package-manifest.json' } |
@@ -243,6 +254,20 @@ try {
         [int64]$roundTripManifest.versionCode -ne [int64]$version.versionCode
     ) {
         throw 'Final ZIP package metadata does not match version.json.'
+    }
+
+    $roundTripUi = Join-Path $verifyRoot 'app\Tailscale-Repair-UI.ps1'
+    $roundTripUiText = [IO.File]::ReadAllText($roundTripUi, [Text.Encoding]::UTF8)
+
+    foreach ($required in @(
+        'QuickRepairWindowTheme',
+        'VerticalScrollBarVisibility="Hidden"',
+        'x:Name="ChangeTargetButton"',
+        ('Current ' + [string]$version.version + ' · Check GitHub for updates.')
+    )) {
+        if ($roundTripUiText -notmatch [regex]::Escape($required)) {
+            throw "Final ZIP is missing UI polish marker: $required"
+        }
     }
 
     Write-Host "Package manifest round-trip passed: $($zip.Name)"
