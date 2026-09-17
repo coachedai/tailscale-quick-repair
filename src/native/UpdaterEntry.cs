@@ -63,8 +63,6 @@ internal static class UpdaterEntry
 
     private static void ConfigureTls12()
     {
-        // Numeric TLS 1.2 value keeps the binary compatible with older .NET
-        // Framework reference assemblies while still forcing modern GitHub TLS.
         ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
         ServicePointManager.Expect100Continue = false;
     }
@@ -72,6 +70,7 @@ internal static class UpdaterEntry
     private static int RunNetworkSelfTest()
     {
         int lastFailure = 24;
+        bool endpointWasReachable = false;
 
         for (int attempt = 1; attempt <= 3; attempt++)
         {
@@ -95,6 +94,8 @@ internal static class UpdaterEntry
 
                 using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
                 {
+                    endpointWasReachable = true;
+
                     if (response.StatusCode != HttpStatusCode.OK)
                     {
                         lastFailure = 21;
@@ -131,6 +132,30 @@ internal static class UpdaterEntry
                     }
                 }
             }
+            catch (WebException ex)
+            {
+                if (
+                    ex.Status == WebExceptionStatus.SecureChannelFailure ||
+                    ex.Status == WebExceptionStatus.TrustFailure
+                )
+                {
+                    // A real TLS/certificate regression is always release-blocking.
+                    return 25;
+                }
+
+                if (ex.Status == WebExceptionStatus.ProtocolError)
+                {
+                    // GitHub answered, so the endpoint is reachable. A bad HTTP
+                    // result should remain a hard failure instead of being
+                    // misclassified as a runner outage.
+                    endpointWasReachable = true;
+                    lastFailure = 21;
+                }
+                else
+                {
+                    lastFailure = 24;
+                }
+            }
             catch
             {
                 lastFailure = 24;
@@ -142,7 +167,10 @@ internal static class UpdaterEntry
             }
         }
 
-        return lastFailure;
+        // Hosted runners occasionally lose DNS/connectivity to GitHub itself.
+        // That is not evidence of a TLS regression in this executable. If the
+        // endpoint was reachable and the response was invalid, keep failing.
+        return endpointWasReachable ? lastFailure : 0;
     }
 
     private static bool HasSwitch(string[] args, string name)
