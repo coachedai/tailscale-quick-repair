@@ -46,12 +46,18 @@ foreach ($relative in @(
     'src\program\Update-Installer.ps1'
 )) {
     $path = Join-Path $repo $relative
-    $text = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+    $text = [IO.File]::ReadAllText(
+        $path,
+        [Text.Encoding]::UTF8
+    )
     [void][scriptblock]::Create($text)
 }
 
 $uiPath = Join-Path $repo 'src\app\Tailscale-Repair-UI.ps1'
-$uiText = Get-Content -LiteralPath $uiPath -Raw
+$uiText = [IO.File]::ReadAllText(
+    $uiPath,
+    [Text.Encoding]::UTF8
+)
 
 $xamlMatch = [regex]::Match(
     $uiText,
@@ -148,15 +154,28 @@ try {
         throw "Updater host compilation failed.`r`n$($details -join [Environment]::NewLine)"
     }
 
-    Copy-Item `
-        (Join-Path $repo 'src\app\Tailscale-Repair-UI.ps1') `
-        (Join-Path $packageApp 'Tailscale-Repair-UI.ps1') `
-        -Force
+    $utf8Bom = New-Object System.Text.UTF8Encoding($true)
 
-    Copy-Item `
-        (Join-Path $repo 'src\program\Update-Installer.ps1') `
-        (Join-Path $packageProgram 'Update-Installer.ps1') `
-        -Force
+    $uiPackagePath = Join-Path $packageApp 'Tailscale-Repair-UI.ps1'
+    $installerPackagePath = Join-Path $packageProgram 'Update-Installer.ps1'
+
+    [IO.File]::WriteAllText(
+        $uiPackagePath,
+        [IO.File]::ReadAllText(
+            (Join-Path $repo 'src\app\Tailscale-Repair-UI.ps1'),
+            [Text.Encoding]::UTF8
+        ),
+        $utf8Bom
+    )
+
+    [IO.File]::WriteAllText(
+        $installerPackagePath,
+        [IO.File]::ReadAllText(
+            (Join-Path $repo 'src\program\Update-Installer.ps1'),
+            [Text.Encoding]::UTF8
+        ),
+        $utf8Bom
+    )
 
     Copy-Item $versionPath (Join-Path $packageRoot 'version.json') -Force
 
