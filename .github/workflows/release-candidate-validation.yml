@@ -1,0 +1,150 @@
+name: Validate 2.3 release candidate
+
+on:
+  push:
+    branches:
+      - phase-2.3-release-candidate
+    paths:
+      - "src/**"
+      - "release/**"
+      - ".github/workflows/release-candidate-validation.yml"
+      - "version.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-release-candidate:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout only this repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Repository and branch isolation
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne 'coachedai/tailscale-quick-repair') {
+            throw "Wrong repository: $env:GITHUB_REPOSITORY"
+          }
+          if ($env:GITHUB_REF -ne 'refs/heads/phase-2.3-release-candidate') {
+            throw '2.3 release-candidate validation may only run on its isolated branch.'
+          }
+
+      - name: Require exact 2.3 metadata and disabled publishing
+        shell: pwsh
+        run: |
+          $version = Get-Content version.json -Raw | ConvertFrom-Json
+          $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
+          if ([string]$version.version -ne '3.0.0-phase2.3.0' -or [int64]$version.versionCode -ne 30000300) {
+            throw 'Unexpected 2.3 release-candidate version metadata.'
+          }
+          if ([bool]$publish.publish) {
+            throw 'Release-candidate validation must never publish.'
+          }
+
+      - name: Privacy and project-isolation preflight
+        shell: powershell
+        run: |
+          .\release\privacy-scan.ps1 -Root .
+
+      - name: Build normal routed update
+        shell: powershell
+        run: |
+          .\release\build.ps1 -OutputDirectory .\dist-update
+          .\release\finalize-package.ps1 -OutputDirectory .\dist-update
+          .\release\add-native-setup-routing.ps1 -OutputDirectory .\dist-update
+
+      - name: Build complete public setup bundle
+        shell: powershell
+        run: |
+          .\release\build-public.ps1 -OutputDirectory .\dist-public
+
+      - name: Verify update and setup packages independently
+        shell: powershell
+        run: |
+          $updateZip = @(Get-ChildItem .\dist-update -Filter 'TailscaleQuickRepair-*.zip' -File)
+          if ($updateZip.Count -ne 1) { throw "Expected one update ZIP; found $($updateZip.Count)." }
+
+          $updateRoot = Join-Path $env:RUNNER_TEMP 'tqr-23-update'
+          Remove-Item $updateRoot -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $updateZip[0].FullName -DestinationPath $updateRoot -Force
+
+          $updateManifest = Get-Content (Join-Path $updateRoot 'package-manifest.json') -Raw | ConvertFrom-Json
+          if ([string]$updateManifest.version -ne '3.0.0-phase2.3.0' -or [int64]$updateManifest.versionCode -ne 30000300) {
+            throw 'Normal update package metadata is wrong.'
+          }
+
+          foreach ($entry in $updateManifest.files) {
+            $path = Join-Path $updateRoot ([string]$entry.path -replace '/', '\\')
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Update manifest path is missing: $($entry.path)" }
+            $item = Get-Item -LiteralPath $path
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ([int64]$item.Length -ne [int64]$entry.size -or $hash -ne [string]$entry.sha256) {
+              throw "Update manifest verification failed: $($entry.path)"
+            }
+          }
+
+          $setupMetadata = Get-Content .\dist-public\public-setup-metadata.json -Raw | ConvertFrom-Json
+          if ([string]$setupMetadata.version -ne '3.0.0-phase2.3.0' -or [int64]$setupMetadata.versionCode -ne 30000300) {
+            throw 'Public setup metadata is wrong.'
+          }
+
+          $setupZip = Get-Item (Join-Path .\dist-public ([string]$setupMetadata.setupPackage.file))
+          $setupExe = Get-Item (Join-Path .\dist-public ([string]$setupMetadata.setupExe.file))
+          if ($setupZip.Length -ne [int64]$setupMetadata.setupPackage.size) { throw 'Setup package size mismatch.' }
+          if ($setupExe.Length -ne [int64]$setupMetadata.setupExe.size) { throw 'Setup EXE size mismatch.' }
+          if ((Get-FileHash $setupZip.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne [string]$setupMetadata.setupPackage.sha256) { throw 'Setup package SHA mismatch.' }
+          if ((Get-FileHash $setupExe.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne [string]$setupMetadata.setupExe.sha256) { throw 'Setup EXE SHA mismatch.' }
+
+          $setupRoot = Join-Path $env:RUNNER_TEMP 'tqr-23-setup'
+          Remove-Item $setupRoot -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $setupZip.FullName -DestinationPath $setupRoot -Force
+          $setupManifest = Get-Content (Join-Path $setupRoot 'package-manifest.json') -Raw | ConvertFrom-Json
+
+          $required = @(
+            'app/TailscaleQuickRepair.exe',
+            'app/TailscaleQuickRepairSetup.exe',
+            'app/TailscaleQuickRepairUpdater.exe',
+            'app/Tailscale-Repair-UI.ps1',
+            'app/Advanced-Diagnostics.ps1',
+            'program/Repair-Backend.ps1',
+            'program/Auto-Repair-Monitor.ps1',
+            'version.json'
+          )
+          $paths = @($setupManifest.files | ForEach-Object { [string]$_.path })
+          foreach ($needed in $required) {
+            if ($needed -notin $paths) { throw "Setup package is missing: $needed" }
+          }
+
+          foreach ($entry in $setupManifest.files) {
+            $path = Join-Path $setupRoot ([string]$entry.path -replace '/', '\\')
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Setup manifest path is missing: $($entry.path)" }
+            $item = Get-Item -LiteralPath $path
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ([int64]$item.Length -ne [int64]$entry.size -or $hash -ne [string]$entry.sha256) {
+              throw "Setup manifest verification failed: $($entry.path)"
+            }
+          }
+
+          $ui = [IO.File]::ReadAllText((Join-Path $setupRoot 'app\Tailscale-Repair-UI.ps1'), [Text.Encoding]::UTF8)
+          if ([regex]::Matches($ui,'(?m)^param\(\r?\n\s*\[switch\]\$StartInTray\r?\n\)').Count -ne 1) { throw 'Packaged UI header count is not one.' }
+          if ([regex]::Matches($ui,'(?m)^\s*\[xml\]\$xaml\s*=\s*@"').Count -ne 1) { throw 'Packaged UI XAML count is not one.' }
+          foreach ($marker in @('$SetupHostPath','x:Name="ChangeTargetButton"','function Show-TargetPeerDialog','*Repair-Backend.ps1*')) {
+            if ($ui -notmatch [regex]::Escape($marker)) { throw "Packaged public UI is missing: $marker" }
+          }
+
+          .\release\privacy-scan.ps1 -Root $updateRoot -SkipRepositoryIdentity
+          .\release\privacy-scan.ps1 -Root $setupRoot -SkipRepositoryIdentity
+
+      - name: Upload 2.3 candidate artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: quick-repair-3.0.0-phase2.3.0-release-candidate
+          path: |
+            dist-update/*
+            dist-public/*
+          if-no-files-found: error
