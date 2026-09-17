@@ -168,13 +168,13 @@ $reason = ''
 if ($health.Service -eq 'Missing') {
     $reason = 'Tailscale service is missing.'
 }
-elif ($health.Service -ne 'Running') {
+elseif ($health.Service -ne 'Running') {
     $reason = 'Tailscale service is stopped.'
 }
-elif ($health.Client -ne 'Running') {
+elseif ($health.Client -ne 'Running') {
     $reason = 'Tailscale desktop client is closed.'
 }
-elif (
+elseif (
     $health.Backend -and
     $health.Backend -notin @('Running','Unknown')
 ) {
