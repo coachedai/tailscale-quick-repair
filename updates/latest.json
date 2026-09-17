@@ -3,18 +3,18 @@
   "channel": "preview",
   "version": "3.0.0-phase2.2.3",
   "versionCode": 30000213,
-  "published": true,
-  "publishedAt": "2026-09-17T14:42:32.3753747Z",
+  "published": false,
+  "publishedAt": null,
   "mandatory": false,
-  "notes": "Native updater TLS 1.2 compatibility fix plus compiled HTTPS self-test and TEMP-launched in-app updater replacement safety. Repair/network behaviour remains unchanged.",
+  "notes": "Phase 2.2.3 is paused because its inner package manifest contained malformed relative paths. No update should be installed from this release.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.3/TailscaleQuickRepair-3.0.0-phase2.2.3.zip",
-    "sha256": "2823b2184cce67a97433eecc8cbf67a6f6b93bd43907dd6b111571e4eb0ea2d1",
-    "size": 38658
+    "url": null,
+    "sha256": null,
+    "size": null
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.2.3/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.2.3.exe",
-    "sha256": "635667d3ec31547cce141948141e185c01fa8011db542319b994d64305f251ca",
-    "size": 23040
+    "url": null,
+    "sha256": null,
+    "size": null
   }
 }
