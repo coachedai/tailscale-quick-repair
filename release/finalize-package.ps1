@@ -82,11 +82,18 @@ function Assert-PackageManifest {
             Sort-Object
     )
 
-    if (($manifestPaths | Sort-Object) -join "`n" -ne $actualPaths -join "`n") {
-        throw 'Package manifest file list does not exactly match the packaged files.'
+    $manifestKey = (@($manifestPaths | Sort-Object) -join "`n")
+    $actualKey = (@($actualPaths | Sort-Object) -join "`n")
+    $expectedKey = (@($expected | Sort-Object) -join "`n")
+
+    if ($manifestKey -ne $actualKey) {
+        throw (
+            'Package manifest file list does not exactly match the packaged files. ' +
+            "Manifest=[$($manifestPaths -join ', ')] Actual=[$($actualPaths -join ', ')]"
+        )
     }
 
-    if (($actualPaths | Sort-Object) -join "`n" -ne ($expected | Sort-Object) -join "`n") {
+    if ($actualKey -ne $expectedKey) {
         throw "Unexpected native update package contents: $($actualPaths -join ', ')"
     }
 
@@ -199,7 +206,6 @@ try {
         $utf8
     )
 
-    # Validate the serialized form too — this catches conversion surprises.
     $serialized = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     Assert-PackageManifest -Root $root -Manifest $serialized
 
@@ -217,7 +223,6 @@ try {
 
     Set-Content -LiteralPath $shaPath -Value $sha -Encoding ASCII
 
-    # Final round-trip: validate what consumers will actually download.
     Expand-Archive -LiteralPath $zip.FullName -DestinationPath $verifyRoot -Force
 
     $roundTripManifestPath = Join-Path $verifyRoot 'package-manifest.json'
@@ -241,6 +246,7 @@ try {
     }
 
     Write-Host "Package manifest round-trip passed: $($zip.Name)"
+    Write-Host "Manifest paths: $(@($roundTripManifest.files | ForEach-Object { [string]$_.path }) -join ', ')"
     Write-Host "Final SHA256=$sha"
 }
 finally {
