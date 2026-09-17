@@ -7,6 +7,8 @@ on:
     paths:
       - "src/**"
       - "release/**"
+      - "docs/**"
+      - "README.md"
       - ".github/workflows/release-candidate-validation.yml"
       - "version.json"
   workflow_dispatch:
