@@ -1,0 +1,238 @@
+name: Build and publish Quick Repair
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "release/**"
+      - "updates/**"
+      - "docs/**"
+      - ".github/workflows/release.yml"
+      - ".gitignore"
+      - "README.md"
+      - "version.json"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    permissions:
+      contents: read
+
+    runs-on: windows-latest
+
+    outputs:
+      should_publish: ${{ steps.publish.outputs.should_publish }}
+      version: ${{ steps.meta.outputs.version }}
+      safe_version: ${{ steps.meta.outputs.safe_version }}
+      version_code: ${{ steps.meta.outputs.version_code }}
+
+    steps:
+      - name: Checkout only this repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Repository isolation guard
+        shell: pwsh
+        env:
+          EXPECTED_REPOSITORY: coachedai/tailscale-quick-repair
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne $env:EXPECTED_REPOSITORY) {
+            throw "Wrong repository. Expected $env:EXPECTED_REPOSITORY; got $env:GITHUB_REPOSITORY."
+          }
+
+          $origin = (git remote get-url origin).Trim()
+
+          if ($origin -notmatch '(?i)(github\.com[:/])coachedai/tailscale-quick-repair(?:\.git)?$') {
+            throw "Unexpected git origin: $origin"
+          }
+
+          Write-Host "Repository isolation passed: $env:GITHUB_REPOSITORY"
+
+      - name: Privacy and personal-data preflight
+        shell: powershell
+        run: |
+          .\release\privacy-scan.ps1 -Root .
+
+      - name: Read release metadata
+        id: meta
+        shell: pwsh
+        run: |
+          $version = Get-Content version.json -Raw | ConvertFrom-Json
+          "version=$($version.version)" >> $env:GITHUB_OUTPUT
+          "safe_version=$(([string]$version.version) -replace '[^A-Za-z0-9._-]', '-')" >> $env:GITHUB_OUTPUT
+          "version_code=$($version.versionCode)" >> $env:GITHUB_OUTPUT
+
+      - name: Check publish switch
+        id: publish
+        shell: pwsh
+        run: |
+          $version = Get-Content version.json -Raw | ConvertFrom-Json
+          $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
+
+          if (
+            [string]$publish.version -ne [string]$version.version -or
+            [int64]$publish.versionCode -ne [int64]$version.versionCode
+          ) {
+            throw 'release/publish.json does not match version.json.'
+          }
+
+          "should_publish=$(([bool]$publish.publish).ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Validate update channel and build when source is complete
+        shell: powershell
+        run: |
+          .\release\build.ps1 -OutputDirectory .\dist
+
+      - name: Upload validation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quick-repair-${{ steps.meta.outputs.safe_version }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    if: needs.validate.outputs.should_publish == 'true'
+    needs: validate
+
+    permissions:
+      contents: write
+
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout only this repository
+        uses: actions/checkout@v4
+
+      - name: Repository isolation guard
+        shell: pwsh
+        env:
+          EXPECTED_REPOSITORY: coachedai/tailscale-quick-repair
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne $env:EXPECTED_REPOSITORY) {
+            throw "Wrong repository. Expected $env:EXPECTED_REPOSITORY; got $env:GITHUB_REPOSITORY."
+          }
+
+          $origin = (git remote get-url origin).Trim()
+
+          if ($origin -notmatch '(?i)(github\.com[:/])coachedai/tailscale-quick-repair(?:\.git)?$') {
+            throw "Unexpected git origin: $origin"
+          }
+
+      - name: Re-run privacy preflight before publishing
+        shell: powershell
+        run: |
+          .\release\privacy-scan.ps1 -Root .
+
+      - name: Download validated package
+        uses: actions/download-artifact@v4
+        with:
+          name: quick-repair-${{ needs.validate.outputs.safe_version }}
+          path: dist
+
+      - name: Require a real release package
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist -Filter '*.zip' | Select-Object -First 1
+          $shaFile = Get-ChildItem dist -Filter '*.sha256' | Select-Object -First 1
+
+          if (-not $zip -or -not $shaFile) {
+            throw 'Publishing is blocked: validation produced only bootstrap metadata, not a complete release package.'
+          }
+
+      - name: Scan validated package before publishing
+        shell: powershell
+        run: |
+          $zip = Get-ChildItem dist -Filter '*.zip' | Select-Object -First 1
+          $scanRoot = Join-Path $env:RUNNER_TEMP 'tqr-package-scan'
+
+          Remove-Item $scanRoot -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $scanRoot
+
+          .\release\privacy-scan.ps1 -Root $scanRoot -SkipRepositoryIdentity
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          SAFE_VERSION: ${{ needs.validate.outputs.safe_version }}
+        run: |
+          $tag = "v$env:VERSION"
+          $zip = Get-ChildItem dist -Filter '*.zip' | Select-Object -First 1
+          $shaFile = Get-ChildItem dist -Filter '*.sha256' | Select-Object -First 1
+
+          if (-not $zip -or -not $shaFile) {
+            throw 'Validated release artifacts are missing.'
+          }
+
+          $existing = gh release view $tag 2>$null
+
+          if ($LASTEXITCODE -eq 0) {
+            throw "Release $tag already exists. Bump version/versionCode before publishing again."
+          }
+
+          $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
+          $notes = [string]$publish.notes
+
+          if ([string]::IsNullOrWhiteSpace($notes)) {
+            $notes = "Tailscale Quick Repair $env:VERSION"
+          }
+
+          $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.txt'
+          Set-Content -LiteralPath $notesFile -Value $notes -Encoding UTF8
+
+          gh release create $tag `
+            --title "Tailscale Quick Repair $env:VERSION" `
+            --notes-file $notesFile `
+            $zip.FullName `
+            $shaFile.FullName
+
+      - name: Update stable manifest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          VERSION_CODE: ${{ needs.validate.outputs.version_code }}
+        run: |
+          $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
+          $zip = Get-ChildItem dist -Filter '*.zip' | Select-Object -First 1
+          $shaFile = Get-ChildItem dist -Filter '*.sha256' | Select-Object -First 1
+          $sha = (Get-Content $shaFile.FullName -Raw).Trim().ToLowerInvariant()
+          $tag = "v$env:VERSION"
+          $assetUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/$($zip.Name)"
+
+          $manifest = [ordered]@{
+            schema = 1
+            channel = [string]$publish.channel
+            version = $env:VERSION
+            versionCode = [int64]$env:VERSION_CODE
+            published = $true
+            publishedAt = [DateTime]::UtcNow.ToString('o')
+            mandatory = $false
+            notes = [string]$publish.notes
+            package = [ordered]@{
+              url = $assetUrl
+              sha256 = $sha
+              size = $zip.Length
+            }
+          }
+
+          $manifest |
+            ConvertTo-Json -Depth 5 |
+            Set-Content updates/latest.json -Encoding UTF8
+
+          # Reset the switch so later development pushes only validate.
+          $publish.publish = $false
+          $publish |
+            ConvertTo-Json -Depth 4 |
+            Set-Content release/publish.json -Encoding UTF8
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add updates/latest.json release/publish.json
+          git commit -m "Publish update manifest for $env:VERSION [skip ci]"
+          git push

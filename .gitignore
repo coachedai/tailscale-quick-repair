@@ -1,0 +1,22 @@
+# Build/release output
+dist/
+artifacts/
+*.zip
+*.sha256
+*.tmp
+*.bak
+*.log
+
+# Local/private Quick Repair configuration
+config.json
+*.local.json
+.env
+.env.*
+*.pem
+*.pfx
+*.p12
+*.key
+
+# Local editor files
+.vscode/
+.idea/

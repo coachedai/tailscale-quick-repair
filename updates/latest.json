@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "channel": "preview",
+  "version": "3.0.0-phase1.1",
+  "versionCode": 30000101,
+  "published": false,
+  "publishedAt": null,
+  "mandatory": false,
+  "notes": "Update channel bootstrap. In-app updater is not enabled yet.",
+  "package": {
+    "url": null,
+    "sha256": null,
+    "size": 0
+  }
+}
