@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase3.0.2",
-  "versionCode": 30000402,
-  "requiresSetup": true,
-  "publicInstaller": true,
-  "notes": "Phase 3 protected shell migration: installs the corrected native host so legitimate update and tray shutdown can no longer be misreported as startup failures, embeds the Quick Repair brand icon into the Windows executable, and refreshes Start Menu plus existing legacy desktop shortcuts to use it. Repair and network behavior are unchanged."
+  "version": "3.0.0-phase3.1.1",
+  "versionCode": 30000411,
+  "requiresSetup": false,
+  "publicInstaller": false,
+  "notes": "Phase 3.1 Integrity Guardian foundation. Adds a quiet read-only self-check for Quick Repair core files, target configuration, installed-version metadata, update state, Start Menu and startup integration, protected repair task, and Auto Repair integration. Shows one compact System integrity status in Maintenance. Repair and network behavior are unchanged."
 }

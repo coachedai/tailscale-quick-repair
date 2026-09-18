@@ -361,6 +361,293 @@ $text = Replace-ExactOnce `
 '@ `
     -Description 'session ending lifecycle marker'
 
+
+# Phase 3.1 Integrity Guardian foundation. Read-only: inspect Quick Repair's
+# own install/configuration/integration and surface one compact Maintenance
+# status. Do not change repair, setup, updater or network behavior.
+$guardianMaintenanceOld = @'
+                                        <Button
+                                            x:Name="RepairInstallationButton"
+                                            AutomationProperties.Name="Repair Quick Repair installation"
+                                            AutomationProperties.HelpText="Rebuilds Quick Repair shell integration, tasks and launchers."
+                                            Margin="0,14,0,0"
+                                            HorizontalAlignment="Left"
+                                            Style="{StaticResource GhostButtonStyle}"
+                                            Content="Repair installation"/>
+'@
+
+$guardianMaintenanceNew = @'
+                                        <Grid Margin="0,14,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <StackPanel>
+                                                <TextBlock
+                                                    Text="System integrity"
+                                                    FontSize="12"
+                                                    Foreground="{StaticResource Value}"/>
+                                                <TextBlock
+                                                    x:Name="GuardianStatusText"
+                                                    Margin="0,4,0,0"
+                                                    MinHeight="15"
+                                                    FontSize="10.5"
+                                                    Foreground="{StaticResource Faint}"
+                                                    Text="Checking..."/>
+                                            </StackPanel>
+
+                                            <Button
+                                                x:Name="GuardianCheckButton"
+                                                Grid.Column="1"
+                                                AutomationProperties.Name="Check Quick Repair system integrity"
+                                                AutomationProperties.HelpText="Runs a read-only check of Quick Repair files, configuration and Windows integration."
+                                                VerticalAlignment="Center"
+                                                Style="{StaticResource GhostButtonStyle}"
+                                                Content="Check"/>
+                                        </Grid>
+
+                                        <TextBlock
+                                            x:Name="GuardianDetailText"
+                                            Margin="0,5,0,0"
+                                            MinHeight="15"
+                                            FontSize="10.5"
+                                            Foreground="{StaticResource Faint}"
+                                            Text="Quick Repair files, configuration and Windows integration."
+                                            TextWrapping="Wrap"/>
+
+                                        <Button
+                                            x:Name="RepairInstallationButton"
+                                            AutomationProperties.Name="Repair Quick Repair installation"
+                                            AutomationProperties.HelpText="Rebuilds Quick Repair shell integration, tasks and launchers."
+                                            Margin="0,18,0,0"
+                                            HorizontalAlignment="Left"
+                                            Style="{StaticResource GhostButtonStyle}"
+                                            Content="Repair installation"/>
+'@
+$text = Replace-ExactOnce -Text $text -Find $guardianMaintenanceOld -Replace $guardianMaintenanceNew -Description 'Guardian Maintenance UI'
+
+$guardianBindingOld = @'
+    $RepairInstallationButton = $window.FindName('RepairInstallationButton')
+    $UpdateStatusText = $window.FindName('UpdateStatusText')
+'@
+$guardianBindingNew = @'
+    $GuardianStatusText = $window.FindName('GuardianStatusText')
+    $GuardianDetailText = $window.FindName('GuardianDetailText')
+    $GuardianCheckButton = $window.FindName('GuardianCheckButton')
+    $RepairInstallationButton = $window.FindName('RepairInstallationButton')
+    $UpdateStatusText = $window.FindName('UpdateStatusText')
+'@
+$text = Replace-ExactOnce -Text $text -Find $guardianBindingOld -Replace $guardianBindingNew -Description 'Guardian control bindings'
+
+$guardianStateOld = @'
+    $script:repairActive = $false
+    $script:actionMode = 'repair'
+'@
+$guardianStateNew = @'
+    $script:repairActive = $false
+    $script:lastGuardianCheckAt = [DateTime]::MinValue
+    $script:lastGuardianResult = $null
+    $script:actionMode = 'repair'
+'@
+$text = Replace-ExactOnce -Text $text -Find $guardianStateOld -Replace $guardianStateNew -Description 'Guardian runtime state'
+
+$guardianFunctions = @'
+    function Get-GuardianIntegrityResult {
+        $issues = New-Object 'System.Collections.Generic.List[string]'
+
+        try {
+            $requiredFiles = @(
+                $NativeHostPath,
+                (Join-Path $StateDir 'Tailscale-Repair-UI.ps1'),
+                $UpdaterHostPath,
+                $SetupHostPath,
+                $AdvancedDiagnosticsPath,
+                $BackendPath,
+                $AutoRepairMonitorPath
+            )
+
+            foreach ($file in $requiredFiles) {
+                if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+                    $issues.Add("Missing component: $([IO.Path]::GetFileName($file))")
+                }
+            }
+
+            if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+                $issues.Add('Target configuration is missing.')
+            }
+            elseif ([string]::IsNullOrWhiteSpace($Peer)) {
+                $issues.Add('Target configuration is invalid.')
+            }
+
+            $installedVersionPath = Join-Path $StateDir 'version.user.json'
+
+            if (-not (Test-Path -LiteralPath $installedVersionPath -PathType Leaf)) {
+                $issues.Add('Installed version metadata is missing.')
+            }
+            else {
+                try {
+                    $installedVersion = Get-Content -LiteralPath $installedVersionPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+
+                    if ([int64]$installedVersion.versionCode -ne $ProductVersionCode) {
+                        $issues.Add('Installed version metadata does not match this build.')
+                    }
+                }
+                catch {
+                    $issues.Add('Installed version metadata is invalid.')
+                }
+            }
+
+            if (Test-Path -LiteralPath (Join-Path $StateDir 'Update.pending') -PathType Leaf) {
+                $issues.Add('An interrupted update marker is still present.')
+            }
+
+            if (-not (Test-Path -LiteralPath $StartMenuShortcutPath -PathType Leaf)) {
+                $issues.Add('Start Menu integration is missing.')
+            }
+
+            try {
+                if (Test-StartWithWindows) {
+                    $startupValue = (Get-ItemProperty -Path $StartupRegistryPath -Name $StartupRegistryName -ErrorAction Stop).$StartupRegistryName
+
+                    if ([string]$startupValue -notlike '*TailscaleQuickRepair.exe*' -or [string]$startupValue -notlike '*--start-in-tray*') {
+                        $issues.Add('Windows startup integration is not configured correctly.')
+                    }
+                }
+            }
+            catch {
+                $issues.Add('Windows startup integration could not be verified.')
+            }
+
+            try {
+                $engine = Test-RepairEngine
+
+                if (-not [bool]$engine.Healthy) {
+                    $message = [string]$engine.Message
+                    if ([string]::IsNullOrWhiteSpace($message)) {
+                        $message = 'Protected repair integration needs maintenance.'
+                    }
+                    $issues.Add($message)
+                }
+            }
+            catch {
+                $issues.Add('Protected repair integration could not be verified.')
+            }
+
+            try {
+                if (-not (Test-AutoRepairAvailable)) {
+                    $issues.Add('Automatic repair integration is unavailable.')
+                }
+            }
+            catch {
+                $issues.Add('Automatic repair integration could not be verified.')
+            }
+        }
+        catch {
+            $issues.Add('Integrity check could not inspect all components.')
+        }
+
+        return [pscustomobject]@{
+            Healthy = ($issues.Count -eq 0)
+            Count = $issues.Count
+            Issues = @($issues)
+        }
+    }
+
+    function Update-GuardianStatus {
+        param([switch]$Force)
+
+        if (-not $GuardianStatusText -or -not $GuardianDetailText) {
+            return
+        }
+
+        if (-not $Force -and $script:lastGuardianCheckAt -ne [DateTime]::MinValue -and ((Get-Date) - $script:lastGuardianCheckAt).TotalSeconds -lt 60) {
+            return
+        }
+
+        try {
+            $GuardianCheckButton.IsEnabled = $false
+            $GuardianStatusText.Text = 'Checking...'
+            $GuardianStatusText.Foreground = Get-Brush 'Blue'
+
+            $result = Get-GuardianIntegrityResult
+            $script:lastGuardianCheckAt = Get-Date
+            $script:lastGuardianResult = $result
+
+            if ([bool]$result.Healthy) {
+                $GuardianStatusText.Text = 'Healthy'
+                $GuardianStatusText.Foreground = Get-Brush 'Green'
+                $GuardianDetailText.Text = 'Core files, target configuration and Windows integration verified.'
+                $GuardianDetailText.Foreground = Get-Brush 'Faint'
+            }
+            else {
+                $count = [int]$result.Count
+                $GuardianStatusText.Text = if ($count -eq 1) { '1 issue needs attention' } else { "$count issues need attention" }
+                $GuardianStatusText.Foreground = Get-Brush 'Amber'
+                $firstIssues = @($result.Issues | Select-Object -First 2)
+                $GuardianDetailText.Text = $firstIssues -join '; '
+                $GuardianDetailText.Foreground = Get-Brush 'Amber'
+            }
+        }
+        catch {
+            $GuardianStatusText.Text = 'Check incomplete'
+            $GuardianStatusText.Foreground = Get-Brush 'Amber'
+            $GuardianDetailText.Text = 'Quick Repair could not verify every integrity item.'
+            $GuardianDetailText.Foreground = Get-Brush 'Amber'
+        }
+        finally {
+            $GuardianCheckButton.IsEnabled = $true
+        }
+    }
+
+'@
+
+$text = Replace-ExactOnce -Text $text -Find '    function Update-DetailsToggleText {' -Replace ($guardianFunctions + '    function Update-DetailsToggleText {') -Description 'Guardian integrity functions'
+
+$guardianEventOld = @'
+    $RepairInstallationButton.Add_Click({
+        Invoke-InstallationRepair
+    })
+'@
+$guardianEventNew = @'
+    $GuardianCheckButton.Add_Click({
+        Update-GuardianStatus -Force
+    })
+
+    $RepairInstallationButton.Add_Click({
+        Invoke-InstallationRepair
+    })
+'@
+$text = Replace-ExactOnce -Text $text -Find $guardianEventOld -Replace $guardianEventNew -Description 'Guardian check event'
+
+$guardianDetailsOld = @'
+            $CopyButton.Content = 'Copy'
+            Update-Diagnostics $script:lastData
+            Initialize-AutoRepairUi
+'@
+$guardianDetailsNew = @'
+            $CopyButton.Content = 'Copy'
+            Update-Diagnostics $script:lastData
+            Initialize-AutoRepairUi
+            Update-GuardianStatus
+'@
+$text = Replace-ExactOnce -Text $text -Find $guardianDetailsOld -Replace $guardianDetailsNew -Description 'Guardian Details refresh'
+
+$guardianStartupOld = @'
+                if (-not (Attach-To-RunningRepair)) {
+                    [void](Refresh-EngineCheck)
+                }
+'@
+$guardianStartupNew = @'
+                if (-not (Attach-To-RunningRepair)) {
+                    [void](Refresh-EngineCheck)
+                }
+
+                Update-GuardianStatus -Force
+'@
+$text = Replace-ExactOnce -Text $text -Find $guardianStartupOld -Replace $guardianStartupNew -Description 'Guardian startup check'
+
+
 $themeAnchor = @'
     Add-Type -AssemblyName System.Drawing
 
@@ -515,7 +802,11 @@ foreach ($required in @(
     'TqrUiClosedNormally',
     'TqrUiStartedSuccessfully',
     'TqrUiShutdownRequested',
-    'Set-QuickRepairWindowIcon'
+    'Set-QuickRepairWindowIcon',
+    'System integrity',
+    'GuardianStatusText',
+    'Get-GuardianIntegrityResult',
+    'Update-GuardianStatus'
 )) {
     if ($text -notmatch [regex]::Escape($required)) {
         throw "UI polish verification failed: $required"
