@@ -297,6 +297,7 @@ $startupMarker = @'
                 Register-ReliabilityWatchers
                 Initialize-AutoRepairLocalWatch
                 Show-UpdateResult
+                [void](Get-ActiveOperationLock -RecoverStale)
 
                 if (-not (Attach-To-RunningRepair)) {
 '@
@@ -305,6 +306,7 @@ $startupReplacement = @'
                 Register-ReliabilityWatchers
                 Initialize-AutoRepairLocalWatch
                 Show-UpdateResult
+                [void](Get-ActiveOperationLock -RecoverStale)
 
                 if (-not $StartInTray -and [string]::IsNullOrWhiteSpace($Peer)) {
                     [void](Show-TargetPeerDialog)
