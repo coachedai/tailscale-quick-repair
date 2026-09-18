@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.4",
-  "versionCode": 30000414,
+  "version": "3.0.0-phase3.1.5",
+  "versionCode": 30000415,
   "requiresSetup": false,
   "publicInstaller": false,
-  "notes": "Phase 3.1 Details isolation hotfix. Opening Details is now non-critical: diagnostics, Auto Repair and Guardian refreshes are individually contained and can no longer overwrite the main healthy result with a global UI error. Repair, updater and network behavior are unchanged."
+  "notes": "Phase 3.1 startup stabilization. Integrity Guardian no longer runs automatically during app startup or Details opening; it is now a contained on-demand Maintenance check. This removes the recurring startup UI-error state while preserving the proven repair and connection result. Guardian control handling is also hardened against missing or failed UI bindings."
 }

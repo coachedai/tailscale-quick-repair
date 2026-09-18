@@ -394,7 +394,7 @@ $guardianMaintenanceNew = @'
                                                     MinHeight="15"
                                                     FontSize="10.5"
                                                     Foreground="{StaticResource Faint}"
-                                                    Text="Checking..."/>
+                                                    Text="Ready to check"/>
                                             </StackPanel>
 
                                             <Button
@@ -557,7 +557,7 @@ $guardianFunctions = @'
     function Update-GuardianStatus {
         param([switch]$Force)
 
-        if (-not $GuardianStatusText -or -not $GuardianDetailText) {
+        if (-not $GuardianStatusText -or -not $GuardianDetailText -or -not $GuardianCheckButton) {
             return
         }
 
@@ -596,7 +596,7 @@ $guardianFunctions = @'
             $GuardianDetailText.Foreground = Get-Brush 'Amber'
         }
         finally {
-            $GuardianCheckButton.IsEnabled = $true
+            try { $GuardianCheckButton.IsEnabled = $true } catch {}
         }
     }
 
@@ -611,7 +611,7 @@ $guardianEventOld = @'
 '@
 $guardianEventNew = @'
     $GuardianCheckButton.Add_Click({
-        Update-GuardianStatus -Force
+        try { Update-GuardianStatus -Force } catch {}
     })
 
     $RepairInstallationButton.Add_Click({
@@ -629,7 +629,6 @@ $guardianDetailsNew = @'
             try { $CopyButton.Content = 'Copy' } catch {}
             try { Update-Diagnostics $script:lastData } catch {}
             try { Initialize-AutoRepairUi } catch {}
-            try { Update-GuardianStatus } catch {}
 '@
 $text = Replace-ExactOnce -Text $text -Find $guardianDetailsOld -Replace $guardianDetailsNew -Description 'Guardian Details refresh'
 
@@ -645,8 +644,6 @@ $guardianStartupNew = @'
                 if (-not (Attach-To-RunningRepair)) {
                     [void](Refresh-EngineCheck)
                 }
-
-                Update-GuardianStatus -Force
 '@
 $text = Replace-ExactOnce -Text $text -Find $guardianStartupOld -Replace $guardianStartupNew -Description 'Guardian startup check'
 
@@ -810,7 +807,8 @@ foreach ($required in @(
     'GuardianStatusText',
     'Get-GuardianIntegrityResult',
     'Update-GuardianStatus',
-    'try { Update-GuardianStatus } catch {}'
+    'Ready to check',
+    'try { Update-GuardianStatus -Force } catch {}'
 )) {
     if ($text -notmatch [regex]::Escape($required)) {
         throw "UI polish verification failed: $required"
