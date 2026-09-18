@@ -679,7 +679,40 @@ $guardianEventOld = @'
 '@
 $guardianEventNew = @'
     $GuardianCheckButton.Add_Click({
-        try { Update-GuardianStatus -Force } catch {}
+        try {
+            if (-not $GuardianCheckButton.IsEnabled) {
+                return
+            }
+
+            $GuardianCheckButton.IsEnabled = $false
+            $GuardianStatusText.Text = 'Checking...'
+            $GuardianStatusText.Foreground = Get-Brush 'Blue'
+            $GuardianDetailText.Text = 'Verifying release files, configuration and Windows integration.'
+            $GuardianDetailText.Foreground = Get-Brush 'Faint'
+
+            $window.Dispatcher.BeginInvoke(
+                [System.Windows.Threading.DispatcherPriority]::Background,
+                [Action]{
+                    try {
+                        Update-GuardianStatus -Force
+                    }
+                    catch {
+                        $GuardianStatusText.Text = 'Check incomplete'
+                        $GuardianStatusText.Foreground = Get-Brush 'Amber'
+                        $GuardianDetailText.Text = 'Quick Repair could not verify every integrity item.'
+                        $GuardianDetailText.Foreground = Get-Brush 'Amber'
+                        try { $GuardianCheckButton.IsEnabled = $true } catch {}
+                    }
+                }
+            ) | Out-Null
+        }
+        catch {
+            $GuardianStatusText.Text = 'Check could not start'
+            $GuardianStatusText.Foreground = Get-Brush 'Amber'
+            $GuardianDetailText.Text = 'Nothing was changed. Try the integrity check again.'
+            $GuardianDetailText.Foreground = Get-Brush 'Amber'
+            try { $GuardianCheckButton.IsEnabled = $true } catch {}
+        }
     })
 
     $RepairInstallationButton.Add_Click({
@@ -876,7 +909,8 @@ foreach ($required in @(
     'Get-GuardianIntegrityResult',
     'Update-GuardianStatus',
     'Ready to check',
-    'try { Update-GuardianStatus -Force } catch {}',
+    'Verifying release files, configuration and Windows integration.',
+    'Check could not start',
     'integrity-manifest.json',
     'VerifiedReleaseFiles',
     'release files verified with SHA-256'

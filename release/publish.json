@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.6",
-  "versionCode": 30000416,
+  "version": "3.0.0-phase3.1.7",
+  "versionCode": 30000417,
   "requiresSetup": false,
   "publicInstaller": false,
-  "notes": "Phase 3.1 Release Integrity Guardian. Every normal update now installs a release-matched SHA-256 manifest for its user-level app components. The on-demand System integrity check verifies file presence, size and SHA-256 before reporting Healthy. This is corruption/integrity detection only and does not change repair or network behavior."
+  "notes": "Phase 3.1 Integrity Check interaction hardening. System integrity now gives immediate inline feedback, yields to WPF before the read-only Guardian check runs, and reports any check-start failure inline instead of silently swallowing it. Repair, updater and network behavior are unchanged."
 }
