@@ -452,8 +452,27 @@ $guardianStateNew = @'
 '@
 $text = Replace-ExactOnce -Text $text -Find $guardianStateOld -Replace $guardianStateNew -Description 'Guardian runtime state'
 
-$guardianFunctions = @'
-    function global:Get-GuardianIntegrityResult {
+$guardianFunctions = ''
+
+$text = Replace-ExactOnce -Text $text -Find '    function Update-DetailsToggleText {' -Replace ($guardianFunctions + '    function Update-DetailsToggleText {') -Description 'Guardian integrity functions' -Replace ($guardianFunctions + '    function Update-DetailsToggleText {') -Description 'Guardian integrity functions'
+
+$guardianEventOld = @'
+    $RepairInstallationButton.Add_Click({
+        Invoke-InstallationRepair
+    })
+'@
+$guardianEventNew = @'
+    $GuardianCheckButton.Add_Click({
+        if (-not $GuardianCheckButton.IsEnabled) {
+            return
+        }
+
+        $GuardianCheckButton.IsEnabled = $false
+        $GuardianStatusText.Text = 'Checking...'
+        $GuardianStatusText.Foreground = Get-Brush 'Blue'
+        $GuardianDetailText.Text = 'Verifying release files, configuration and Windows integration.'
+        $GuardianDetailText.Foreground = Get-Brush 'Faint'
+
         $issues = New-Object 'System.Collections.Generic.List[string]'
         $verifiedReleaseFiles = 0
 
@@ -482,14 +501,12 @@ $guardianFunctions = @'
             }
 
             $installedVersionPath = Join-Path $StateDir 'version.user.json'
-
             if (-not (Test-Path -LiteralPath $installedVersionPath -PathType Leaf)) {
                 [void]$issues.Add('Installed version metadata is missing.')
             }
             else {
                 try {
                     $installedVersion = Get-Content -LiteralPath $installedVersionPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-
                     if ([int64]$installedVersion.versionCode -ne $ProductVersionCode) {
                         [void]$issues.Add('Installed version metadata does not match this build.')
                     }
@@ -504,7 +521,6 @@ $guardianFunctions = @'
             }
 
             $integrityManifestPath = Join-Path $StateDir 'integrity-manifest.json'
-
             if (-not (Test-Path -LiteralPath $integrityManifestPath -PathType Leaf)) {
                 [void]$issues.Add('Release integrity manifest is missing.')
             }
@@ -528,14 +544,14 @@ $guardianFunctions = @'
                         if (
                             [string]::IsNullOrWhiteSpace($name) -or
                             $name -match '[\\/]' -or
-                            $expectedHash -notmatch '^[a-f0-9]{64}$' -or
+                            $expectedHash.Length -ne 64 -or
+                            $expectedHash -match '[^a-f0-9]' -or
                             $expectedSize -lt 0
                         ) {
                             throw 'Release integrity manifest contains invalid file metadata.'
                         }
 
                         $candidate = Join-Path $StateDir $name
-
                         if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
                             [void]$issues.Add("Release file is missing: $name")
                             continue
@@ -547,7 +563,6 @@ $guardianFunctions = @'
                         }
 
                         $actualHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
-
                         if ($actualHash -ne $expectedHash) {
                             [void]$issues.Add("Release file integrity failed: $name")
                             continue
@@ -557,7 +572,11 @@ $guardianFunctions = @'
                     }
                 }
                 catch {
-                    [void]$issues.Add('Release integrity manifest is invalid.')
+                    $manifestReason = [string]$_.Exception.Message
+                    if ([string]::IsNullOrWhiteSpace($manifestReason)) {
+                        $manifestReason = 'Release integrity manifest is invalid.'
+                    }
+                    [void]$issues.Add($manifestReason)
                 }
             }
 
@@ -568,7 +587,6 @@ $guardianFunctions = @'
             try {
                 if (Test-StartWithWindows) {
                     $startupValue = (Get-ItemProperty -Path $StartupRegistryPath -Name $StartupRegistryName -ErrorAction Stop).$StartupRegistryName
-
                     if ([string]$startupValue -notlike '*TailscaleQuickRepair.exe*' -or [string]$startupValue -notlike '*--start-in-tray*') {
                         [void]$issues.Add('Windows startup integration is not configured correctly.')
                     }
@@ -580,7 +598,6 @@ $guardianFunctions = @'
 
             try {
                 $engine = Test-RepairEngine
-
                 if (-not [bool]$engine.Healthy) {
                     $message = [string]$engine.Message
                     if ([string]::IsNullOrWhiteSpace($message)) {
@@ -601,118 +618,32 @@ $guardianFunctions = @'
             catch {
                 [void]$issues.Add('Automatic repair integration could not be verified.')
             }
-        }
-        catch {
-            $internalReason = [string]$_.Exception.Message
-            if ([string]::IsNullOrWhiteSpace($internalReason)) {
-                $internalReason = 'Integrity check could not inspect all components.'
-            }
-            elseif ($internalReason.Length -gt 120) {
-                $internalReason = $internalReason.Substring(0,120).TrimEnd() + '...'
-            }
-
-            [void]$issues.Add($internalReason)
-        }
-
-        return [pscustomobject]@{
-            Healthy = ($issues.Count -eq 0)
-            Count = $issues.Count
-            Issues = @($issues)
-            VerifiedReleaseFiles = $verifiedReleaseFiles
-        }
-    }
-
-    function global:Update-GuardianStatus {
-        param([switch]$Force)
-
-        if (-not $GuardianStatusText -or -not $GuardianDetailText -or -not $GuardianCheckButton) {
-            return
-        }
-
-        if (-not $Force -and $script:lastGuardianCheckAt -ne [DateTime]::MinValue -and ((Get-Date) - $script:lastGuardianCheckAt).TotalSeconds -lt 60) {
-            return
-        }
-
-        try {
-            $GuardianCheckButton.IsEnabled = $false
-            $GuardianStatusText.Text = 'Checking...'
-            $GuardianStatusText.Foreground = Get-Brush 'Blue'
-
-            $result = Get-GuardianIntegrityResult
-
-            if (
-                -not $result -or
-                -not ($result.PSObject.Properties.Name -contains 'Healthy')
-            ) {
-                throw 'Guardian did not return a valid integrity result.'
-            }
 
             $script:lastGuardianCheckAt = Get-Date
-            $script:lastGuardianResult = $result
 
-            if ([bool]$result.Healthy) {
+            if ($issues.Count -eq 0) {
                 $GuardianStatusText.Text = 'Healthy'
                 $GuardianStatusText.Foreground = Get-Brush 'Green'
-
-                $verifiedCount = [int]$result.VerifiedReleaseFiles
-                $GuardianDetailText.Text = if ($verifiedCount -gt 0) {
-                    "$verifiedCount release files verified with SHA-256. Configuration and Windows integration verified."
+                $GuardianDetailText.Text = if ($verifiedReleaseFiles -gt 0) {
+                    "$verifiedReleaseFiles release files verified with SHA-256. Configuration and Windows integration verified."
                 }
                 else {
                     'Configuration and Windows integration verified.'
                 }
-
                 $GuardianDetailText.Foreground = Get-Brush 'Faint'
             }
             else {
-                $count = [int]$result.Count
-                $GuardianStatusText.Text = if ($count -eq 1) { '1 issue needs attention' } else { "$count issues need attention" }
+                $GuardianStatusText.Text = if ($issues.Count -eq 1) {
+                    '1 issue needs attention'
+                }
+                else {
+                    "$($issues.Count) issues need attention"
+                }
+
                 $GuardianStatusText.Foreground = Get-Brush 'Amber'
-                $firstIssues = @($result.Issues | Select-Object -First 2)
-                $GuardianDetailText.Text = $firstIssues -join '; '
+                $GuardianDetailText.Text = @($issues | Select-Object -First 2) -join '; '
                 $GuardianDetailText.Foreground = Get-Brush 'Amber'
             }
-        }
-        catch {
-            $GuardianStatusText.Text = 'Check incomplete'
-            $GuardianStatusText.Foreground = Get-Brush 'Amber'
-
-            $reason = [string]$_.Exception.Message
-            if ([string]::IsNullOrWhiteSpace($reason)) {
-                $reason = 'Guardian returned an unexpected result. Nothing was changed.'
-            }
-            elseif ($reason.Length -gt 150) {
-                $reason = $reason.Substring(0,150).TrimEnd() + '...'
-            }
-
-            $GuardianDetailText.Text = $reason
-            $GuardianDetailText.Foreground = Get-Brush 'Amber'
-        }
-        finally {
-            try { $GuardianCheckButton.IsEnabled = $true } catch {}
-        }
-    }
-
-'@
-
-$text = Replace-ExactOnce -Text $text -Find '    function Update-DetailsToggleText {' -Replace ($guardianFunctions + '    function Update-DetailsToggleText {') -Description 'Guardian integrity functions'
-
-$guardianEventOld = @'
-    $RepairInstallationButton.Add_Click({
-        Invoke-InstallationRepair
-    })
-'@
-$guardianEventNew = @'
-    $GuardianCheckButton.Add_Click({
-        try {
-            if (-not $GuardianCheckButton.IsEnabled) {
-                return
-            }
-
-            # Run in the click-handler scope. The previous deferred Dispatcher
-            # callback could lose access to the dynamically-added Guardian
-            # function and fall into the generic outer catch.
-            Update-GuardianStatus -Force
         }
         catch {
             $GuardianStatusText.Text = 'Check incomplete'
@@ -728,6 +659,8 @@ $guardianEventNew = @'
 
             $GuardianDetailText.Text = $reason
             $GuardianDetailText.Foreground = Get-Brush 'Amber'
+        }
+        finally {
             try { $GuardianCheckButton.IsEnabled = $true } catch {}
         }
     })
@@ -926,10 +859,9 @@ foreach ($required in @(
     'Get-GuardianIntegrityResult',
     'Update-GuardianStatus',
     'Ready to check',
-    'Update-GuardianStatus -Force',
     'Guardian could not complete the integrity check.',
-    'function global:Get-GuardianIntegrityResult',
-    'function global:Update-GuardianStatus',
+    'Verifying release files, configuration and Windows integration.',
+    '$verifiedReleaseFiles++',
     'integrity-manifest.json',
     'VerifiedReleaseFiles',
     'release files verified with SHA-256',

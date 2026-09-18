@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.11",
-  "versionCode": 30000421,
+  "version": "3.0.0-phase3.1.12",
+  "versionCode": 30000422,
   "requiresSetup": false,
   "publicInstaller": false,
-  "notes": "Phase 3.1 Guardian scope fix. The dynamically-added Guardian functions are now explicitly process-global inside Quick Repair's dedicated PowerShell runspace, so WPF event callbacks can always resolve them. CI now requires these global Guardian declarations. No repair, update or network behavior changes."
+  "notes": "Phase 3.1 Guardian inline execution fix. The integrity check no longer depends on dynamically-injected Guardian functions at all; the complete read-only verification runs directly inside the WPF Check event. This removes the function-scope failure class while retaining SHA-256, configuration and Windows-integration checks. Repair, update and network behavior are unchanged."
 }
