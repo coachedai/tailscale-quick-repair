@@ -709,32 +709,24 @@ $guardianEventNew = @'
                 return
             }
 
-            $GuardianCheckButton.IsEnabled = $false
-            $GuardianStatusText.Text = 'Checking...'
-            $GuardianStatusText.Foreground = Get-Brush 'Blue'
-            $GuardianDetailText.Text = 'Verifying release files, configuration and Windows integration.'
-            $GuardianDetailText.Foreground = Get-Brush 'Faint'
-
-            $window.Dispatcher.BeginInvoke(
-                [System.Windows.Threading.DispatcherPriority]::Background,
-                [Action]{
-                    try {
-                        Update-GuardianStatus -Force
-                    }
-                    catch {
-                        $GuardianStatusText.Text = 'Check incomplete'
-                        $GuardianStatusText.Foreground = Get-Brush 'Amber'
-                        $GuardianDetailText.Text = 'Quick Repair could not verify every integrity item.'
-                        $GuardianDetailText.Foreground = Get-Brush 'Amber'
-                        try { $GuardianCheckButton.IsEnabled = $true } catch {}
-                    }
-                }
-            ) | Out-Null
+            # Run in the click-handler scope. The previous deferred Dispatcher
+            # callback could lose access to the dynamically-added Guardian
+            # function and fall into the generic outer catch.
+            Update-GuardianStatus -Force
         }
         catch {
-            $GuardianStatusText.Text = 'Check could not start'
+            $GuardianStatusText.Text = 'Check incomplete'
             $GuardianStatusText.Foreground = Get-Brush 'Amber'
-            $GuardianDetailText.Text = 'Nothing was changed. Try the integrity check again.'
+
+            $reason = [string]$_.Exception.Message
+            if ([string]::IsNullOrWhiteSpace($reason)) {
+                $reason = 'Guardian could not complete the integrity check.'
+            }
+            elseif ($reason.Length -gt 150) {
+                $reason = $reason.Substring(0,150).TrimEnd() + '...'
+            }
+
+            $GuardianDetailText.Text = $reason
             $GuardianDetailText.Foreground = Get-Brush 'Amber'
             try { $GuardianCheckButton.IsEnabled = $true } catch {}
         }
@@ -934,8 +926,8 @@ foreach ($required in @(
     'Get-GuardianIntegrityResult',
     'Update-GuardianStatus',
     'Ready to check',
-    'Verifying release files, configuration and Windows integration.',
-    'Check could not start',
+    'Update-GuardianStatus -Force',
+    'Guardian could not complete the integrity check.',
     'integrity-manifest.json',
     'VerifiedReleaseFiles',
     'release files verified with SHA-256',

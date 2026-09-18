@@ -1,7 +1,7 @@
 {
   "product": "Tailscale Quick Repair",
-  "version": "3.0.0-phase3.1.9",
-  "versionCode": 30000419,
+  "version": "3.0.0-phase3.1.10",
+  "versionCode": 30000420,
   "channel": "preview",
   "updateSchema": 1,
   "configSchema": 2
