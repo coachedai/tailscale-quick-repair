@@ -1,21 +1,21 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.4",
-  "versionCode": 30000414,
+  "version": "3.0.0-phase3.1.5",
+  "versionCode": 30000415,
   "published": true,
-  "publishedAt": "2026-09-18T11:46:47.3007198Z",
+  "publishedAt": "2026-09-18T14:06:36.3760297Z",
   "mandatory": false,
   "requiresSetup": false,
-  "notes": "Phase 3.1 Details isolation hotfix. Opening Details is now non-critical: diagnostics, Auto Repair and Guardian refreshes are individually contained and can no longer overwrite the main healthy result with a global UI error. Repair, updater and network behavior are unchanged.",
+  "notes": "Phase 3.1 startup stabilization. Integrity Guardian no longer runs automatically during app startup or Details opening; it is now a contained on-demand Maintenance check. This removes the recurring startup UI-error state while preserving the proven repair and connection result. Guardian control handling is also hardened against missing or failed UI bindings.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.4/TailscaleQuickRepair-3.0.0-phase3.1.4.zip",
-    "sha256": "9ea1b741c897222d6437079a76e96bab2673cdb0617d28fa21cc96234fff2838",
-    "size": 58185
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.5/TailscaleQuickRepair-3.0.0-phase3.1.5.zip",
+    "sha256": "283327dd12006321d342625e528aa61a13fb544fad467ead4b4ecdd4ab837c70",
+    "size": 58176
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.4/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.4.exe",
-    "sha256": "0553119be75ea0ca98f3cf2f1b48b6894cf235c7150d8fda6ea0ca24bf72fab7",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.5/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.5.exe",
+    "sha256": "bbbe04e3d1ee348f26ff158064441c40d9a87b867d2bfda3b4d292c3b88a4384",
     "size": 23040
   }
 }
