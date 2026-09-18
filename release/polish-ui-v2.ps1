@@ -433,13 +433,11 @@ public static class QuickRepairWindowTheme
         $icon = $null
 
         try {
-            $tailscaleExe = Join-Path $env:ProgramFiles 'Tailscale\tailscale-ipn.exe'
-
-            if (-not (Test-Path -LiteralPath $tailscaleExe -PathType Leaf)) {
+            if (-not (Test-Path -LiteralPath $NativeHostPath -PathType Leaf)) {
                 return
             }
 
-            $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($tailscaleExe)
+            $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($NativeHostPath)
 
             if (-not $icon) {
                 return

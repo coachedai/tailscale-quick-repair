@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase3.0.1",
-  "versionCode": 30000401,
-  "requiresSetup": false,
-  "publicInstaller": false,
-  "notes": "Phase 3 Guardian foundation: fixes the false Quick Repair could not start popup on legitimate tray shutdown and restores the window/taskbar icon from the installed Tailscale app. Adds explicit lifecycle markers for later Guardian integrity checks. Repair, setup, update routing and network behavior are unchanged."
+  "version": "3.0.0-phase3.0.2",
+  "versionCode": 30000402,
+  "requiresSetup": true,
+  "publicInstaller": true,
+  "notes": "Phase 3 protected shell migration: installs the corrected native host so legitimate update and tray shutdown can no longer be misreported as startup failures, embeds the Quick Repair brand icon into the Windows executable, and refreshes Start Menu plus existing legacy desktop shortcuts to use it. Repair and network behavior are unchanged."
 }

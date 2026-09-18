@@ -84,15 +84,16 @@ internal static class NativeHost
                         invokeFailure = ex;
                     }
 
+                    bool uiStartedSuccessfully = GetSessionBool(runspace, "TqrUiStartedSuccessfully");
                     bool uiClosedNormally = GetSessionBool(runspace, "TqrUiClosedNormally");
                     bool shutdownRequested = GetSessionBool(runspace, "TqrUiShutdownRequested");
 
-                    if (invokeFailure != null && !shutdownRequested && !uiClosedNormally)
+                    if (invokeFailure != null && !uiStartedSuccessfully && !shutdownRequested && !uiClosedNormally)
                     {
                         throw invokeFailure;
                     }
 
-                    if (powershell.HadErrors && !shutdownRequested && !uiClosedNormally)
+                    if (powershell.HadErrors && !uiStartedSuccessfully && !shutdownRequested && !uiClosedNormally)
                     {
                         StringBuilder message = new StringBuilder();
 

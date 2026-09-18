@@ -447,19 +447,46 @@ internal static class PublicSetupHost
 
     private static void CreateStartMenuShortcut()
     {
-        string shortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Tailscale Quick Repair.lnk");
+        string shortcut = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Programs),
+            "Tailscale Quick Repair.lnk"
+        );
+        WriteQuickRepairShortcut(shortcut);
+        RefreshDesktopShortcuts();
+    }
+
+    private static void RefreshDesktopShortcuts()
+    {
+        string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+
+        foreach (string name in new[] { "Fix Tailscale.lnk", "Tailscale Quick Repair.lnk" })
+        {
+            string shortcut = Path.Combine(desktop, name);
+
+            if (File.Exists(shortcut))
+            {
+                WriteQuickRepairShortcut(shortcut);
+            }
+        }
+    }
+
+    private static void WriteQuickRepairShortcut(string shortcut)
+    {
         Type shellType = Type.GetTypeFromProgID("WScript.Shell");
         object shellObject = null;
         object shortcutObject = null;
+        string exe = Path.Combine(GetAppDir(), "TailscaleQuickRepair.exe");
+
         try
         {
             dynamic shell = Activator.CreateInstance(shellType);
             shellObject = shell;
             dynamic link = shell.CreateShortcut(shortcut);
             shortcutObject = link;
-            link.TargetPath = Path.Combine(GetAppDir(), "TailscaleQuickRepair.exe");
+            link.TargetPath = exe;
             link.WorkingDirectory = GetAppDir();
             link.Description = "Tailscale Quick Repair";
+            link.IconLocation = exe + ",0";
             link.Save();
         }
         finally

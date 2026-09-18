@@ -85,13 +85,25 @@ if (-not (Test-Path -LiteralPath $automation -PathType Leaf)) {
 }
 
 function Invoke-CSharpBuild {
-    param([string]$Output,[string[]]$Sources,[string[]]$References,[string]$MainType)
+    param(
+        [string]$Output,
+        [string[]]$Sources,
+        [string[]]$References,
+        [string]$MainType,
+        [string]$Icon
+    )
 
     $stdout = "$Output.stdout.txt"
     $stderr = "$Output.stderr.txt"
     Remove-Item $Output,$stdout,$stderr -Force -ErrorAction SilentlyContinue
 
     $args = @('/nologo','/target:winexe','/platform:anycpu','/optimize+',('/main:{0}' -f $MainType),('/out:"{0}"' -f $Output))
+    if (-not [string]::IsNullOrWhiteSpace($Icon)) {
+        if (-not (Test-Path -LiteralPath $Icon -PathType Leaf)) {
+            throw "Native icon file is missing: $Icon"
+        }
+        $args += ('/win32icon:"{0}"' -f $Icon)
+    }
     foreach ($reference in $References) { $args += ('/reference:"{0}"' -f $reference) }
     foreach ($source in $Sources) { $args += ('"{0}"' -f $source) }
 
@@ -107,6 +119,71 @@ function Invoke-CSharpBuild {
     }
 
     Remove-Item $stdout,$stderr -Force -ErrorAction SilentlyContinue
+}
+
+function New-QuickRepairIcon {
+    param([Parameter(Mandatory=$true)][string]$Path)
+
+    Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+
+    $bitmap = New-Object System.Drawing.Bitmap 64,64
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $darkBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(18,25,37))
+    $blueBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(8,102,255))
+    $rounded = New-Object System.Drawing.Drawing2D.GraphicsPath
+
+    try {
+        $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $graphics.Clear([System.Drawing.Color]::Transparent)
+
+        $rounded.AddArc(4,4,16,16,180,90)
+        $rounded.AddArc(44,4,16,16,270,90)
+        $rounded.AddArc(44,44,16,16,0,90)
+        $rounded.AddArc(4,44,16,16,90,90)
+        $rounded.CloseFigure()
+        $graphics.FillPath($darkBrush,$rounded)
+
+        foreach ($point in @(
+            @(32,15),
+            @(20,24),
+            @(44,24),
+            @(32,32),
+            @(20,40),
+            @(44,40),
+            @(32,49)
+        )) {
+            $graphics.FillEllipse(
+                $blueBrush,
+                [int]$point[0]-3,
+                [int]$point[1]-3,
+                6,
+                6
+            )
+        }
+
+        $hIcon = $bitmap.GetHicon()
+        $icon = [System.Drawing.Icon]::FromHandle($hIcon)
+        $stream = [IO.File]::Open($Path,[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None)
+
+        try {
+            $icon.Save($stream)
+        }
+        finally {
+            $stream.Dispose()
+            $icon.Dispose()
+        }
+    }
+    finally {
+        $rounded.Dispose()
+        $blueBrush.Dispose()
+        $darkBrush.Dispose()
+        $graphics.Dispose()
+        $bitmap.Dispose()
+    }
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw 'Quick Repair icon generation failed.'
+    }
 }
 
 function Get-RelativePackagePath {
@@ -128,6 +205,9 @@ $packageProgram = Join-Path $packageRoot 'program'
 New-Item -ItemType Directory -Path $baseOut,$packageApp,$packageProgram -Force | Out-Null
 
 try {
+    $brandIcon = Join-Path $work 'QuickRepair.ico'
+    New-QuickRepairIcon -Path $brandIcon
+
     # Reuse the already-hardened normal release build for the UI + updater,
     # then expand it into the complete fresh-install bundle.
     & (Join-Path $PSScriptRoot 'build.ps1') -OutputDirectory $baseOut
@@ -144,7 +224,7 @@ try {
 
     Invoke-CSharpBuild -Output $nativeHost `
         -Sources @((Join-Path $repo 'src\native\NativeHost.cs')) `
-        -References @($automation,$windowsForms) -MainType 'NativeHost'
+        -References @($automation,$windowsForms) -MainType 'NativeHost' -Icon $brandIcon
 
     Invoke-CSharpBuild -Output $setupHostInstalled `
         -Sources @(
@@ -152,7 +232,7 @@ try {
             (Join-Path $repo 'src\native\PublicSetupEntry.cs')
         ) `
         -References @($webExtensions,$compression,$compressionFs,$windowsForms,$drawing) `
-        -MainType 'PublicSetupEntry'
+        -MainType 'PublicSetupEntry' -Icon $brandIcon
 
     Copy-Item -LiteralPath $setupHostInstalled -Destination $setupAsset -Force
 
