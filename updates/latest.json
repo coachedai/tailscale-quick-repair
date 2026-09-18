@@ -1,21 +1,21 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.2",
-  "versionCode": 30000412,
+  "version": "3.0.0-phase3.1.3",
+  "versionCode": 30000413,
   "published": true,
-  "publishedAt": "2026-09-18T11:28:02.9180210Z",
+  "publishedAt": "2026-09-18T11:38:16.3424420Z",
   "mandatory": false,
   "requiresSetup": false,
-  "notes": "Phase 3.1 hidden-task migration bridge. Installs the corrected Setup host and maintenance route without changing protected tasks yet. The new Setup host creates windowless wscript launchers for Repair and Auto Repair, eliminating PowerShell flashes when the integration is rebuilt. Repair installation now routes through native Setup instead of the legacy PowerShell maintenance script.",
+  "notes": "Phase 3.1 maintenance handoff fix. Repair installation now closes the stale UI after starting native Setup, lets Setup rebuild the protected integration, shows the completion confirmation, and only then relaunches a fresh Quick Repair instance. Prevents the app remaining stuck on Repairing Quick Repair after maintenance.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.2/TailscaleQuickRepair-3.0.0-phase3.1.2.zip",
-    "sha256": "e45679e8a9ccefa65e00b95d7ee7175d968c545283c210ed5e95bb586b019438",
-    "size": 58135
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.3/TailscaleQuickRepair-3.0.0-phase3.1.3.zip",
+    "sha256": "a03bb83835a6e71af89ed7f647974bbb15cc7318bfa650c565ef5f56a76c621f",
+    "size": 58177
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.2/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.2.exe",
-    "sha256": "98a74b4e5fc25d7198dc72605a3f876a0e14ee2aaf563dec6bc34396b772ed6d",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.3/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.3.exe",
+    "sha256": "d2cf7de5b397655dc3be6d744023eb48758dde33476ce8979edc867761649175",
     "size": 23040
   }
 }
