@@ -74,7 +74,18 @@ internal static class NativeHost
 
                     Collection<PSObject> ignored = powershell.Invoke();
 
-                    if (powershell.HadErrors)
+                    bool uiClosedNormally = false;
+
+                    try
+                    {
+                        object marker = runspace.SessionStateProxy.GetVariable("TqrUiClosedNormally");
+                        uiClosedNormally = marker is bool && (bool)marker;
+                    }
+                    catch
+                    {
+                    }
+
+                    if (powershell.HadErrors && !uiClosedNormally)
                     {
                         StringBuilder message = new StringBuilder();
 

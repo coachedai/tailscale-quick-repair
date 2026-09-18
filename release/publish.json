@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase2.3.5",
-  "versionCode": 30000305,
+  "version": "3.0.0-phase2.3.6",
+  "versionCode": 30000306,
   "requiresSetup": false,
   "publicInstaller": false,
-  "notes": "UI-only polish on the recovered 2.3.4 baseline: renames This session to Activity, removes duplicated peer-reachable noise, uses ASCII-safe in-progress text, and reserves status-row space so Check Again does not make the layout jump. Repair, setup, task and network behavior are unchanged."
+  "notes": "Tray Exit-only hardening on the proven 2.3.5 behavior: lets the tray menu unwind before shutdown and prevents the native host from misreporting a normal UI close as a startup failure. Repair, setup, update routing and network behavior are unchanged."
 }

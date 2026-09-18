@@ -244,6 +244,74 @@ $text = Replace-ExactOnce `
     -Replace '$ConnectionInsightText.Visibility = [System.Windows.Visibility]::Hidden' `
     -Description 'stable connection insight visibility'
 
+# 2.3.6 Tray Exit-only hardening. Keep repair/setup/network behavior frozen.
+# Let the WinForms context-menu click unwind before WPF tears down the window
+# and tray resources. This avoids shutdown-time errors from the live menu.
+$text = Replace-ExactOnce `
+    -Text $text `
+    -Find @'
+        $script:trayExitItem.Add_Click({
+            $window.Dispatcher.BeginInvoke(
+                [Action]{
+                    $script:allowFullExit = $true
+                    $window.Close()
+                }
+            ) | Out-Null
+        })
+'@ `
+    -Replace @'
+        $script:trayExitItem.Add_Click({
+            try {
+                $script:allowFullExit = $true
+
+                if ($script:notifyIcon) {
+                    $script:notifyIcon.ContextMenuStrip = $null
+                    $script:notifyIcon.Visible = $false
+                }
+
+                if ($script:trayMenu) {
+                    $script:trayMenu.Close()
+                }
+
+                $window.Dispatcher.BeginInvoke(
+                    [System.Windows.Threading.DispatcherPriority]::ApplicationIdle,
+                    [Action]{
+                        try { $window.Close() } catch {}
+                    }
+                ) | Out-Null
+            }
+            catch {
+                try { $window.Close() } catch {}
+            }
+        })
+'@ `
+    -Description 'tray exit idle shutdown'
+
+# Tell the native host that the WPF lifetime reached a normal close. The host
+# can then distinguish a harmless shutdown-time PowerShell stream entry from a
+# genuine failure to load the app.
+$text = Replace-ExactOnce `
+    -Text $text `
+    -Find @'
+    if ($ownsWpfApp) {
+        [void]$wpfApp.Run($window)
+    }
+    else {
+        [void]$window.ShowDialog()
+    }
+'@ `
+    -Replace @'
+    if ($ownsWpfApp) {
+        [void]$wpfApp.Run($window)
+    }
+    else {
+        [void]$window.ShowDialog()
+    }
+
+    $global:TqrUiClosedNormally = $true
+'@ `
+    -Description 'native host normal-close marker'
+
 $themeAnchor = @'
     Add-Type -AssemblyName System.Drawing
 
@@ -351,7 +419,9 @@ foreach ($required in @(
     'Text="Activity"',
     'Check in progress.',
     'MinHeight="14"',
-    'MinHeight="18"'
+    'MinHeight="18"',
+    'DispatcherPriority]::ApplicationIdle',
+    'TqrUiClosedNormally'
 )) {
     if ($text -notmatch [regex]::Escape($required)) {
         throw "UI polish verification failed: $required"
