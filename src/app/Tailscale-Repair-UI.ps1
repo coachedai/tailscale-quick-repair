@@ -2060,7 +2060,7 @@ try {
 
             try {
                 if (Test-Path -LiteralPath $NativeHostPath) {
-                    $command = '"' + $NativeHostPath + '" --tray'
+                    $command = '"' + $NativeHostPath + '" --start-in-tray'
                 }
                 else {
                     $command = 'wscript.exe "' + $StartupLauncherPath + '"'
@@ -3299,23 +3299,27 @@ try {
         Set-Step $AppDot $AppStep (
             if ([string]$Data.client -eq 'Running') { 'good' }
             elseif ([string]$Data.client -eq 'Closed') { 'warn' }
-            elseif ([int]$Data.progress -ge 22) { 'bad' }
-            else { 'active' }
+            elseif ([bool]$Data.done -and [string]$Data.mode -eq 'failure') { 'bad' }
+            elseif ([int]$Data.progress -ge 1) { 'active' }
+            else { 'idle' }
         )
 
         Set-Step $ServiceDot $ServiceStep (
             if ([string]$Data.service -eq 'Running') { 'good' }
             elseif ([string]$Data.service -eq 'Stopped') { 'warn' }
-            elseif ([int]$Data.progress -ge 48) { 'bad' }
-            else { 'active' }
+            elseif ([bool]$Data.done -and [string]$Data.mode -eq 'failure') { 'bad' }
+            elseif ([int]$Data.progress -ge 22) { 'active' }
+            else { 'idle' }
         )
 
         if ([string]$Data.backend -eq 'Running') {
             Set-Step $BackendDot $BackendStep 'good'
-        } elseif ([string]$Data.mode -eq 'repairing') {
+        } elseif ([bool]$Data.done -and [string]$Data.mode -eq 'failure') {
+            Set-Step $BackendDot $BackendStep 'bad'
+        } elseif ([string]$Data.mode -eq 'repairing' -or [int]$Data.progress -ge 48) {
             Set-Step $BackendDot $BackendStep 'active'
         } else {
-            Set-Step $BackendDot $BackendStep 'bad'
+            Set-Step $BackendDot $BackendStep 'idle'
         }
 
         if ([string]$Data.peerReachable -eq 'Reachable') {
