@@ -502,6 +502,445 @@ $guardianFunctions = @'
                 $issues.Add('An interrupted update marker is still present.')
             }
 
+            $verifiedReleaseFiles = 0
+            $integrityManifestPath = Join-Path $StateDir 'integrity-manifest.json'
+
+            if (-not (Test-Path -LiteralPath $integrityManifestPath -PathType Leaf)) {
+                $issues.Add('Release integrity manifest is missing.')
+            }
+            else {
+                try {
+                    $integrityManifest = Get-Content -LiteralPath $integrityManifestPath -Raw -ErrorAction Stop |
+                        ConvertFrom-Json -ErrorAction Stop
+
+                    if (
+                        [int]$integrityManifest.schema -ne 1 -or
+                        [int64]$integrityManifest.versionCode -ne $ProductVersionCode -or
+                        [string]$integrityManifest.algorithm -ne 'SHA256'
+                    ) {
+                        throw 'Release integrity metadata does not match this build.'
+                    }
+
+                    foreach ($entry in @($integrityManifest.files)) {
+                        $name = [string]$entry.path
+                        $expectedHash = ([string]$entry.sha256).ToLowerInvariant()
+                        $expectedSize = [int64]$entry.size
+
+                        if (
+                            [string]::IsNullOrWhiteSpace($name) -or
+                            $name -match '[\\/]' -or
+                            $expectedHash -notmatch '^[a-f0-9]{64}
+                $issues.Add('Start Menu integration is missing.')
+            }
+
+            try {
+                if (Test-StartWithWindows) {
+                    $startupValue = (Get-ItemProperty -Path $StartupRegistryPath -Name $StartupRegistryName -ErrorAction Stop).$StartupRegistryName
+
+                    if ([string]$startupValue -notlike '*TailscaleQuickRepair.exe*' -or [string]$startupValue -notlike '*--start-in-tray*') {
+                        $issues.Add('Windows startup integration is not configured correctly.')
+                    }
+                }
+            }
+            catch {
+                $issues.Add('Windows startup integration could not be verified.')
+            }
+
+            try {
+                $engine = Test-RepairEngine
+
+                if (-not [bool]$engine.Healthy) {
+                    $message = [string]$engine.Message
+                    if ([string]::IsNullOrWhiteSpace($message)) {
+                        $message = 'Protected repair integration needs maintenance.'
+                    }
+                    $issues.Add($message)
+                }
+            }
+            catch {
+                $issues.Add('Protected repair integration could not be verified.')
+            }
+
+            try {
+                if (-not (Test-AutoRepairAvailable)) {
+                    $issues.Add('Automatic repair integration is unavailable.')
+                }
+            }
+            catch {
+                $issues.Add('Automatic repair integration could not be verified.')
+            }
+        }
+        catch {
+            $issues.Add('Integrity check could not inspect all components.')
+        }
+
+        return [pscustomobject]@{
+            Healthy = ($issues.Count -eq 0)
+            Count = $issues.Count
+            Issues = @($issues)
+            VerifiedReleaseFiles = $verifiedReleaseFiles
+        }
+    }
+
+    function Update-GuardianStatus {
+        param([switch]$Force)
+
+        if (-not $GuardianStatusText -or -not $GuardianDetailText -or -not $GuardianCheckButton) {
+            return
+        }
+
+        if (-not $Force -and $script:lastGuardianCheckAt -ne [DateTime]::MinValue -and ((Get-Date) - $script:lastGuardianCheckAt).TotalSeconds -lt 60) {
+            return
+        }
+
+        try {
+            $GuardianCheckButton.IsEnabled = $false
+            $GuardianStatusText.Text = 'Checking...'
+            $GuardianStatusText.Foreground = Get-Brush 'Blue'
+
+            $result = Get-GuardianIntegrityResult
+            $script:lastGuardianCheckAt = Get-Date
+            $script:lastGuardianResult = $result
+
+            if ([bool]$result.Healthy) {
+                $GuardianStatusText.Text = 'Healthy'
+                $GuardianStatusText.Foreground = Get-Brush 'Green'
+
+                $verifiedCount = [int]$result.VerifiedReleaseFiles
+                $GuardianDetailText.Text = if ($verifiedCount -gt 0) {
+                    "$verifiedCount release files verified with SHA-256. Configuration and Windows integration verified."
+                }
+                else {
+                    'Configuration and Windows integration verified.'
+                }
+
+                $GuardianDetailText.Foreground = Get-Brush 'Faint'
+            }
+            else {
+                $count = [int]$result.Count
+                $GuardianStatusText.Text = if ($count -eq 1) { '1 issue needs attention' } else { "$count issues need attention" }
+                $GuardianStatusText.Foreground = Get-Brush 'Amber'
+                $firstIssues = @($result.Issues | Select-Object -First 2)
+                $GuardianDetailText.Text = $firstIssues -join '; '
+                $GuardianDetailText.Foreground = Get-Brush 'Amber'
+            }
+        }
+        catch {
+            $GuardianStatusText.Text = 'Check incomplete'
+            $GuardianStatusText.Foreground = Get-Brush 'Amber'
+            $GuardianDetailText.Text = 'Quick Repair could not verify every integrity item.'
+            $GuardianDetailText.Foreground = Get-Brush 'Amber'
+        }
+        finally {
+            try { $GuardianCheckButton.IsEnabled = $true } catch {}
+        }
+    }
+
+'@
+
+$text = Replace-ExactOnce -Text $text -Find '    function Update-DetailsToggleText {' -Replace ($guardianFunctions + '    function Update-DetailsToggleText {') -Description 'Guardian integrity functions'
+
+$guardianEventOld = @'
+    $RepairInstallationButton.Add_Click({
+        Invoke-InstallationRepair
+    })
+'@
+$guardianEventNew = @'
+    $GuardianCheckButton.Add_Click({
+        try { Update-GuardianStatus -Force } catch {}
+    })
+
+    $RepairInstallationButton.Add_Click({
+        Invoke-InstallationRepair
+    })
+'@
+$text = Replace-ExactOnce -Text $text -Find $guardianEventOld -Replace $guardianEventNew -Description 'Guardian check event'
+
+$guardianDetailsOld = @'
+            $CopyButton.Content = 'Copy'
+            Update-Diagnostics $script:lastData
+            Initialize-AutoRepairUi
+'@
+$guardianDetailsNew = @'
+            try { $CopyButton.Content = 'Copy' } catch {}
+            try { Update-Diagnostics $script:lastData } catch {}
+            try { Initialize-AutoRepairUi } catch {}
+'@
+$text = Replace-ExactOnce -Text $text -Find $guardianDetailsOld -Replace $guardianDetailsNew -Description 'Guardian Details refresh'
+
+
+
+
+$guardianStartupOld = @'
+                if (-not (Attach-To-RunningRepair)) {
+                    [void](Refresh-EngineCheck)
+                }
+'@
+$guardianStartupNew = @'
+                if (-not (Attach-To-RunningRepair)) {
+                    [void](Refresh-EngineCheck)
+                }
+'@
+$text = Replace-ExactOnce -Text $text -Find $guardianStartupOld -Replace $guardianStartupNew -Description 'Guardian startup check'
+
+
+$themeAnchor = @'
+    Add-Type -AssemblyName System.Drawing
+
+    # --------------------------------------------------------------
+    # Helpers
+'@
+
+$themeReplacement = @'
+    Add-Type -AssemblyName System.Drawing
+
+    if (-not ('QuickRepairWindowTheme' -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class QuickRepairWindowTheme
+{
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(
+        IntPtr hwnd,
+        int attribute,
+        ref int value,
+        int size
+    );
+
+    public static void Apply(IntPtr hwnd)
+    {
+        try
+        {
+            int enabled = 1;
+            DwmSetWindowAttribute(hwnd, 20, ref enabled, sizeof(int));
+            DwmSetWindowAttribute(hwnd, 19, ref enabled, sizeof(int));
+
+            // DWM COLORREF uses 0x00BBGGRR.
+            int caption = 0x00120D0A;
+            int text = 0x00FFFFFF;
+
+            DwmSetWindowAttribute(hwnd, 35, ref caption, sizeof(int));
+            DwmSetWindowAttribute(hwnd, 36, ref text, sizeof(int));
+        }
+        catch
+        {
+        }
+    }
+}
+"@
+    }
+
+    function Set-DarkWindowChrome {
+        param([System.Windows.Window]$TargetWindow)
+
+        if (-not $TargetWindow) {
+            return
+        }
+
+        try {
+            $interop = New-Object System.Windows.Interop.WindowInteropHelper($TargetWindow)
+            [QuickRepairWindowTheme]::Apply($interop.Handle)
+        }
+        catch {}
+    }
+
+    function Set-QuickRepairWindowIcon {
+        param([System.Windows.Window]$TargetWindow)
+
+        if (-not $TargetWindow) {
+            return
+        }
+
+        $icon = $null
+
+        try {
+            if (-not (Test-Path -LiteralPath $NativeHostPath -PathType Leaf)) {
+                return
+            }
+
+            $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($NativeHostPath)
+
+            if (-not $icon) {
+                return
+            }
+
+            $source = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon(
+                $icon.Handle,
+                [System.Windows.Int32Rect]::Empty,
+                [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions()
+            )
+
+            if ($source) {
+                $source.Freeze()
+                $TargetWindow.Icon = $source
+            }
+        }
+        catch {}
+        finally {
+            if ($icon) {
+                try { $icon.Dispose() } catch {}
+            }
+        }
+    }
+
+    # --------------------------------------------------------------
+    # Helpers
+'@
+
+$text = Replace-ExactOnce `
+    -Text $text `
+    -Find $themeAnchor `
+    -Replace $themeReplacement `
+    -Description 'dark window chrome helper'
+
+$windowLoadAnchor = @'
+    $reader = New-Object System.Xml.XmlNodeReader $xaml
+    $window = [Windows.Markup.XamlReader]::Load($reader)
+
+    # --------------------------------------------------------------
+    # Bind UI controls
+'@
+
+$windowLoadReplacement = @'
+    $reader = New-Object System.Xml.XmlNodeReader $xaml
+    $window = [Windows.Markup.XamlReader]::Load($reader)
+
+    $global:TqrUiStartedSuccessfully = $true
+
+    $window.Add_SourceInitialized({
+        Set-DarkWindowChrome $window
+        Set-QuickRepairWindowIcon $window
+    })
+
+    # --------------------------------------------------------------
+    # Bind UI controls
+'@
+
+$text = Replace-ExactOnce `
+    -Text $text `
+    -Find $windowLoadAnchor `
+    -Replace $windowLoadReplacement `
+    -Description 'dark title-bar hook'
+
+foreach ($required in @(
+    'QuickRepairWindowTheme',
+    'VerticalScrollBarVisibility="Hidden"',
+    ('Current ' + $Version + ' - Check GitHub for updates.'),
+    ('$ProductVersion = ''' + $Version + ''''),
+    ('$ProductVersionCode = [int64]' + $VersionCode),
+    'Text="Activity"',
+    'Check in progress.',
+    'MinHeight="14"',
+    'MinHeight="18"',
+    'DispatcherPriority]::ApplicationIdle',
+    'TqrUiClosedNormally',
+    'TqrUiStartedSuccessfully',
+    'TqrUiShutdownRequested',
+    'Set-QuickRepairWindowIcon',
+    'System integrity',
+    'GuardianStatusText',
+    'Get-GuardianIntegrityResult',
+    'Update-GuardianStatus',
+    'Ready to check',
+    'try { Update-GuardianStatus -Force } catch {}',
+    'integrity-manifest.json',
+    'VerifiedReleaseFiles',
+    'release files verified with SHA-256'
+)) {
+    if ($text -notmatch [regex]::Escape($required)) {
+        throw "UI polish verification failed: $required"
+    }
+}
+
+# Guard this release as UI-only. These strings belong to repair/setup behavior
+# and must not be introduced by the polish transform.
+foreach ($forbidden in @(
+    'Ensure-SilentRepairIntegration',
+    'HardenTaskLaunchers',
+    'Launch-Tailscale-Backend.vbs'' -and'
+)) {
+    if ($text -match [regex]::Escape($forbidden)) {
+        throw "UI-only polish unexpectedly contains repair migration code: $forbidden"
+    }
+}
+
+[void][scriptblock]::Create($text)
+
+$xamlMatch = [regex]::Match(
+    $text,
+    '(?s)\[xml\]\$xaml\s*=\s*@"\r?\n(?<xaml>.*?)\r?\n"@'
+)
+
+if (-not $xamlMatch.Success) {
+    throw 'Could not locate polished Quick Repair XAML.'
+}
+
+[xml]$xamlDocument = $xamlMatch.Groups['xaml'].Value
+
+Add-Type -AssemblyName PresentationFramework -ErrorAction Stop
+Add-Type -AssemblyName PresentationCore -ErrorAction Stop
+Add-Type -AssemblyName WindowsBase -ErrorAction Stop
+
+$reader = New-Object System.Xml.XmlNodeReader $xamlDocument
+$testWindow = $null
+
+try {
+    $testWindow = [Windows.Markup.XamlReader]::Load($reader)
+
+    if (-not $testWindow) {
+        throw 'Polished WPF XAML validation returned no Window.'
+    }
+}
+finally {
+    try { $reader.Close() } catch {}
+    try {
+        if ($testWindow -is [System.Windows.Window]) {
+            $testWindow.Close()
+        }
+    } catch {}
+}
+
+$utf8Bom = New-Object System.Text.UTF8Encoding($true)
+[IO.File]::WriteAllText($Path, $text, $utf8Bom)
+
+Write-Host "Focused UI polish passed: $Version ($VersionCode)"
+ -or
+                            $expectedSize -lt 0
+                        ) {
+                            throw 'Release integrity manifest contains invalid file metadata.'
+                        }
+
+                        $candidate = Join-Path $StateDir $name
+
+                        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+                            $issues.Add("Release file is missing: $name")
+                            continue
+                        }
+
+                        if ((Get-Item -LiteralPath $candidate -ErrorAction Stop).Length -ne $expectedSize) {
+                            $issues.Add("Release file size changed: $name")
+                            continue
+                        }
+
+                        $actualHash = (
+                            Get-FileHash -LiteralPath $candidate -Algorithm SHA256 -ErrorAction Stop
+                        ).Hash.ToLowerInvariant()
+
+                        if ($actualHash -ne $expectedHash) {
+                            $issues.Add("Release file integrity failed: $name")
+                            continue
+                        }
+
+                        $verifiedReleaseFiles++
+                    }
+                }
+                catch {
+                    $issues.Add('Release integrity manifest is invalid.')
+                }
+            }
+
             if (-not (Test-Path -LiteralPath $StartMenuShortcutPath -PathType Leaf)) {
                 $issues.Add('Start Menu integration is missing.')
             }

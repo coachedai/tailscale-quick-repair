@@ -313,6 +313,127 @@ try {
     [IO.File]::WriteAllText($uiPath,$ui,$utf8Bom)
 
     $version = Get-Content -LiteralPath $versionPath -Raw | ConvertFrom-Json
+
+    # Phase 3.1 cryptographic integrity: create a release-matched manifest for
+    # user-level Quick Repair components after all transforms have finished.
+    $integrityManifestPath = Join-Path $appDir 'integrity-manifest.json'
+    Remove-Item -LiteralPath $integrityManifestPath -Force -ErrorAction SilentlyContinue
+
+    $integrityFiles = @(
+        Get-ChildItem -LiteralPath $appDir -File |
+            Where-Object { $_.Name -ne 'integrity-manifest.json' } |
+            Sort-Object Name |
+            ForEach-Object {
+                [ordered]@{
+                    path = $_.Name
+                    sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                    size = [int64]$_.Length
+                }
+            }
+    )
+
+    foreach ($requiredIntegrityFile in @(
+        'Tailscale-Repair-UI.ps1',
+        'TailscaleQuickRepairUpdater.exe',
+        'TailscaleQuickRepairSetup.exe'
+    )) {
+        if ($requiredIntegrityFile -notin @($integrityFiles | ForEach-Object { $_.path })) {
+            throw "Integrity manifest is missing required app component: $requiredIntegrityFile"
+        }
+    }
+
+    $integrityManifest = [ordered]@{
+        schema = 1
+        product = 'Tailscale Quick Repair'
+        version = [string]$version.version
+        versionCode = [int64]$version.versionCode
+        algorithm = 'SHA256'
+        files = $integrityFiles
+    }
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText(
+        $integrityManifestPath,
+        ($integrityManifest | ConvertTo-Json -Depth 8),
+        $utf8NoBom
+    )
+
+    $integrityRoundTrip = Get-Content -LiteralPath $integrityManifestPath -Raw | ConvertFrom-Json
+
+    if (
+        [int]$integrityRoundTrip.schema -ne 1 -or
+        [int64]$integrityRoundTrip.versionCode -ne [int64]$version.versionCode -or
+        [string]$integrityRoundTrip.algorithm -ne 'SHA256'
+    ) {
+        throw 'Integrity manifest round-trip validation failed.'
+    }
+
+    foreach ($integrityEntry in @($integrityRoundTrip.files)) {
+        $name = [string]$integrityEntry.path
+        $hash = ([string]$integrityEntry.sha256).ToLowerInvariant()
+        $size = [int64]$integrityEntry.size
+
+        if (
+            [string]::IsNullOrWhiteSpace($name) -or
+            $name -match '[\\/]' -or
+            $hash -notmatch '^[a-f0-9]{64}
+        Get-ChildItem -LiteralPath $root -File -Recurse |
+            Where-Object { $_.Name -ne 'package-manifest.json' } |
+            ForEach-Object {
+                [ordered]@{
+                    path = Get-TrustedRelativePath -Root $root -FullName $_.FullName
+                    sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                    size = [int64]$_.Length
+                }
+            } |
+            Sort-Object { $_.path }
+    )
+
+    if ('app/TailscaleQuickRepairSetup.exe' -notin @($entries | ForEach-Object { $_.path })) {
+        throw 'Native Setup host did not enter the update package.'
+    }
+
+    $manifest = [ordered]@{
+        schema = 1
+        product = 'Tailscale Quick Repair'
+        version = [string]$version.version
+        versionCode = [int64]$version.versionCode
+        files = $entries
+    }
+    $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $root 'package-manifest.json') -Encoding UTF8
+
+    & (Join-Path $PSScriptRoot 'privacy-scan.ps1') -Root $root -SkipRepositoryIdentity
+
+    Remove-Item -LiteralPath $zip.FullName -Force
+    Compress-Archive -Path (Join-Path $root '*') -DestinationPath $zip.FullName -CompressionLevel Optimal
+
+    $sha = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sha | Set-Content -LiteralPath ($zip.FullName + '.sha256') -Encoding ASCII
+
+    Write-Host "Native setup routing passed: $($version.version) ($($version.versionCode))"
+}
+finally {
+    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+}
+ -or
+            $size -lt 0
+        ) {
+            throw 'Integrity manifest contains invalid file metadata.'
+        }
+
+        $candidate = Join-Path $appDir $name
+
+        if (
+            -not (Test-Path -LiteralPath $candidate -PathType Leaf) -or
+            (Get-Item -LiteralPath $candidate).Length -ne $size -or
+            (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant() -ne $hash
+        ) {
+            throw "Integrity manifest verification failed: $name"
+        }
+    }
+
+    Write-Host "Guardian integrity manifest passed: $($integrityFiles.Count) app files."
+
     $entries = @(
         Get-ChildItem -LiteralPath $root -File -Recurse |
             Where-Object { $_.Name -ne 'package-manifest.json' } |
