@@ -40,10 +40,7 @@ internal static class PublicSetupHost
 
             if (HasSwitch(args, "--self-test-installer"))
             {
-                Uri uri;
-                return Uri.TryCreate(ManifestApiUrl, UriKind.Absolute, out uri) && uri.Scheme == "https"
-                    ? 0
-                    : 2;
+                return RunInstallerSelfTest();
             }
 
             bool repairOnly = HasSwitch(args, "--repair");
@@ -87,6 +84,85 @@ internal static class PublicSetupHost
         }
     }
 
+    private static int RunInstallerSelfTest()
+    {
+        Uri uri;
+        if (!Uri.TryCreate(ManifestApiUrl, UriKind.Absolute, out uri) || uri.Scheme != "https")
+        {
+            return 2;
+        }
+
+        string root = Path.Combine(
+            Path.GetTempPath(),
+            "TailscaleQuickRepair-LauncherSelfTest-" + Guid.NewGuid().ToString("N")
+        );
+
+        try
+        {
+            Directory.CreateDirectory(root);
+
+            string script = Path.Combine(root, "worker.ps1");
+            string marker = Path.Combine(root, "marker.txt");
+            string launcher = Path.Combine(root, "launcher.vbs");
+            string powershell = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                @"System32\WindowsPowerShell\v1.0\powershell.exe"
+            );
+
+            string escapedMarker = marker.Replace("'", "''");
+            File.WriteAllText(
+                script,
+                "[IO.File]::WriteAllText('" + escapedMarker + "','ok')",
+                new UTF8Encoding(false)
+            );
+
+            string command =
+                "\"" + powershell + "\"" +
+                " -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File " +
+                "\"" + script + "\"";
+
+            string body = BuildHiddenLauncherBody(command);
+            File.WriteAllText(launcher, body, new UTF8Encoding(false));
+
+            string wscript = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                @"System32\wscript.exe"
+            );
+
+            using (Process process = Process.Start(new ProcessStartInfo
+            {
+                FileName = wscript,
+                Arguments = "\"" + launcher + "\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            }))
+            {
+                if (process == null || !process.WaitForExit(10000) || process.ExitCode != 0)
+                {
+                    return 3;
+                }
+            }
+
+            if (!File.Exists(marker) || File.ReadAllText(marker) != "ok")
+            {
+                return 4;
+            }
+
+            return 0;
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, true);
+                }
+            }
+            catch { }
+        }
+    }
     private static int Install(string peer, bool startup)
     {
         string work = Path.Combine(Path.GetTempPath(), "TailscaleQuickRepair-Setup-" + Guid.NewGuid().ToString("N"));
@@ -340,18 +416,67 @@ internal static class PublicSetupHost
 
     private static void RegisterRepairTask()
     {
-        RegisterTask(RepairTaskName, Path.Combine(GetProgramDir(), "Repair-Backend.ps1"), false);
+        string launcher = WriteHiddenLauncher(
+            "Launch-Tailscale-Backend.vbs",
+            Path.Combine(GetProgramDir(), "Repair-Backend.ps1")
+        );
+        RegisterTask(RepairTaskName, launcher, false);
     }
 
     private static void RegisterAutoRepairTask()
     {
-        RegisterTask(AutoTaskName, Path.Combine(GetProgramDir(), "Auto-Repair-Monitor.ps1"), true);
+        string launcher = WriteHiddenLauncher(
+            "Launch-Auto-Repair-Monitor.vbs",
+            Path.Combine(GetProgramDir(), "Auto-Repair-Monitor.ps1")
+        );
+        RegisterTask(AutoTaskName, launcher, true);
     }
 
-    private static void RegisterTask(string name, string script, bool recurring)
+    private static string BuildHiddenLauncherBody(string command)
+    {
+        return
+            "Set shell = CreateObject(\"WScript.Shell\")" + Environment.NewLine +
+            "exitCode = shell.Run(\"" + command.Replace("\"", "\"\"") + "\", 0, True)" + Environment.NewLine +
+            "WScript.Quit exitCode" + Environment.NewLine;
+    }
+
+    private static string WriteHiddenLauncher(string launcherName, string script)
     {
         RequireInstalledFile(script);
-        string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), @"System32\WindowsPowerShell\v1.0\powershell.exe");
+
+        string directory = GetProgramDir();
+        Directory.CreateDirectory(directory);
+
+        string launcher = Path.Combine(directory, launcherName);
+        string temp = launcher + ".setup.tmp";
+        string powershell = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            @"System32\WindowsPowerShell\v1.0\powershell.exe"
+        );
+
+        string command =
+            "\"" + powershell + "\"" +
+            " -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File " +
+            "\"" + script + "\"";
+
+        File.WriteAllText(temp, BuildHiddenLauncherBody(command), new UTF8Encoding(false));
+
+        if (File.Exists(launcher))
+        {
+            File.Delete(launcher);
+        }
+
+        File.Move(temp, launcher);
+        return launcher;
+    }
+
+    private static void RegisterTask(string name, string launcher, bool recurring)
+    {
+        RequireInstalledFile(launcher);
+        string wscript = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            @"System32\wscript.exe"
+        );
         object serviceObject = null;
         object rootObject = null;
         object taskObject = null;
@@ -383,13 +508,13 @@ internal static class PublicSetupHost
             principal.RunLevel = 1;
 
             dynamic action = task.Actions.Create(0);
-            action.Path = powershell;
-            action.Arguments = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \"" + script + "\"";
-            action.WorkingDirectory = Path.GetDirectoryName(script);
+            action.Path = wscript;
+            action.Arguments = "\"" + launcher + "\"";
+            action.WorkingDirectory = Path.GetDirectoryName(launcher);
 
             if (recurring)
             {
-                dynamic trigger = task.Triggers.Create(1); // TASK_TRIGGER_TIME
+                dynamic trigger = task.Triggers.Create(1);
                 trigger.StartBoundary = DateTime.Now.AddMinutes(1).ToString("s");
                 trigger.Repetition.Interval = "PT5M";
                 trigger.Repetition.Duration = "P3650D";
@@ -404,7 +529,6 @@ internal static class PublicSetupHost
             ReleaseCom(serviceObject);
         }
     }
-
     private static void WriteLocalConfig(string peer)
     {
         Directory.CreateDirectory(GetAppDir());
