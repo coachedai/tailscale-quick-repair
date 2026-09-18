@@ -453,7 +453,7 @@ $guardianStateNew = @'
 $text = Replace-ExactOnce -Text $text -Find $guardianStateOld -Replace $guardianStateNew -Description 'Guardian runtime state'
 
 $guardianFunctions = @'
-    function Get-GuardianIntegrityResult {
+    function global:Get-GuardianIntegrityResult {
         $issues = New-Object 'System.Collections.Generic.List[string]'
         $verifiedReleaseFiles = 0
 
@@ -622,7 +622,7 @@ $guardianFunctions = @'
         }
     }
 
-    function Update-GuardianStatus {
+    function global:Update-GuardianStatus {
         param([switch]$Force)
 
         if (-not $GuardianStatusText -or -not $GuardianDetailText -or -not $GuardianCheckButton) {
@@ -928,6 +928,8 @@ foreach ($required in @(
     'Ready to check',
     'Update-GuardianStatus -Force',
     'Guardian could not complete the integrity check.',
+    'function global:Get-GuardianIntegrityResult',
+    'function global:Update-GuardianStatus',
     'integrity-manifest.json',
     'VerifiedReleaseFiles',
     'release files verified with SHA-256',

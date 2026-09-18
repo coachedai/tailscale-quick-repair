@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.10",
-  "versionCode": 30000420,
+  "version": "3.0.0-phase3.1.11",
+  "versionCode": 30000421,
   "requiresSetup": false,
   "publicInstaller": false,
-  "notes": "Phase 3.1 Guardian invocation fix. The System integrity check now runs directly in the WPF click-handler scope instead of a deferred Dispatcher callback, preventing loss of access to the dynamically-added Guardian function. Any remaining failure reason is shown inline. Repair, update and network behavior are unchanged."
+  "notes": "Phase 3.1 Guardian scope fix. The dynamically-added Guardian functions are now explicitly process-global inside Quick Repair's dedicated PowerShell runspace, so WPF event callbacks can always resolve them. CI now requires these global Guardian declarations. No repair, update or network behavior changes."
 }
