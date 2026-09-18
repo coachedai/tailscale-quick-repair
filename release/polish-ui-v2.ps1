@@ -603,7 +603,15 @@ $guardianFunctions = @'
             }
         }
         catch {
-            $issues.Add('Integrity check could not inspect all components.')
+            $internalReason = [string]$_.Exception.Message
+            if ([string]::IsNullOrWhiteSpace($internalReason)) {
+                $internalReason = 'Integrity check could not inspect all components.'
+            }
+            elseif ($internalReason.Length -gt 120) {
+                $internalReason = $internalReason.Substring(0,120).TrimEnd() + '...'
+            }
+
+            [void]$issues.Add($internalReason)
         }
 
         return [pscustomobject]@{
@@ -630,7 +638,21 @@ $guardianFunctions = @'
             $GuardianStatusText.Text = 'Checking...'
             $GuardianStatusText.Foreground = Get-Brush 'Blue'
 
-            $result = Get-GuardianIntegrityResult
+            $guardianOutput = @(Get-GuardianIntegrityResult)
+            $guardianResults = @(
+                $guardianOutput |
+                    Where-Object {
+                        $_ -and
+                        $_.PSObject -and
+                        $_.PSObject.Properties.Name -contains 'Healthy'
+                    }
+            )
+
+            if ($guardianResults.Count -lt 1) {
+                throw 'Guardian did not return a valid integrity result.'
+            }
+
+            $result = $guardianResults[$guardianResults.Count - 1]
             $script:lastGuardianCheckAt = Get-Date
             $script:lastGuardianResult = $result
 
@@ -660,7 +682,16 @@ $guardianFunctions = @'
         catch {
             $GuardianStatusText.Text = 'Check incomplete'
             $GuardianStatusText.Foreground = Get-Brush 'Amber'
-            $GuardianDetailText.Text = 'Quick Repair could not verify every integrity item.'
+
+            $reason = [string]$_.Exception.Message
+            if ([string]::IsNullOrWhiteSpace($reason)) {
+                $reason = 'Quick Repair could not verify every integrity item.'
+            }
+            elseif ($reason.Length -gt 150) {
+                $reason = $reason.Substring(0,150).TrimEnd() + '...'
+            }
+
+            $GuardianDetailText.Text = $reason
             $GuardianDetailText.Foreground = Get-Brush 'Amber'
         }
         finally {
@@ -913,7 +944,9 @@ foreach ($required in @(
     'Check could not start',
     'integrity-manifest.json',
     'VerifiedReleaseFiles',
-    'release files verified with SHA-256'
+    'release files verified with SHA-256',
+    'Guardian did not return a valid integrity result.',
+    '$guardianResults.Count'
 )) {
     if ($text -notmatch [regex]::Escape($required)) {
         throw "UI polish verification failed: $required"
