@@ -1,21 +1,21 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.11",
-  "versionCode": 30000421,
+  "version": "3.0.0-phase3.1.12",
+  "versionCode": 30000422,
   "published": true,
-  "publishedAt": "2026-09-18T14:57:22.7856193Z",
+  "publishedAt": "2026-09-18T15:06:50.3055084Z",
   "mandatory": false,
   "requiresSetup": false,
-  "notes": "Phase 3.1 Guardian scope fix. The dynamically-added Guardian functions are now explicitly process-global inside Quick Repair's dedicated PowerShell runspace, so WPF event callbacks can always resolve them. CI now requires these global Guardian declarations. No repair, update or network behavior changes.",
+  "notes": "Phase 3.1 Guardian inline execution fix. The integrity check no longer depends on dynamically-injected Guardian functions at all; the complete read-only verification runs directly inside the WPF Check event. This removes the function-scope failure class while retaining SHA-256, configuration and Windows-integration checks. Repair, update and network behavior are unchanged.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.11/TailscaleQuickRepair-3.0.0-phase3.1.11.zip",
-    "sha256": "e9a672dc2441d0ea01ad529b827615a0ee8e45dd78ac1ce72b441122a81ca2a5",
-    "size": 58939
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.12/TailscaleQuickRepair-3.0.0-phase3.1.12.zip",
+    "sha256": "7c2d157c1c8354a8eb6d7076729ffec63362c3eb194f09a03be5235bdffe7ae0",
+    "size": 60202
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.11/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.11.exe",
-    "sha256": "59de1926b5070f4b8bf668619c829bc8809e706515219ece7942094a6189d2ac",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.12/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.12.exe",
+    "sha256": "c35c8005a64a0716178cb99a1a64f53b6b40febdb15ec89fca1e12ed6c497860",
     "size": 23040
   }
 }
