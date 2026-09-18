@@ -1,21 +1,21 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase2.3.5",
-  "versionCode": 30000305,
+  "version": "3.0.0-phase2.3.6",
+  "versionCode": 30000306,
   "published": true,
-  "publishedAt": "2026-09-17T22:43:36.5712304Z",
+  "publishedAt": "2026-09-18T10:23:16.5120836Z",
   "mandatory": false,
   "requiresSetup": false,
-  "notes": "UI-only polish on the recovered 2.3.4 baseline: renames This session to Activity, removes duplicated peer-reachable noise, uses ASCII-safe in-progress text, and reserves status-row space so Check Again does not make the layout jump. Repair, setup, task and network behavior are unchanged.",
+  "notes": "Tray Exit-only hardening on the proven 2.3.5 behavior: lets the tray menu unwind before shutdown and prevents the native host from misreporting a normal UI close as a startup failure. Repair, setup, update routing and network behavior are unchanged.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.5/TailscaleQuickRepair-3.0.0-phase2.3.5.zip",
-    "sha256": "a1cf56080ea8d4c2355d88083ca3c9f60962e33e8a0e6f5ef89c111f2eb5d328",
-    "size": 56560
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.6/TailscaleQuickRepair-3.0.0-phase2.3.6.zip",
+    "sha256": "7065ff1d8223839570c45afd3a381af81c2a9b19a0e371a4ccde1ad450f4f99e",
+    "size": 56652
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.5/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.3.5.exe",
-    "sha256": "ce9c3dac53cc78c9d067deec5e24365613d528aee0414c4ac033dff2f059c969",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.6/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.3.6.exe",
+    "sha256": "0dafc091b0c53bcf61eadd9bdb7270c2da7ad877478a89039e9afc3e0f622456",
     "size": 23040
   }
 }
