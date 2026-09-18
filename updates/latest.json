@@ -1,21 +1,21 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.7",
-  "versionCode": 30000417,
+  "version": "3.0.0-phase3.1.8",
+  "versionCode": 30000418,
   "published": true,
-  "publishedAt": "2026-09-18T14:31:32.2038122Z",
+  "publishedAt": "2026-09-18T14:38:31.8574260Z",
   "mandatory": false,
   "requiresSetup": false,
-  "notes": "Phase 3.1 Integrity Check interaction hardening. System integrity now gives immediate inline feedback, yields to WPF before the read-only Guardian check runs, and reports any check-start failure inline instead of silently swallowing it. Repair, updater and network behavior are unchanged.",
+  "notes": "Phase 3.1 Integrity Guardian result hardening. The on-demand integrity check now isolates accidental PowerShell pipeline output, guarantees it consumes the final structured Guardian result, and shows the exact short failure reason inline if verification cannot complete. No repair or network behavior changes.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.7/TailscaleQuickRepair-3.0.0-phase3.1.7.zip",
-    "sha256": "02d4426e4d8bb1197ed7d5101d3051e8b2e11257533c9a3b60ab2fc00f04b53c",
-    "size": 58899
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.8/TailscaleQuickRepair-3.0.0-phase3.1.8.zip",
+    "sha256": "60557ca5e616917ab5172f04ec620531810d78b641107ad659819e23febce895",
+    "size": 58902
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.7/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.7.exe",
-    "sha256": "8b6c0ba4b1f1ac8a63e50093d653f743adaa3277cd5bfca4b9c79e0774e8757d",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.8/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.8.exe",
+    "sha256": "f91751fcd3446b5469a6d8d1f055b553b220784430c3d0499dbde6ba2e09615c",
     "size": 23040
   }
 }
