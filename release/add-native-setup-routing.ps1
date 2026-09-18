@@ -219,6 +219,55 @@ try {
         }
 '@
 
+    $repairPattern = '(?s)    function Invoke-InstallationRepair \{.*?\r?\n    function Update-DetailsToggleText \{'
+    $repairReplacement = @'
+    function Invoke-InstallationRepair {
+        if (-not (Test-Path -LiteralPath $SetupHostPath)) {
+            Set-Badge $HeroBadge $HeroBadgeText 'SETUP ISSUE' 'failure'
+            $HeroTitle.Text = 'Installation repair is unavailable'
+            $HeroDetail.Text = 'Run the latest Tailscale Quick Repair Setup to restore the maintenance component.'
+            return
+        }
+
+        try {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $SetupHostPath
+            $psi.Arguments = '--repair'
+            $psi.UseShellExecute = $true
+            $process = [System.Diagnostics.Process]::Start($psi)
+            if (-not $process) { throw 'The maintenance helper could not start.' }
+
+            Set-Badge $HeroBadge $HeroBadgeText 'MAINTENANCE' 'repairing'
+            $HeroTitle.Text = 'Repairing Quick Repair'
+            $HeroDetail.Text = 'Approve the Windows prompt. Quick Repair will rebuild its protected tasks, startup entry and shortcut.'
+            $RepairInstallationButton.IsEnabled = $false
+
+            $window.Dispatcher.BeginInvoke(
+                [System.Windows.Threading.DispatcherPriority]::Background,
+                [Action]{
+                    Start-Sleep -Milliseconds 900
+                    $RepairInstallationButton.IsEnabled = $true
+                }
+            ) | Out-Null
+        }
+        catch {
+            $RepairInstallationButton.IsEnabled = $true
+            Set-Badge $HeroBadge $HeroBadgeText 'SETUP ISSUE' 'failure'
+            $HeroTitle.Text = 'Could not start installation repair'
+            $HeroDetail.Text = $_.Exception.Message
+        }
+    }
+
+    function Update-DetailsToggleText {
+'@
+
+    if ($ui -notmatch [regex]::Escape("$psi.Arguments = '--repair'")) {
+        $ui = Replace-LiteralRegexOnce `
+            -Text $ui `
+            -Pattern $repairPattern `
+            -Replacement $repairReplacement `
+            -Description 'native installation repair function'
+    }
     if ($ui -notmatch [regex]::Escape('$requiresSetup = $false')) {
         if (-not $ui.Contains($installHeader)) {
             throw 'Could not locate native Start-UpdateInstall header.'
@@ -229,7 +278,8 @@ try {
     foreach ($required in @(
         '$SetupHostPath',
         '$requiresSetup = $false',
-        "$psi.Arguments = '--upgrade'"
+        "$psi.Arguments = '--upgrade'",
+        "$psi.Arguments = '--repair'"
     )) {
         if ($ui -notmatch [regex]::Escape($required)) {
             throw "Native setup routing verification failed: $required"
