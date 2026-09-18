@@ -1,21 +1,21 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase2.3.6",
-  "versionCode": 30000306,
+  "version": "3.0.0-phase3.0.1",
+  "versionCode": 30000401,
   "published": true,
-  "publishedAt": "2026-09-18T10:23:16.5120836Z",
+  "publishedAt": "2026-09-18T10:52:37.6968704Z",
   "mandatory": false,
   "requiresSetup": false,
-  "notes": "Tray Exit-only hardening on the proven 2.3.5 behavior: lets the tray menu unwind before shutdown and prevents the native host from misreporting a normal UI close as a startup failure. Repair, setup, update routing and network behavior are unchanged.",
+  "notes": "Phase 3 Guardian foundation: fixes the false Quick Repair could not start popup on legitimate tray shutdown and restores the window/taskbar icon from the installed Tailscale app. Adds explicit lifecycle markers for later Guardian integrity checks. Repair, setup, update routing and network behavior are unchanged.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.6/TailscaleQuickRepair-3.0.0-phase2.3.6.zip",
-    "sha256": "7065ff1d8223839570c45afd3a381af81c2a9b19a0e371a4ccde1ad450f4f99e",
-    "size": 56652
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.0.1/TailscaleQuickRepair-3.0.0-phase3.0.1.zip",
+    "sha256": "557d93461bbbe4fcffb8640d71cb1a3218d6fc8dc2f2570a96a023c5c866d26f",
+    "size": 56921
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase2.3.6/TailscaleQuickRepair-Bootstrap-3.0.0-phase2.3.6.exe",
-    "sha256": "0dafc091b0c53bcf61eadd9bdb7270c2da7ad877478a89039e9afc3e0f622456",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.0.1/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.0.1.exe",
+    "sha256": "a6ae853dae0864d1b9f25d596928ba8c9d42f5675f99ee6baf767e2d304b5fe2",
     "size": 23040
   }
 }
