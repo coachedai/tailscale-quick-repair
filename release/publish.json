@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.1",
-  "versionCode": 30000411,
+  "version": "3.0.0-phase3.1.2",
+  "versionCode": 30000412,
   "requiresSetup": false,
   "publicInstaller": false,
-  "notes": "Phase 3.1 Integrity Guardian foundation. Adds a quiet read-only self-check for Quick Repair core files, target configuration, installed-version metadata, update state, Start Menu and startup integration, protected repair task, and Auto Repair integration. Shows one compact System integrity status in Maintenance. Repair and network behavior are unchanged."
+  "notes": "Phase 3.1 hidden-task migration bridge. Installs the corrected Setup host and maintenance route without changing protected tasks yet. The new Setup host creates windowless wscript launchers for Repair and Auto Repair, eliminating PowerShell flashes when the integration is rebuilt. Repair installation now routes through native Setup instead of the legacy PowerShell maintenance script."
 }
