@@ -1,21 +1,21 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.1",
-  "versionCode": 30000411,
+  "version": "3.0.0-phase3.1.2",
+  "versionCode": 30000412,
   "published": true,
-  "publishedAt": "2026-09-18T11:20:10.5764635Z",
+  "publishedAt": "2026-09-18T11:28:02.9180210Z",
   "mandatory": false,
   "requiresSetup": false,
-  "notes": "Phase 3.1 Integrity Guardian foundation. Adds a quiet read-only self-check for Quick Repair core files, target configuration, installed-version metadata, update state, Start Menu and startup integration, protected repair task, and Auto Repair integration. Shows one compact System integrity status in Maintenance. Repair and network behavior are unchanged.",
+  "notes": "Phase 3.1 hidden-task migration bridge. Installs the corrected Setup host and maintenance route without changing protected tasks yet. The new Setup host creates windowless wscript launchers for Repair and Auto Repair, eliminating PowerShell flashes when the integration is rebuilt. Repair installation now routes through native Setup instead of the legacy PowerShell maintenance script.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.1/TailscaleQuickRepair-3.0.0-phase3.1.1.zip",
-    "sha256": "c5a54cbeda7c55252c18356e3c261060c5cebb408340893479fedd4c0c5358bb",
-    "size": 58438
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.2/TailscaleQuickRepair-3.0.0-phase3.1.2.zip",
+    "sha256": "e45679e8a9ccefa65e00b95d7ee7175d968c545283c210ed5e95bb586b019438",
+    "size": 58135
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.1/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.1.exe",
-    "sha256": "fc80354e088d2d1bc93d85467388dea2c540cf34424c6fef302b65e956a0a695",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.2/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.2.exe",
+    "sha256": "98a74b4e5fc25d7198dc72605a3f876a0e14ee2aaf563dec6bc34396b772ed6d",
     "size": 23040
   }
 }
