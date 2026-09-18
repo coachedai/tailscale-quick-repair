@@ -3296,21 +3296,31 @@ try {
             $RemoteLatencyValue.ToolTip = $null
         }
 
-        Set-Step $AppDot $AppStep (
-            if ([string]$Data.client -eq 'Running') { 'good' }
-            elseif ([string]$Data.client -eq 'Closed') { 'warn' }
-            elseif ([bool]$Data.done -and [string]$Data.mode -eq 'failure') { 'bad' }
-            elseif ([int]$Data.progress -ge 1) { 'active' }
-            else { 'idle' }
-        )
+        $appStepState = if ([string]$Data.client -eq 'Running') {
+            'good'
+        } elseif ([string]$Data.client -eq 'Closed') {
+            'warn'
+        } elseif ([bool]$Data.done -and [string]$Data.mode -eq 'failure') {
+            'bad'
+        } elseif ([int]$Data.progress -ge 1) {
+            'active'
+        } else {
+            'idle'
+        }
+        Set-Step $AppDot $AppStep $appStepState
 
-        Set-Step $ServiceDot $ServiceStep (
-            if ([string]$Data.service -eq 'Running') { 'good' }
-            elseif ([string]$Data.service -eq 'Stopped') { 'warn' }
-            elseif ([bool]$Data.done -and [string]$Data.mode -eq 'failure') { 'bad' }
-            elseif ([int]$Data.progress -ge 22) { 'active' }
-            else { 'idle' }
-        )
+        $serviceStepState = if ([string]$Data.service -eq 'Running') {
+            'good'
+        } elseif ([string]$Data.service -eq 'Stopped') {
+            'warn'
+        } elseif ([bool]$Data.done -and [string]$Data.mode -eq 'failure') {
+            'bad'
+        } elseif ([int]$Data.progress -ge 22) {
+            'active'
+        } else {
+            'idle'
+        }
+        Set-Step $ServiceDot $ServiceStep $serviceStepState
 
         if ([string]$Data.backend -eq 'Running') {
             Set-Step $BackendDot $BackendStep 'good'
