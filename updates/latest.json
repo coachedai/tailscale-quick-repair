@@ -1,21 +1,21 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.9",
-  "versionCode": 30000419,
+  "version": "3.0.0-phase3.1.10",
+  "versionCode": 30000420,
   "published": true,
-  "publishedAt": "2026-09-18T14:45:05.2196560Z",
+  "publishedAt": "2026-09-18T14:50:44.5180014Z",
   "mandatory": false,
   "requiresSetup": false,
-  "notes": "Phase 3.1 Guardian output fix. Integrity Guardian now discards every List.Add return value so the check emits exactly one structured result object. The previous pipeline-filter workaround is removed and result validation is simplified. This targets the persistent Check incomplete state without changing repair, update or network behavior.",
+  "notes": "Phase 3.1 Guardian invocation fix. The System integrity check now runs directly in the WPF click-handler scope instead of a deferred Dispatcher callback, preventing loss of access to the dynamically-added Guardian function. Any remaining failure reason is shown inline. Repair, update and network behavior are unchanged.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.9/TailscaleQuickRepair-3.0.0-phase3.1.9.zip",
-    "sha256": "620b126f9dd604a816a71646cf250b4d78a2572c298a5f583514efac9d81aa8f",
-    "size": 58903
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.10/TailscaleQuickRepair-3.0.0-phase3.1.10.zip",
+    "sha256": "b7480d3bdd0cad154d97d99290f6e5b8fd7934b1b20b68d82eb3074b8314fe5c",
+    "size": 58936
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.9/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.9.exe",
-    "sha256": "bae49faa932f009bbfe0f90a7c05b42f8ad0ec55a3fbd0313728c36a1f6dc526",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.10/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.10.exe",
+    "sha256": "a91066b6e40908d3b16d0f2f0ea103bb1a2920e98ddefb8f7ebc08546c68fde7",
     "size": 23040
   }
 }
