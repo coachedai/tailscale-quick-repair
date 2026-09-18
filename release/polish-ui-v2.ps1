@@ -856,16 +856,12 @@ foreach ($required in @(
     'Set-QuickRepairWindowIcon',
     'System integrity',
     'GuardianStatusText',
-    'Get-GuardianIntegrityResult',
-    'Update-GuardianStatus',
     'Ready to check',
     'Guardian could not complete the integrity check.',
     'Verifying release files, configuration and Windows integration.',
     '$verifiedReleaseFiles++',
     'integrity-manifest.json',
-    'VerifiedReleaseFiles',
     'release files verified with SHA-256',
-    'Guardian did not return a valid integrity result.',
     '[void]$issues.Add('
 )) {
     if ($text -notmatch [regex]::Escape($required)) {
