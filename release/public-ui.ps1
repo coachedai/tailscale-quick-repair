@@ -69,38 +69,11 @@ $text = $text.Replace(
     '$repairToolAvailable = Test-Path -LiteralPath $SetupHostPath'
 )
 
-$legacyLauncherCheck = @'
-        if (-not (Test-Path -LiteralPath $BackendLauncherPath)) {
-            $result.Message = 'The repair launcher is missing.'
-            $result.Repairable = $repairToolAvailable
-            return [pscustomobject]$result
-        }
-
-'@
-$text = Replace-ExactOnce $text $legacyLauncherCheck '' 'legacy backend launcher self-check'
-
-$legacyTaskCheck = @'
-            if (
-                $execute -notmatch 'wscript(\.exe)?$' -or
-                $arguments -notlike '*Launch-Tailscale-Backend.vbs*'
-            ) {
-                $result.Message = 'The repair task is not configured correctly.'
-                $result.Repairable = $repairToolAvailable
-                return [pscustomobject]$result
-            }
-'@
-$nativeTaskCheck = @'
-            if (
-                $execute -notmatch '(?i)powershell(\.exe)?$' -or
-                $arguments -notlike '*Repair-Backend.ps1*'
-            ) {
-                $result.Message = 'The repair task is not configured correctly.'
-                $result.Repairable = $repairToolAvailable
-                return [pscustomobject]$result
-            }
-'@
-$text = Replace-ExactOnce $text $legacyTaskCheck $nativeTaskCheck 'native protected repair-task validation'
-
+# Protected tasks use a windowless wscript launcher. Keep the base UI's
+# launcher existence check and wscript task validation unchanged.
+if ($text -notmatch [regex]::Escape('*Launch-Tailscale-Backend.vbs*')) {
+    throw 'Public UI is missing hidden repair-task validation.'
+}
 $remoteMarker = @'
 <StackPanel Grid.Column="2">
                                 <TextBlock Text="Remote" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Text}"/>
@@ -347,7 +320,7 @@ foreach ($required in @(
     'function Save-TargetPeer',
     "`$psi.Arguments = '--repair'",
     '--start-in-tray',
-    '*Repair-Backend.ps1*'
+    '*Launch-Tailscale-Backend.vbs*'
 )) {
     if ($text -notmatch [regex]::Escape($required)) {
         throw "Public UI verification failed: $required"
