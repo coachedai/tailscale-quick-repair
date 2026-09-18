@@ -470,43 +470,43 @@ $guardianFunctions = @'
 
             foreach ($file in $requiredFiles) {
                 if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
-                    $issues.Add("Missing component: $([IO.Path]::GetFileName($file))")
+                    [void]$issues.Add("Missing component: $([IO.Path]::GetFileName($file))")
                 }
             }
 
             if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
-                $issues.Add('Target configuration is missing.')
+                [void]$issues.Add('Target configuration is missing.')
             }
             elseif ([string]::IsNullOrWhiteSpace($Peer)) {
-                $issues.Add('Target configuration is invalid.')
+                [void]$issues.Add('Target configuration is invalid.')
             }
 
             $installedVersionPath = Join-Path $StateDir 'version.user.json'
 
             if (-not (Test-Path -LiteralPath $installedVersionPath -PathType Leaf)) {
-                $issues.Add('Installed version metadata is missing.')
+                [void]$issues.Add('Installed version metadata is missing.')
             }
             else {
                 try {
                     $installedVersion = Get-Content -LiteralPath $installedVersionPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
 
                     if ([int64]$installedVersion.versionCode -ne $ProductVersionCode) {
-                        $issues.Add('Installed version metadata does not match this build.')
+                        [void]$issues.Add('Installed version metadata does not match this build.')
                     }
                 }
                 catch {
-                    $issues.Add('Installed version metadata is invalid.')
+                    [void]$issues.Add('Installed version metadata is invalid.')
                 }
             }
 
             if (Test-Path -LiteralPath (Join-Path $StateDir 'Update.pending') -PathType Leaf) {
-                $issues.Add('An interrupted update marker is still present.')
+                [void]$issues.Add('An interrupted update marker is still present.')
             }
 
             $integrityManifestPath = Join-Path $StateDir 'integrity-manifest.json'
 
             if (-not (Test-Path -LiteralPath $integrityManifestPath -PathType Leaf)) {
-                $issues.Add('Release integrity manifest is missing.')
+                [void]$issues.Add('Release integrity manifest is missing.')
             }
             else {
                 try {
@@ -537,19 +537,19 @@ $guardianFunctions = @'
                         $candidate = Join-Path $StateDir $name
 
                         if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
-                            $issues.Add("Release file is missing: $name")
+                            [void]$issues.Add("Release file is missing: $name")
                             continue
                         }
 
                         if ((Get-Item -LiteralPath $candidate -ErrorAction Stop).Length -ne $expectedSize) {
-                            $issues.Add("Release file size changed: $name")
+                            [void]$issues.Add("Release file size changed: $name")
                             continue
                         }
 
                         $actualHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
 
                         if ($actualHash -ne $expectedHash) {
-                            $issues.Add("Release file integrity failed: $name")
+                            [void]$issues.Add("Release file integrity failed: $name")
                             continue
                         }
 
@@ -557,12 +557,12 @@ $guardianFunctions = @'
                     }
                 }
                 catch {
-                    $issues.Add('Release integrity manifest is invalid.')
+                    [void]$issues.Add('Release integrity manifest is invalid.')
                 }
             }
 
             if (-not (Test-Path -LiteralPath $StartMenuShortcutPath -PathType Leaf)) {
-                $issues.Add('Start Menu integration is missing.')
+                [void]$issues.Add('Start Menu integration is missing.')
             }
 
             try {
@@ -570,12 +570,12 @@ $guardianFunctions = @'
                     $startupValue = (Get-ItemProperty -Path $StartupRegistryPath -Name $StartupRegistryName -ErrorAction Stop).$StartupRegistryName
 
                     if ([string]$startupValue -notlike '*TailscaleQuickRepair.exe*' -or [string]$startupValue -notlike '*--start-in-tray*') {
-                        $issues.Add('Windows startup integration is not configured correctly.')
+                        [void]$issues.Add('Windows startup integration is not configured correctly.')
                     }
                 }
             }
             catch {
-                $issues.Add('Windows startup integration could not be verified.')
+                [void]$issues.Add('Windows startup integration could not be verified.')
             }
 
             try {
@@ -586,20 +586,20 @@ $guardianFunctions = @'
                     if ([string]::IsNullOrWhiteSpace($message)) {
                         $message = 'Protected repair integration needs maintenance.'
                     }
-                    $issues.Add($message)
+                    [void]$issues.Add($message)
                 }
             }
             catch {
-                $issues.Add('Protected repair integration could not be verified.')
+                [void]$issues.Add('Protected repair integration could not be verified.')
             }
 
             try {
                 if (-not (Test-AutoRepairAvailable)) {
-                    $issues.Add('Automatic repair integration is unavailable.')
+                    [void]$issues.Add('Automatic repair integration is unavailable.')
                 }
             }
             catch {
-                $issues.Add('Automatic repair integration could not be verified.')
+                [void]$issues.Add('Automatic repair integration could not be verified.')
             }
         }
         catch {
@@ -638,21 +638,15 @@ $guardianFunctions = @'
             $GuardianStatusText.Text = 'Checking...'
             $GuardianStatusText.Foreground = Get-Brush 'Blue'
 
-            $guardianOutput = @(Get-GuardianIntegrityResult)
-            $guardianResults = @(
-                $guardianOutput |
-                    Where-Object {
-                        $_ -and
-                        $_.PSObject -and
-                        $_.PSObject.Properties.Name -contains 'Healthy'
-                    }
-            )
+            $result = Get-GuardianIntegrityResult
 
-            if ($guardianResults.Count -lt 1) {
+            if (
+                -not $result -or
+                -not ($result.PSObject.Properties.Name -contains 'Healthy')
+            ) {
                 throw 'Guardian did not return a valid integrity result.'
             }
 
-            $result = $guardianResults[$guardianResults.Count - 1]
             $script:lastGuardianCheckAt = Get-Date
             $script:lastGuardianResult = $result
 
@@ -685,7 +679,7 @@ $guardianFunctions = @'
 
             $reason = [string]$_.Exception.Message
             if ([string]::IsNullOrWhiteSpace($reason)) {
-                $reason = 'Quick Repair could not verify every integrity item.'
+                $reason = 'Guardian returned an unexpected result. Nothing was changed.'
             }
             elseif ($reason.Length -gt 150) {
                 $reason = $reason.Substring(0,150).TrimEnd() + '...'
@@ -946,7 +940,7 @@ foreach ($required in @(
     'VerifiedReleaseFiles',
     'release files verified with SHA-256',
     'Guardian did not return a valid integrity result.',
-    '$guardianResults.Count'
+    '[void]$issues.Add('
 )) {
     if ($text -notmatch [regex]::Escape($required)) {
         throw "UI polish verification failed: $required"

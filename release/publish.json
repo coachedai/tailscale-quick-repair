@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.8",
-  "versionCode": 30000418,
+  "version": "3.0.0-phase3.1.9",
+  "versionCode": 30000419,
   "requiresSetup": false,
   "publicInstaller": false,
-  "notes": "Phase 3.1 Integrity Guardian result hardening. The on-demand integrity check now isolates accidental PowerShell pipeline output, guarantees it consumes the final structured Guardian result, and shows the exact short failure reason inline if verification cannot complete. No repair or network behavior changes."
+  "notes": "Phase 3.1 Guardian output fix. Integrity Guardian now discards every List.Add return value so the check emits exactly one structured result object. The previous pipeline-filter workaround is removed and result validation is simplified. This targets the persistent Check incomplete state without changing repair, update or network behavior."
 }
