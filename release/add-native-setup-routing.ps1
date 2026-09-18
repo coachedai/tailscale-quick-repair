@@ -376,46 +376,8 @@ try {
         if (
             [string]::IsNullOrWhiteSpace($name) -or
             $name -match '[\\/]' -or
-            $hash -notmatch '^[a-f0-9]{64}
-        Get-ChildItem -LiteralPath $root -File -Recurse |
-            Where-Object { $_.Name -ne 'package-manifest.json' } |
-            ForEach-Object {
-                [ordered]@{
-                    path = Get-TrustedRelativePath -Root $root -FullName $_.FullName
-                    sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-                    size = [int64]$_.Length
-                }
-            } |
-            Sort-Object { $_.path }
-    )
-
-    if ('app/TailscaleQuickRepairSetup.exe' -notin @($entries | ForEach-Object { $_.path })) {
-        throw 'Native Setup host did not enter the update package.'
-    }
-
-    $manifest = [ordered]@{
-        schema = 1
-        product = 'Tailscale Quick Repair'
-        version = [string]$version.version
-        versionCode = [int64]$version.versionCode
-        files = $entries
-    }
-    $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $root 'package-manifest.json') -Encoding UTF8
-
-    & (Join-Path $PSScriptRoot 'privacy-scan.ps1') -Root $root -SkipRepositoryIdentity
-
-    Remove-Item -LiteralPath $zip.FullName -Force
-    Compress-Archive -Path (Join-Path $root '*') -DestinationPath $zip.FullName -CompressionLevel Optimal
-
-    $sha = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    $sha | Set-Content -LiteralPath ($zip.FullName + '.sha256') -Encoding ASCII
-
-    Write-Host "Native setup routing passed: $($version.version) ($($version.versionCode))"
-}
-finally {
-    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
-}
- -or
+            $hash.Length -ne 64 -or
+            $hash -match '[^a-f0-9]' -or
             $size -lt 0
         ) {
             throw 'Integrity manifest contains invalid file metadata.'
