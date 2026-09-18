@@ -633,6 +633,76 @@ $guardianDetailsNew = @'
 '@
 $text = Replace-ExactOnce -Text $text -Find $guardianDetailsOld -Replace $guardianDetailsNew -Description 'Guardian Details refresh'
 
+# Details is a secondary surface. Keep every refresh isolated so a non-critical
+# diagnostics/Guardian issue can never replace the main health result.
+$detailsHandlerOld = @'
+    $DetailsButton.Add_Click({
+        $offset = $MainScrollViewer.VerticalOffset
+
+        if ($DetailsPanel.Visibility -eq [System.Windows.Visibility]::Visible) {
+            $DetailsPanel.Visibility = [System.Windows.Visibility]::Collapsed
+            $DetailsButton.Content = 'Details  ›'
+            Restore-ScrollOffset $offset
+        } else {
+            $CopyButton.Content = 'Copy'
+            Update-Diagnostics $script:lastData
+            Initialize-AutoRepairUi
+            Update-GuardianStatus
+            $DetailsPanel.Opacity = 0
+            $DetailsPanel.Visibility = [System.Windows.Visibility]::Visible
+            $DetailsButton.Content = 'Hide details  ↑'
+            Fade-In $DetailsPanel 0.72 160
+            Restore-ScrollOffset $offset
+        }
+    })
+'@
+
+$detailsHandlerNew = @'
+    $DetailsButton.Add_Click({
+        $offset = 0
+
+        try {
+            $offset = $MainScrollViewer.VerticalOffset
+        } catch {}
+
+        if ($DetailsPanel.Visibility -eq [System.Windows.Visibility]::Visible) {
+            try {
+                $DetailsPanel.Visibility = [System.Windows.Visibility]::Collapsed
+                $DetailsButton.Content = 'Details  ›'
+            } catch {}
+
+            try { Restore-ScrollOffset $offset } catch {}
+            return
+        }
+
+        try {
+            $DetailsPanel.Opacity = 0
+            $DetailsPanel.Visibility = [System.Windows.Visibility]::Visible
+            $DetailsButton.Content = 'Hide details  ↑'
+        }
+        catch {
+            return
+        }
+
+        try { $CopyButton.Content = 'Copy' } catch {}
+        try { Update-Diagnostics $script:lastData } catch {}
+        try { Initialize-AutoRepairUi } catch {}
+        try { Update-GuardianStatus } catch {}
+
+        try {
+            Fade-In $DetailsPanel 0.72 160
+        }
+        catch {
+            try { $DetailsPanel.Opacity = 1 } catch {}
+        }
+
+        try { Restore-ScrollOffset $offset } catch {}
+    })
+'@
+
+$text = Replace-ExactOnce -Text $text -Find $detailsHandlerOld -Replace $detailsHandlerNew -Description 'isolated Details refresh'
+
+
 $guardianStartupOld = @'
                 if (-not (Attach-To-RunningRepair)) {
                     [void](Refresh-EngineCheck)
@@ -806,7 +876,8 @@ foreach ($required in @(
     'System integrity',
     'GuardianStatusText',
     'Get-GuardianIntegrityResult',
-    'Update-GuardianStatus'
+    'Update-GuardianStatus',
+    'try { Update-GuardianStatus } catch {}'
 )) {
     if ($text -notmatch [regex]::Escape($required)) {
         throw "UI polish verification failed: $required"
