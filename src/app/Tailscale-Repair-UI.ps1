@@ -47,6 +47,7 @@ $AutoRepairMonitorPath = Join-Path $env:ProgramData 'TailscaleQuickRepair\Auto-R
 $UpdaterHostPath = Join-Path $StateDir 'TailscaleQuickRepairUpdater.exe'
 $UpdateInstallerPath = Join-Path $env:ProgramData 'TailscaleQuickRepair\Update-Installer.ps1'
 $UpdateResultPath = Join-Path $StateDir 'update-result.json'
+$OperationLockPath = Join-Path $StateDir 'operation.lock'
 
 # ------------------------------------------------------------------
 # Single-instance behaviour.
@@ -2251,6 +2252,123 @@ try {
         }
     }
 
+    function Get-ActiveOperationLock {
+        param([switch]$RecoverStale)
+
+        if (-not (Test-Path -LiteralPath $OperationLockPath -PathType Leaf)) {
+            return $null
+        }
+
+        $item = $null
+        try { $item = Get-Item -LiteralPath $OperationLockPath -ErrorAction Stop } catch {}
+        $ageSeconds = if ($item) { [Math]::Max(0, ((Get-Date) - $item.LastWriteTime).TotalSeconds) } else { 0 }
+
+        $info = $null
+        try {
+            $info = Get-Content -LiteralPath $OperationLockPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch {
+            if ($RecoverStale -and $ageSeconds -gt 10) {
+                try { Remove-Item -LiteralPath $OperationLockPath -Force -ErrorAction Stop } catch {}
+                Add-ReliabilityEvent 'Recovered an incomplete operation marker.'
+                return $null
+            }
+
+            return [pscustomobject]@{ kind = 'another Quick Repair operation'; ownerPid = 0 }
+        }
+
+        $ownerPid = 0
+        try { $ownerPid = [int]$info.ownerPid } catch {}
+        $ownerAlive = $false
+
+        if ($ownerPid -gt 0) {
+            try {
+                $process = Get-Process -Id $ownerPid -ErrorAction Stop
+                $ownerAlive = -not $process.HasExited
+            }
+            catch {}
+        }
+
+        $stale = (-not $ownerAlive) -or ($ageSeconds -gt 1800)
+
+        if ($stale -and $RecoverStale) {
+            $kind = [string]$info.kind
+            try { Remove-Item -LiteralPath $OperationLockPath -Force -ErrorAction Stop } catch {}
+
+            if ([string]::IsNullOrWhiteSpace($kind)) { $kind = 'Quick Repair' }
+            Add-ReliabilityEvent "Recovered interrupted $kind operation state."
+            return $null
+        }
+
+        if ($stale) { return $null }
+        return $info
+    }
+
+    function Acquire-UiOperationLock {
+        param(
+            [Parameter(Mandatory=$true)][string]$Kind,
+            [int]$Minutes = 3
+        )
+
+        [void](Get-ActiveOperationLock -RecoverStale)
+
+        for ($attempt = 0; $attempt -lt 2; $attempt++) {
+            $stream = $null
+
+            try {
+                $stream = [IO.File]::Open(
+                    $OperationLockPath,
+                    [IO.FileMode]::CreateNew,
+                    [IO.FileAccess]::Write,
+                    [IO.FileShare]::None
+                )
+
+                $metadata = [ordered]@{
+                    schema = 1
+                    kind = $Kind
+                    ownerPid = $PID
+                    startedUtc = [DateTime]::UtcNow.ToString('o')
+                    expiresUtc = [DateTime]::UtcNow.AddMinutes($Minutes).ToString('o')
+                } | ConvertTo-Json -Compress
+
+                $bytes = [Text.Encoding]::UTF8.GetBytes($metadata)
+                $stream.Write($bytes,0,$bytes.Length)
+                $stream.Flush()
+                $script:uiOperationKind = $Kind
+                return $true
+            }
+            catch [IO.IOException] {
+                $active = Get-ActiveOperationLock -RecoverStale
+                if ($active) { return $false }
+            }
+            catch {
+                return $false
+            }
+            finally {
+                if ($stream) { try { $stream.Dispose() } catch {} }
+            }
+        }
+
+        return $false
+    }
+
+    function Release-UiOperationLock {
+        param([string]$Kind = '')
+
+        try {
+            if (-not (Test-Path -LiteralPath $OperationLockPath -PathType Leaf)) { return }
+            $info = Get-Content -LiteralPath $OperationLockPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if ([int]$info.ownerPid -ne $PID) { return }
+            if ($Kind -and [string]$info.kind -ne $Kind) { return }
+            Remove-Item -LiteralPath $OperationLockPath -Force -ErrorAction Stop
+        }
+        catch {}
+
+        if (-not $Kind -or $script:uiOperationKind -eq $Kind) {
+            $script:uiOperationKind = ''
+        }
+    }
+
     function Update-AutoRepairStatus {
         try {
             if (-not (Refresh-AutoRepairAvailability)) {
@@ -2327,6 +2445,10 @@ try {
                     $minutes = [int]$state.cooldownRemainingMinutes
                     $AutoRepairStatusText.Text = "Enabled · recovery cooldown · $minutes min"
                     $AutoRepairStatusText.Foreground = Get-Brush 'Amber'
+                }
+                'busy' {
+                    $AutoRepairStatusText.Text = "Enabled · waiting for another Quick Repair operation · $fresh"
+                    $AutoRepairStatusText.Foreground = Get-Brush 'Muted'
                 }
                 'manual' {
                     $AutoRepairStatusText.Text = "Enabled · needs your attention · $fresh"
@@ -2720,6 +2842,11 @@ try {
                 $script:advancedDiagnosticsTimer.Stop()
             }
         } catch {}
+
+        if ($script:advancedDiagnosticsOwnsOperation) {
+            Release-UiOperationLock -Kind 'diagnostics'
+            $script:advancedDiagnosticsOwnsOperation = $false
+        }
     }
 
     function Complete-AdvancedDiagnostics {
@@ -2733,6 +2860,12 @@ try {
         }
 
         $script:advancedDiagnosticsProcess = $null
+
+        if ($script:advancedDiagnosticsOwnsOperation) {
+            Release-UiOperationLock -Kind 'diagnostics'
+            $script:advancedDiagnosticsOwnsOperation = $false
+        }
+
         $AdvancedDiagnosticsProgress.Value = 100
         $AdvancedDiagnosticsButton.Content = 'Run again'
         $AdvancedDiagnosticsButton.IsEnabled = $true
@@ -2887,6 +3020,16 @@ try {
         try {
             Stop-AdvancedDiagnostics
 
+            if (-not (Acquire-UiOperationLock -Kind 'diagnostics' -Minutes 2)) {
+                $activeOperation = Get-ActiveOperationLock -RecoverStale
+                $kind = if ($activeOperation) { [string]$activeOperation.kind } else { 'another operation' }
+                $AdvancedDiagnosticsPanel.Visibility = [System.Windows.Visibility]::Visible
+                $AdvancedDiagnosticsSummary.Text = "Quick Repair is busy with $kind. Try diagnostics again when it finishes."
+                $AdvancedDiagnosticsSummary.Foreground = Get-Brush 'Amber'
+                return
+            }
+
+            $script:advancedDiagnosticsOwnsOperation = $true
             $script:advancedDiagnosticsRunId = [Guid]::NewGuid().ToString('N')
             $script:advancedDiagnosticsStartedAt = Get-Date
             $script:advancedDiagnosticsReport = ''
@@ -3347,6 +3490,12 @@ try {
             [string]$Data.service -eq 'Running'
         ) {
             Get-Brush 'Green'
+        } elseif (
+            [string]$Data.client -eq 'Running' -and
+            -not [bool]$Data.done -and
+            [int]$Data.progress -ge 22
+        ) {
+            Get-Brush 'Blue'
         } else {
             Get-Brush 'Border'
         }
@@ -3356,7 +3505,11 @@ try {
             [string]$Data.backend -eq 'Running'
         ) {
             Get-Brush 'Green'
-        } elseif ([string]$Data.mode -eq 'repairing') {
+        } elseif (
+            [string]$Data.service -eq 'Running' -and
+            -not [bool]$Data.done -and
+            [int]$Data.progress -ge 40
+        ) {
             Get-Brush 'Blue'
         } else {
             Get-Brush 'Border'
@@ -3366,7 +3519,11 @@ try {
             [string]$Data.peerReachable -eq 'Reachable'
         ) {
             Get-Brush 'Green'
-        } elseif ([string]$Data.mode -eq 'checking') {
+        } elseif (
+            [string]$Data.backend -eq 'Running' -and
+            -not [bool]$Data.done -and
+            [int]$Data.progress -ge 88
+        ) {
             Get-Brush 'Blue'
         } else {
             Get-Brush 'Border'
@@ -4371,6 +4528,21 @@ try {
             return
         }
 
+        $activeOperation = Get-ActiveOperationLock -RecoverStale
+        if ($activeOperation) {
+            if ([string]$activeOperation.kind -eq 'repair' -and (Attach-To-RunningRepair)) {
+                return
+            }
+
+            $kind = [string]$activeOperation.kind
+            if ([string]::IsNullOrWhiteSpace($kind)) { $kind = 'another Quick Repair operation' }
+            Set-Badge $HeroBadge $HeroBadgeText 'BUSY' 'warning'
+            $HeroTitle.Text = 'Quick Repair is busy'
+            $HeroDetail.Text = "Wait for $kind to finish, then run the check again."
+            Set-ActionButton 'Try Again' 'repair' $true
+            return
+        }
+
         # Immediate visual response. Actual scheduler/client work starts only
         # after this frame has been handed back to WPF.
         Show-ImmediateRunState
@@ -4667,6 +4839,7 @@ try {
                 Register-ReliabilityWatchers
                 Initialize-AutoRepairLocalWatch
                 Show-UpdateResult
+                [void](Get-ActiveOperationLock -RecoverStale)
 
                 if (-not (Attach-To-RunningRepair)) {
                     [void](Refresh-EngineCheck)

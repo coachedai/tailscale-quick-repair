@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase3.2.1",
-  "versionCode": 30000431,
-  "requiresSetup": false,
+  "version": "3.0.0-phase3.4.1",
+  "versionCode": 30000441,
+  "requiresSetup": true,
   "publicInstaller": false,
-  "notes": "Phase 3.2 Guardian Known-Good + Safe Self-Healing. Fixes the legacy Windows startup switch, safely repairs only that proven legacy startup command, creates a local known-good integrity snapshot after a clean check, detects same-version baseline replacement, and smooths the App/Service/Tailscale stage indicator so incomplete stages no longer flash red. Existing repair, updater, diagnostics, tray and network features remain intact."
+  "notes": "Phase 3.3 Operation Coordinator + Phase 3.4 Recovery Foundation. Adds an atomic cross-process operation lock for Repair, Auto Repair, Advanced Diagnostics, Updater and Setup; pauses Auto Repair during other operations; clears stale crash markers safely; prevents overlapping work; and fixes the stage rail so blue only advances when that stage is actually reached. Existing repair, Guardian, updater, diagnostics, tray and connection-intelligence features are preserved."
 }

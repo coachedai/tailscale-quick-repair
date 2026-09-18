@@ -4,6 +4,7 @@ $RepairTaskName = 'Tailscale Quick Repair'
 $AppDir = Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair'
 $SettingsPath = Join-Path $AppDir 'auto-repair.json'
 $StatePath = Join-Path $AppDir 'auto-repair-state.json'
+$OperationLockPath = Join-Path $AppDir 'operation.lock'
 $CooldownMinutes = 15
 
 function Write-State {
@@ -54,6 +55,34 @@ function Write-State {
         Move-Item -LiteralPath $tmp -Destination $StatePath -Force
     }
     catch {}
+}
+
+function Get-ActiveOperation {
+    if (-not (Test-Path -LiteralPath $OperationLockPath -PathType Leaf)) { return $null }
+
+    try {
+        $item = Get-Item -LiteralPath $OperationLockPath -ErrorAction Stop
+        $info = Get-Content -LiteralPath $OperationLockPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        $ownerPid = 0
+        try { $ownerPid = [int]$info.ownerPid } catch {}
+        $alive = $false
+        if ($ownerPid -gt 0) {
+            try { $process = Get-Process -Id $ownerPid -ErrorAction Stop; $alive = -not $process.HasExited } catch {}
+        }
+
+        if ($alive -and ((Get-Date) - $item.LastWriteTime).TotalMinutes -lt 30) { return $info }
+    }
+    catch {
+        try {
+            $item = Get-Item -LiteralPath $OperationLockPath -ErrorAction Stop
+            if (((Get-Date) - $item.LastWriteTime).TotalSeconds -lt 10) {
+                return [pscustomobject]@{ kind = 'another Quick Repair operation' }
+            }
+        } catch {}
+    }
+
+    try { Remove-Item -LiteralPath $OperationLockPath -Force -ErrorAction SilentlyContinue } catch {}
+    return $null
 }
 
 function Get-Enabled {
@@ -159,6 +188,14 @@ function Start-ProtectedRepair {
 
 if (-not (Get-Enabled)) {
     Write-State -Status 'disabled' -Message 'Automatic repair is off.'
+    exit 0
+}
+
+$activeOperation = Get-ActiveOperation
+if ($activeOperation) {
+    $kind = [string]$activeOperation.kind
+    if ([string]::IsNullOrWhiteSpace($kind)) { $kind = 'another Quick Repair operation' }
+    Write-State -Status 'busy' -Message "Automatic repair is waiting for $kind to finish."
     exit 0
 }
 

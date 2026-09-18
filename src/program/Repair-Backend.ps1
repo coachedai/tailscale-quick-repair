@@ -3,6 +3,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 $StateDir = Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair'
 $ConfigPath = Join-Path $StateDir 'config.json'
 $StateFile = Join-Path $StateDir 'state.json'
+$OperationLockPath = Join-Path $StateDir 'operation.lock'
 
 New-Item -ItemType Directory -Path $StateDir -Force | Out-Null
 
@@ -108,6 +109,77 @@ function Publish-State {
     $tmp = $StateFile + '.tmp'
     $obj | ConvertTo-Json -Compress -Depth 5 | Set-Content -LiteralPath $tmp -Encoding UTF8
     Move-Item -LiteralPath $tmp -Destination $StateFile -Force
+}
+
+function Test-OperationOwnerAlive {
+    param([int]$OwnerPid)
+    if ($OwnerPid -le 0) { return $false }
+    try {
+        $process = Get-Process -Id $OwnerPid -ErrorAction Stop
+        return (-not $process.HasExited)
+    }
+    catch { return $false }
+}
+
+function Remove-StaleOperationLock {
+    if (-not (Test-Path -LiteralPath $OperationLockPath -PathType Leaf)) { return $true }
+
+    try {
+        $item = Get-Item -LiteralPath $OperationLockPath -ErrorAction Stop
+        $ageMinutes = ((Get-Date) - $item.LastWriteTime).TotalMinutes
+        $info = Get-Content -LiteralPath $OperationLockPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        $ownerPid = 0
+        try { $ownerPid = [int]$info.ownerPid } catch {}
+
+        if ((Test-OperationOwnerAlive $ownerPid) -and $ageMinutes -lt 30) { return $false }
+    }
+    catch {
+        try {
+            $item = Get-Item -LiteralPath $OperationLockPath -ErrorAction Stop
+            if (((Get-Date) - $item.LastWriteTime).TotalSeconds -lt 10) { return $false }
+        } catch {}
+    }
+
+    try { Remove-Item -LiteralPath $OperationLockPath -Force -ErrorAction Stop; return $true } catch { return $false }
+}
+
+function Acquire-OperationLock {
+    param([string]$Kind = 'repair')
+
+    [void](Remove-StaleOperationLock)
+
+    for ($attempt = 0; $attempt -lt 2; $attempt++) {
+        $stream = $null
+        try {
+            $stream = [IO.File]::Open($OperationLockPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+            $metadata = [ordered]@{
+                schema = 1
+                kind = $Kind
+                ownerPid = $PID
+                startedUtc = [DateTime]::UtcNow.ToString('o')
+                expiresUtc = [DateTime]::UtcNow.AddMinutes(10).ToString('o')
+            } | ConvertTo-Json -Compress
+            $bytes = [Text.Encoding]::UTF8.GetBytes($metadata)
+            $stream.Write($bytes,0,$bytes.Length)
+            $stream.Flush()
+            return $true
+        }
+        catch [IO.IOException] {
+            if (-not (Remove-StaleOperationLock)) { return $false }
+        }
+        catch { return $false }
+        finally { if ($stream) { try { $stream.Dispose() } catch {} } }
+    }
+
+    return $false
+}
+
+function Release-OperationLock {
+    try {
+        if (-not (Test-Path -LiteralPath $OperationLockPath -PathType Leaf)) { return }
+        $info = Get-Content -LiteralPath $OperationLockPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if ([int]$info.ownerPid -eq $PID) { Remove-Item -LiteralPath $OperationLockPath -Force -ErrorAction Stop }
+    } catch {}
 }
 
 function Get-TailscaleCli {
@@ -532,6 +604,15 @@ function Get-PeerConnectivity {
     return [pscustomobject]$result
 }
 
+$operationAcquired = Acquire-OperationLock -Kind 'repair'
+if (-not $operationAcquired) {
+    Publish-State `
+        'Quick Repair is busy' `
+        'Another Quick Repair operation is already running. No repair actions were started.' `
+        100 'warning' 'Complete' $true
+    exit 0
+}
+
 try {
     Publish-State `
         'Checking Tailscale' `
@@ -868,4 +949,7 @@ catch {
         $_.Exception.Message `
         100 'failure' 'Complete' $true
     exit 99
+}
+finally {
+    if ($operationAcquired) { Release-OperationLock }
 }
