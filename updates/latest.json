@@ -1,21 +1,21 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.5",
-  "versionCode": 30000415,
+  "version": "3.0.0-phase3.1.6",
+  "versionCode": 30000416,
   "published": true,
-  "publishedAt": "2026-09-18T14:06:36.3760297Z",
+  "publishedAt": "2026-09-18T14:22:29.6075424Z",
   "mandatory": false,
   "requiresSetup": false,
-  "notes": "Phase 3.1 startup stabilization. Integrity Guardian no longer runs automatically during app startup or Details opening; it is now a contained on-demand Maintenance check. This removes the recurring startup UI-error state while preserving the proven repair and connection result. Guardian control handling is also hardened against missing or failed UI bindings.",
+  "notes": "Phase 3.1 Release Integrity Guardian. Every normal update now installs a release-matched SHA-256 manifest for its user-level app components. The on-demand System integrity check verifies file presence, size and SHA-256 before reporting Healthy. This is corruption/integrity detection only and does not change repair or network behavior.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.5/TailscaleQuickRepair-3.0.0-phase3.1.5.zip",
-    "sha256": "283327dd12006321d342625e528aa61a13fb544fad467ead4b4ecdd4ab837c70",
-    "size": 58176
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.6/TailscaleQuickRepair-3.0.0-phase3.1.6.zip",
+    "sha256": "10b89f03a4b3693fb5babf0946defedcc0201a85f6ea433c055e1f210e603ebe",
+    "size": 58721
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.5/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.5.exe",
-    "sha256": "bbbe04e3d1ee348f26ff158064441c40d9a87b867d2bfda3b4d292c3b88a4384",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.6/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.6.exe",
+    "sha256": "a152dd80133e2e0f467cf629c43a6db208758a9b44d688263501d78ea4c540ff",
     "size": 23040
   }
 }
