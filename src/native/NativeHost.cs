@@ -72,20 +72,27 @@ internal static class NativeHost
                         powershell.AddParameter("StartInTray", true);
                     }
 
-                    Collection<PSObject> ignored = powershell.Invoke();
-
-                    bool uiClosedNormally = false;
+                    Collection<PSObject> ignored = null;
+                    Exception invokeFailure = null;
 
                     try
                     {
-                        object marker = runspace.SessionStateProxy.GetVariable("TqrUiClosedNormally");
-                        uiClosedNormally = marker is bool && (bool)marker;
+                        ignored = powershell.Invoke();
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        invokeFailure = ex;
                     }
 
-                    if (powershell.HadErrors && !uiClosedNormally)
+                    bool uiClosedNormally = GetSessionBool(runspace, "TqrUiClosedNormally");
+                    bool shutdownRequested = GetSessionBool(runspace, "TqrUiShutdownRequested");
+
+                    if (invokeFailure != null && !shutdownRequested && !uiClosedNormally)
+                    {
+                        throw invokeFailure;
+                    }
+
+                    if (powershell.HadErrors && !shutdownRequested && !uiClosedNormally)
                     {
                         StringBuilder message = new StringBuilder();
 
@@ -128,6 +135,19 @@ internal static class NativeHost
             }
 
             return 10;
+        }
+    }
+
+    private static bool GetSessionBool(Runspace runspace, string name)
+    {
+        try
+        {
+            object marker = runspace.SessionStateProxy.GetVariable(name);
+            return marker is bool && (bool)marker;
+        }
+        catch
+        {
+            return false;
         }
     }
 

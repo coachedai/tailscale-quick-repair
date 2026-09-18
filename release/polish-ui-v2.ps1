@@ -312,6 +312,55 @@ $text = Replace-ExactOnce `
 '@ `
     -Description 'native host normal-close marker'
 
+# Phase 3 Guardian foundation: explicit lifecycle markers. These are behind-
+# the-scenes state signals only; they do not change repair/network behavior.
+$text = Replace-ExactOnce `
+    -Text $text `
+    -Find @'
+        $script:trayExitItem.Add_Click({
+            try {
+                $script:allowFullExit = $true
+
+                if ($script:notifyIcon) {
+'@ `
+    -Replace @'
+        $script:trayExitItem.Add_Click({
+            try {
+                $script:allowFullExit = $true
+                $global:TqrUiShutdownRequested = $true
+
+                if ($script:notifyIcon) {
+'@ `
+    -Description 'tray shutdown lifecycle marker'
+
+$text = Replace-ExactOnce `
+    -Text $text `
+    -Find @'
+    $window.Add_Closed({
+        $script:allowFullExit = $true
+'@ `
+    -Replace @'
+    $window.Add_Closed({
+        $script:allowFullExit = $true
+        $global:TqrUiShutdownRequested = $true
+'@ `
+    -Description 'window closed lifecycle marker'
+
+$text = Replace-ExactOnce `
+    -Text $text `
+    -Find @'
+        # Windows logoff/shutdown must always be allowed to close the resident app.
+        $script:allowFullExit = $true
+    })
+'@ `
+    -Replace @'
+        # Windows logoff/shutdown must always be allowed to close the resident app.
+        $script:allowFullExit = $true
+        $global:TqrUiShutdownRequested = $true
+    })
+'@ `
+    -Description 'session ending lifecycle marker'
+
 $themeAnchor = @'
     Add-Type -AssemblyName System.Drawing
 
@@ -374,6 +423,47 @@ public static class QuickRepairWindowTheme
         catch {}
     }
 
+    function Set-QuickRepairWindowIcon {
+        param([System.Windows.Window]$TargetWindow)
+
+        if (-not $TargetWindow) {
+            return
+        }
+
+        $icon = $null
+
+        try {
+            $tailscaleExe = Join-Path $env:ProgramFiles 'Tailscale\tailscale-ipn.exe'
+
+            if (-not (Test-Path -LiteralPath $tailscaleExe -PathType Leaf)) {
+                return
+            }
+
+            $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($tailscaleExe)
+
+            if (-not $icon) {
+                return
+            }
+
+            $source = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon(
+                $icon.Handle,
+                [System.Windows.Int32Rect]::Empty,
+                [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions()
+            )
+
+            if ($source) {
+                $source.Freeze()
+                $TargetWindow.Icon = $source
+            }
+        }
+        catch {}
+        finally {
+            if ($icon) {
+                try { $icon.Dispose() } catch {}
+            }
+        }
+    }
+
     # --------------------------------------------------------------
     # Helpers
 '@
@@ -396,8 +486,11 @@ $windowLoadReplacement = @'
     $reader = New-Object System.Xml.XmlNodeReader $xaml
     $window = [Windows.Markup.XamlReader]::Load($reader)
 
+    $global:TqrUiStartedSuccessfully = $true
+
     $window.Add_SourceInitialized({
         Set-DarkWindowChrome $window
+        Set-QuickRepairWindowIcon $window
     })
 
     # --------------------------------------------------------------
@@ -421,7 +514,10 @@ foreach ($required in @(
     'MinHeight="14"',
     'MinHeight="18"',
     'DispatcherPriority]::ApplicationIdle',
-    'TqrUiClosedNormally'
+    'TqrUiClosedNormally',
+    'TqrUiStartedSuccessfully',
+    'TqrUiShutdownRequested',
+    'Set-QuickRepairWindowIcon'
 )) {
     if ($text -notmatch [regex]::Escape($required)) {
         throw "UI polish verification failed: $required"
