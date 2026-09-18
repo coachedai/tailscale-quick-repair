@@ -248,14 +248,15 @@ $repairReplacement = @'
 
             Set-Badge $HeroBadge $HeroBadgeText 'MAINTENANCE' 'repairing'
             $HeroTitle.Text = 'Repairing Quick Repair'
-            $HeroDetail.Text = 'Approve the Windows prompt. Quick Repair will rebuild its protected tasks, startup entry and shortcut.'
+            $HeroDetail.Text = 'Approve the Windows prompt. Quick Repair will rebuild its protected integration and reopen automatically.'
             $RepairInstallationButton.IsEnabled = $false
+            $script:allowFullExit = $true
+            $global:TqrUiShutdownRequested = $true
 
             $window.Dispatcher.BeginInvoke(
                 [System.Windows.Threading.DispatcherPriority]::Background,
                 [Action]{
-                    Start-Sleep -Milliseconds 900
-                    $RepairInstallationButton.IsEnabled = $true
+                    try { $window.Close() } catch {}
                 }
             ) | Out-Null
         }
