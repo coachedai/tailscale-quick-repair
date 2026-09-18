@@ -454,7 +454,7 @@ $text = Replace-ExactOnce -Text $text -Find $guardianStateOld -Replace $guardian
 
 $guardianFunctions = ''
 
-$text = Replace-ExactOnce -Text $text -Find '    function Update-DetailsToggleText {' -Replace ($guardianFunctions + '    function Update-DetailsToggleText {') -Description 'Guardian integrity functions' -Replace ($guardianFunctions + '    function Update-DetailsToggleText {') -Description 'Guardian integrity functions'
+$text = Replace-ExactOnce -Text $text -Find '    function Update-DetailsToggleText {' -Replace ($guardianFunctions + '    function Update-DetailsToggleText {') -Description 'Guardian integrity functions'
 
 $guardianEventOld = @'
     $RepairInstallationButton.Add_Click({
