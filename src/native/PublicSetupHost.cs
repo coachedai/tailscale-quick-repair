@@ -227,7 +227,6 @@ internal static class PublicSetupHost
         RegisterAutoRepairTask();
         ConfigureStartup(startup);
         CreateStartMenuShortcut();
-        StartQuickRepair();
 
         MessageBox.Show(
             "Quick Repair's Windows integration was rebuilt successfully.",
@@ -236,6 +235,7 @@ internal static class PublicSetupHost
             MessageBoxIcon.Information
         );
 
+        StartQuickRepair();
         return 0;
     }
 
