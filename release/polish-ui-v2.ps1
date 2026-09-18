@@ -474,7 +474,11 @@ $guardianEventNew = @'
         $GuardianDetailText.Foreground = Get-Brush 'Faint'
 
         $issues = New-Object 'System.Collections.Generic.List[string]'
+        $safeFixes = New-Object 'System.Collections.Generic.List[string]'
         $verifiedReleaseFiles = 0
+        $integrityManifestSha256 = ''
+        $snapshotEstablished = $false
+        $snapshotConfirmed = $false
 
         try {
             $requiredFiles = @(
@@ -527,6 +531,7 @@ $guardianEventNew = @'
             else {
                 try {
                     $integrityManifest = Get-Content -LiteralPath $integrityManifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                    $integrityManifestSha256 = (Get-FileHash -LiteralPath $integrityManifestPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
 
                     if (
                         [int]$integrityManifest.schema -ne 1 -or
@@ -586,8 +591,18 @@ $guardianEventNew = @'
 
             try {
                 if (Test-StartWithWindows) {
-                    $startupValue = (Get-ItemProperty -Path $StartupRegistryPath -Name $StartupRegistryName -ErrorAction Stop).$StartupRegistryName
-                    if ([string]$startupValue -notlike '*TailscaleQuickRepair.exe*' -or [string]$startupValue -notlike '*--start-in-tray*') {
+                    $startupValue = [string](Get-ItemProperty -Path $StartupRegistryPath -Name $StartupRegistryName -ErrorAction Stop).$StartupRegistryName
+                    $canonicalStartup = '"' + $NativeHostPath + '" --start-in-tray'
+                    $legacyStartup = '"' + $NativeHostPath + '" --tray'
+
+                    if ($startupValue -ieq $canonicalStartup) {
+                        # Canonical and healthy.
+                    }
+                    elseif ($startupValue -ieq $legacyStartup) {
+                        New-ItemProperty -Path $StartupRegistryPath -Name $StartupRegistryName -Value $canonicalStartup -PropertyType String -Force | Out-Null
+                        [void]$safeFixes.Add('Windows startup command repaired.')
+                    }
+                    else {
                         [void]$issues.Add('Windows startup integration is not configured correctly.')
                     }
                 }
@@ -619,17 +634,58 @@ $guardianEventNew = @'
                 [void]$issues.Add('Automatic repair integration could not be verified.')
             }
 
+            $snapshotPath = Join-Path $StateDir 'guardian-known-good.json'
+            $snapshot = $null
+
+            if (Test-Path -LiteralPath $snapshotPath -PathType Leaf) {
+                try {
+                    $snapshot = Get-Content -LiteralPath $snapshotPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                }
+                catch {
+                    $snapshot = $null
+                    [void]$safeFixes.Add('Known-good snapshot rebuilt.')
+                }
+            }
+
+            if ($issues.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace($integrityManifestSha256)) {
+                if ($snapshot -and [int64]$snapshot.versionCode -eq $ProductVersionCode -and -not [string]::IsNullOrWhiteSpace([string]$snapshot.integrityManifestSha256) -and [string]$snapshot.integrityManifestSha256 -ne $integrityManifestSha256) {
+                    [void]$issues.Add('Known-good release record changed unexpectedly.')
+                }
+                else {
+                    $snapshotEstablished = (-not $snapshot -or [int64]$snapshot.versionCode -ne $ProductVersionCode)
+                    $snapshotConfirmed = -not $snapshotEstablished
+
+                    $snapshotValue = [ordered]@{
+                        schema = 1
+                        versionCode = $ProductVersionCode
+                        integrityManifestSha256 = $integrityManifestSha256
+                        verifiedReleaseFiles = $verifiedReleaseFiles
+                        startupEnabled = [bool](Test-StartWithWindows)
+                        repairEngineReady = $true
+                        autoRepairAvailable = $true
+                        verifiedUtc = [DateTime]::UtcNow.ToString('o')
+                    }
+
+                    $snapshotTemp = "$snapshotPath.$PID.tmp"
+                    $snapshotJson = $snapshotValue | ConvertTo-Json -Depth 4
+                    [IO.File]::WriteAllText($snapshotTemp,$snapshotJson,(New-Object System.Text.UTF8Encoding($false)))
+                    if (Test-Path -LiteralPath $snapshotPath) { Remove-Item -LiteralPath $snapshotPath -Force -ErrorAction Stop }
+                    Move-Item -LiteralPath $snapshotTemp -Destination $snapshotPath -Force
+                }
+            }
+
             $script:lastGuardianCheckAt = Get-Date
 
             if ($issues.Count -eq 0) {
                 $GuardianStatusText.Text = 'Healthy'
                 $GuardianStatusText.Foreground = Get-Brush 'Green'
-                $GuardianDetailText.Text = if ($verifiedReleaseFiles -gt 0) {
-                    "$verifiedReleaseFiles release files verified with SHA-256. Configuration and Windows integration verified."
-                }
-                else {
-                    'Configuration and Windows integration verified.'
-                }
+                $healthyParts = New-Object 'System.Collections.Generic.List[string]'
+                if ($verifiedReleaseFiles -gt 0) { [void]$healthyParts.Add("$verifiedReleaseFiles release files verified with SHA-256.") }
+                if ($snapshotEstablished) { [void]$healthyParts.Add('Known-good baseline established.') }
+                elseif ($snapshotConfirmed) { [void]$healthyParts.Add('Known-good baseline confirmed.') }
+                if ($safeFixes.Count -gt 0) { [void]$healthyParts.Add(($safeFixes -join ' ')) }
+                [void]$healthyParts.Add('Configuration and Windows integration verified.')
+                $GuardianDetailText.Text = $healthyParts -join ' '
                 $GuardianDetailText.Foreground = Get-Brush 'Faint'
             }
             else {
@@ -862,7 +918,11 @@ foreach ($required in @(
     '$verifiedReleaseFiles++',
     'integrity-manifest.json',
     'release files verified with SHA-256',
-    '[void]$issues.Add('
+    '[void]$issues.Add(',
+    'guardian-known-good.json',
+    'Known-good baseline established.',
+    'Windows startup command repaired.',
+    '--start-in-tray'
 )) {
     if ($text -notmatch [regex]::Escape($required)) {
         throw "UI polish verification failed: $required"
