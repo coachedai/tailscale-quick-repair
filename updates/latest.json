@@ -1,21 +1,21 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.10",
-  "versionCode": 30000420,
+  "version": "3.0.0-phase3.1.11",
+  "versionCode": 30000421,
   "published": true,
-  "publishedAt": "2026-09-18T14:50:44.5180014Z",
+  "publishedAt": "2026-09-18T14:57:22.7856193Z",
   "mandatory": false,
   "requiresSetup": false,
-  "notes": "Phase 3.1 Guardian invocation fix. The System integrity check now runs directly in the WPF click-handler scope instead of a deferred Dispatcher callback, preventing loss of access to the dynamically-added Guardian function. Any remaining failure reason is shown inline. Repair, update and network behavior are unchanged.",
+  "notes": "Phase 3.1 Guardian scope fix. The dynamically-added Guardian functions are now explicitly process-global inside Quick Repair's dedicated PowerShell runspace, so WPF event callbacks can always resolve them. CI now requires these global Guardian declarations. No repair, update or network behavior changes.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.10/TailscaleQuickRepair-3.0.0-phase3.1.10.zip",
-    "sha256": "b7480d3bdd0cad154d97d99290f6e5b8fd7934b1b20b68d82eb3074b8314fe5c",
-    "size": 58936
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.11/TailscaleQuickRepair-3.0.0-phase3.1.11.zip",
+    "sha256": "e9a672dc2441d0ea01ad529b827615a0ee8e45dd78ac1ce72b441122a81ca2a5",
+    "size": 58939
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.10/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.10.exe",
-    "sha256": "a91066b6e40908d3b16d0f2f0ea103bb1a2920e98ddefb8f7ebc08546c68fde7",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.11/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.11.exe",
+    "sha256": "59de1926b5070f4b8bf668619c829bc8809e706515219ece7942094a6189d2ac",
     "size": 23040
   }
 }
