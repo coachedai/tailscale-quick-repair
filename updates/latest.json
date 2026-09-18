@@ -1,21 +1,21 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase3.1.6",
-  "versionCode": 30000416,
+  "version": "3.0.0-phase3.1.7",
+  "versionCode": 30000417,
   "published": true,
-  "publishedAt": "2026-09-18T14:22:29.6075424Z",
+  "publishedAt": "2026-09-18T14:31:32.2038122Z",
   "mandatory": false,
   "requiresSetup": false,
-  "notes": "Phase 3.1 Release Integrity Guardian. Every normal update now installs a release-matched SHA-256 manifest for its user-level app components. The on-demand System integrity check verifies file presence, size and SHA-256 before reporting Healthy. This is corruption/integrity detection only and does not change repair or network behavior.",
+  "notes": "Phase 3.1 Integrity Check interaction hardening. System integrity now gives immediate inline feedback, yields to WPF before the read-only Guardian check runs, and reports any check-start failure inline instead of silently swallowing it. Repair, updater and network behavior are unchanged.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.6/TailscaleQuickRepair-3.0.0-phase3.1.6.zip",
-    "sha256": "10b89f03a4b3693fb5babf0946defedcc0201a85f6ea433c055e1f210e603ebe",
-    "size": 58721
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.7/TailscaleQuickRepair-3.0.0-phase3.1.7.zip",
+    "sha256": "02d4426e4d8bb1197ed7d5101d3051e8b2e11257533c9a3b60ab2fc00f04b53c",
+    "size": 58899
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.6/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.6.exe",
-    "sha256": "a152dd80133e2e0f467cf629c43a6db208758a9b44d688263501d78ea4c540ff",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.1.7/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.1.7.exe",
+    "sha256": "8b6c0ba4b1f1ac8a63e50093d653f743adaa3277cd5bfca4b9c79e0774e8757d",
     "size": 23040
   }
 }
