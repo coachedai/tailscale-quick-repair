@@ -1,5 +1,5 @@
 {
-  "publish": false,
+  "publish": true,
   "channel": "preview",
   "version": "3.0.0-phase3.1.1",
   "versionCode": 30000411,
