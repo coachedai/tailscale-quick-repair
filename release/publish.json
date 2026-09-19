@@ -1,9 +1,9 @@
 {
-    "publish":  false,
-    "channel":  "preview",
-    "version":  "3.0.0-phase4.2.1",
-    "versionCode":  30000521,
-    "requiresSetup":  false,
-    "publicInstaller":  true,
-    "notes":  "Smart Notifications foundation: off by default, one preference and a test action. Meaningful events observed while running can request a tray notification, with persistent two-minute global, thirty-minute category and three-per-hour limits. No routine healthy alerts, startup replay, extra peer polling or network changes. Windows availability gates requests; banners and sound remain under Windows control. Local Auto Repair recovery requires a later explicit healthy observation, not merely a started task. Guardian, History, quality baselines and operation safety remain intact. Native policy, persistence and packaged WPF adapter tests join the existing release gates."
+  "publish": true,
+  "channel": "preview",
+  "version": "3.0.0-phase4.2.1",
+  "versionCode": 30000521,
+  "requiresSetup": false,
+  "publicInstaller": true,
+  "notes": "Smart Notifications foundation: off by default, one preference and a test action. Meaningful events observed while running can request a tray notification, with persistent two-minute global, thirty-minute category and three-per-hour limits. No routine healthy alerts, startup replay, extra peer polling or network changes. Windows availability gates requests; banners and sound remain under Windows control. Local Auto Repair recovery requires a later explicit healthy observation, not merely a started task. Guardian, History, quality baselines and operation safety remain intact. Native policy, persistence and packaged WPF adapter tests join the existing release gates."
 }
