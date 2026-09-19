@@ -21,16 +21,29 @@ jobs:
           if ((git remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?$') { throw 'Wrong origin.' }
           if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) { throw 'Checkout changed.' }
           if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Development must not enable publication.' }
-      - name: Apply exact integration patch when needed
+      - name: Apply exact integration patches when needed
         shell: pwsh
         run: |
+          foreach ($patch in @('release/history-source.patch','release/repair-report.patch')) {
+            if (Test-Path $patch) {
+              $text = [IO.File]::ReadAllText((Join-Path $pwd $patch)).Replace("`r`n","`n")
+              [IO.File]::WriteAllText((Join-Path $pwd $patch),$text,(New-Object Text.UTF8Encoding($false)))
+            }
+          }
           $version = (Get-Content version.json -Raw | ConvertFrom-Json).version
           if ($version -eq '3.0.0-phase3.4.2') {
             git apply --check release/history-source.patch
-            if ($LASTEXITCODE -ne 0) { throw 'Reviewed patch no longer applies; no source changed.' }
+            if ($LASTEXITCODE -ne 0) { throw 'Reviewed history patch no longer applies.' }
             git apply release/history-source.patch
-            if ($LASTEXITCODE -ne 0) { throw 'Source preparation failed.' }
+            if ($LASTEXITCODE -ne 0) { throw 'History source preparation failed.' }
           } elseif ($version -ne '3.0.0-phase3.5.1') { throw 'Unexpected source version.' }
+          $backend = Get-Content src/program/Repair-Backend.ps1 -Raw
+          if (-not $backend.Contains('repairPerformed = [bool]$script:RepairPerformed')) {
+            git apply --check release/repair-report.patch
+            if ($LASTEXITCODE -ne 0) { throw 'Reviewed reporting patch no longer applies.' }
+            git apply release/repair-report.patch
+            if ($LASTEXITCODE -ne 0) { throw 'Reporting source preparation failed.' }
+          }
       - name: Privacy and isolation preflight
         shell: powershell
         run: .\release\privacy-scan.ps1 -Root .
