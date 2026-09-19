@@ -97,8 +97,8 @@ public static class FixtureCli {
     $HistoryPanel=$window.FindName('HistoryPanel');$HistoryText=$window.FindName('HistoryText')
     $DetailsPanel=$window.FindName('DetailsPanel');$DetailsPanel.Visibility='Visible';$HistoryPanel.Visibility='Visible'
     $HistoryText.Text=(1..40|ForEach-Object {"Event $_ - Connection check passed"}) -join "`n"
-    # Realize the actual WPF template on the disposable runner. No product event
-    # handlers or network operations are wired to this synthetic test window.
+    # Only the synthetic fixture is positioned/resized. Packaged window defaults are unchanged.
+    $window.WindowState='Normal'
     $window.ShowInTaskbar=$false;$window.ShowActivated=$false;$window.WindowStartupLocation='Manual'
     $window.Left=-2000;$window.Top=0;$window.Width=1100;$window.Height=850
     $window.Show()
