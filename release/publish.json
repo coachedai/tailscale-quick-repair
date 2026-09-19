@@ -1,9 +1,9 @@
 {
-  "publish": false,
-  "channel": "preview",
-  "version": "3.0.0-phase5.1.1",
-  "versionCode": 30000611,
-  "requiresSetup": false,
-  "publicInstaller": true,
-  "notes": "Diagnostics 2.0 foundation and History polish. History has a slim rounded theme-aware scrollbar with standard scrolling retained, and opens at the newest events. Optional diagnostics now recognize direct endpoint replies, DERP and peer-relay paths, explain independent probe results without inventing a connection failure, and bound CLI execution/output. Raw command output and endpoints are not saved. The unprivileged diagnostics worker is delivered with ordinary updates: five app files are verified, six for Setup. No Tailscale recovery, protected worker, notification preference or network setting changes. Existing native suites plus diagnostic/scroll rendering gates are required."
+    "publish":  false,
+    "channel":  "preview",
+    "version":  "3.0.0-phase5.1.2",
+    "versionCode":  30000612,
+    "requiresSetup":  false,
+    "publicInstaller":  true,
+    "notes":  "Repeated-check progress fix. Previous completed results cannot repaint a new main check: embedded UTC timestamps, preserved watermarks and current-worker attachment boundaries exclude stale state before any rendering or History side effects. Diagnostics reset their measured fill before startup and retain prior result evidence behind a new run ID. The scoped diagnostic progress template has no completion animation. History scrollbar, Diagnostics 2.0, notifications and repair decisions are retained. Native repeated-click, state-file and rendered-progress tests join all existing release gates."
 }

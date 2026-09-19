@@ -340,6 +340,7 @@ try {
     $notificationTransform=[scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'add-smart-notifications.ps1'),[Text.Encoding]::UTF8))
     & $notificationTransform -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-diagnostics-polish.ps1') -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-progress-reset.ps1') -Path $uiPath
     Copy-Item -LiteralPath (Join-Path $repo 'src\app\Advanced-Diagnostics.ps1') -Destination (Join-Path $appDir 'Advanced-Diagnostics.ps1') -Force
 
     $version = Get-Content -LiteralPath $versionPath -Raw | ConvertFrom-Json
