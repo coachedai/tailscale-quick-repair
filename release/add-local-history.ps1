@@ -178,6 +178,27 @@ Replace-One "                `$GuardianStatusText.Text = if (`$issues.Count -eq 
                 Write-LocalHistoryEvent 'integrity_attention'
                 $GuardianStatusText.Text = if ($issues.Count -eq 1) {
 '@
+
+# Earlier build-time here-strings can be read using the Windows ANSI code page.
+# Normalize only the four known progress labels in the FINAL delivered script,
+# before its SHA-256 is generated. No handler logic or error text is replaced.
+foreach ($label in @(
+    @{ Control = 'UpdateNowButton.Content'; Text = 'Updating'; Count = 2 },
+    @{ Control = 'UpdateStatusText.Text'; Text = 'Installing system update'; Count = 1 },
+    @{ Control = 'UpdateStatusText.Text'; Text = 'Installing update'; Count = 1 }
+)) {
+    $pattern = '(?m)^(?<prefix>\s*\$' + [regex]::Escape($label.Control) + '\s*=\s*)''' +
+        [regex]::Escape($label.Text) + '[^''\r\n]*''\r?$'
+    $matches = [regex]::Matches($text,$pattern)
+    if ($matches.Count -ne [int]$label.Count) {
+        throw ('Final update label coverage changed: ' + $label.Text)
+    }
+    $replacement = [string]$label.Text + '...'
+    $text = [regex]::Replace($text,$pattern,[Text.RegularExpressions.MatchEvaluator]{
+        param($match)
+        return $match.Groups['prefix'].Value + "'" + $replacement + "'"
+    })
+}
 [void][scriptblock]::Create($text)
 [IO.File]::WriteAllText($Path,$text,(New-Object Text.UTF8Encoding($true)))
-Write-Host 'Local history added to the final packaged UI.'
+Write-Host 'Local history and clean progress labels added to the final packaged UI.'
