@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - fix/3.4.2-package-and-runtime-guards
+      - work/4.1-connection-quality
     paths:
       - "src/**"
       - "release/**"
@@ -97,8 +98,8 @@ jobs:
           name: runtime-evidence-${{ steps.meta.outputs.safe_version }}
           path: test-evidence/*.json
           if-no-files-found: warn
-      - name: Require protected-migration assets
-        if: steps.publish.outputs.requires_setup == 'true'
+      - name: Require matching fresh-install and migration assets
+        if: steps.publish.outputs.build_setup == 'true'
         shell: pwsh
         run: |
           $setupZip = @(Get-ChildItem .\dist -Filter 'TailscaleQuickRepair-SetupPackage-*.zip' -File)
@@ -121,6 +122,8 @@ jobs:
       contents: write
     runs-on: windows-latest
     timeout-minutes: 15
+    env:
+      BUILD_SETUP: ${{ needs.validate.outputs.build_setup }}
     steps:
       - name: Checkout only this repository
         uses: actions/checkout@v4
@@ -155,7 +158,7 @@ jobs:
           if ($zip.Count -ne 1 -or $bootstrap.Count -ne 1) { throw 'Exact validated ZIP/bootstrap artifacts are missing.' }
           if ($zip[0].Name -cne "TailscaleQuickRepair-$env:VERSION.zip" -or $bootstrap[0].Name -cne "TailscaleQuickRepair-Bootstrap-$env:VERSION.exe") { throw 'Release artifact version mismatch.' }
           $files = @($zip[0], $bootstrap[0])
-          if ($env:REQUIRES_SETUP -eq 'true') {
+          if ($env:BUILD_SETUP -eq 'true') {
             $setupZip = @(Get-ChildItem dist -Filter 'TailscaleQuickRepair-SetupPackage-*.zip' -File)
             $setupExe = @(Get-ChildItem dist -Filter 'TailscaleQuickRepair-Setup-*.exe' -File)
             if ($setupZip.Count -ne 1 -or $setupExe.Count -ne 1) { throw 'Exact Setup assets are missing.' }
@@ -191,7 +194,7 @@ jobs:
           $zip = Get-ChildItem dist -Filter 'TailscaleQuickRepair-*.zip' -File | Where-Object { $_.Name -notlike '*SetupPackage*' } | Select-Object -First 1
           $bootstrap = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Bootstrap-*.exe' -File | Select-Object -First 1
           $assets = @($zip,(Get-Item ($zip.FullName + '.sha256')),$bootstrap,(Get-Item ($bootstrap.FullName + '.sha256')))
-          if ($env:REQUIRES_SETUP -eq 'true') {
+          if ($env:BUILD_SETUP -eq 'true') {
             $setupZip = Get-ChildItem dist -Filter 'TailscaleQuickRepair-SetupPackage-*.zip' -File | Select-Object -First 1
             $setupExe = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Setup-*.exe' -File | Select-Object -First 1
             $assets += @($setupZip,(Get-Item ($setupZip.FullName + '.sha256')),$setupExe,(Get-Item ($setupExe.FullName + '.sha256')))
@@ -286,7 +289,7 @@ jobs:
               size = [int64]$bootstrap.Length
             }
           }
-          if ($env:REQUIRES_SETUP -eq 'true') {
+          if ($env:BUILD_SETUP -eq 'true') {
             $setupZip = Get-ChildItem dist -Filter 'TailscaleQuickRepair-SetupPackage-*.zip' -File | Select-Object -First 1
             $setupExe = Get-ChildItem dist -Filter 'TailscaleQuickRepair-Setup-*.exe' -File | Select-Object -First 1
             $setupSha = (Get-Content ($setupZip.FullName + '.sha256') -Raw).Trim().ToLowerInvariant()
