@@ -2,7 +2,7 @@ name: Prepare and verify 3.4.2 hardening
 on:
   push:
     branches: [fix/3.4.2-package-and-runtime-guards]
-    paths: [.github/workflows/prepare-hardening.yml, release/prepare-3.4.2.py]
+    paths: [.github/workflows/prepare-hardening.yml, release/prepare-3.4.2.py, release/test-packaged-runtime.ps1, release/write-integrity-manifest.ps1, src/native/OperationGate.cs, .gitattributes]
 jobs:
   verify:
     runs-on: windows-latest
@@ -24,6 +24,8 @@ jobs:
           python -m py_compile release/prepare-3.4.2.py
           python release/prepare-3.4.2.py
           if ($LASTEXITCODE -ne 0) { throw 'Source preparation failed.' }
+          New-Item -ItemType Directory -Path test-evidence -Force | Out-Null
+          git diff -- src release .github/workflows/release.yml version.json > test-evidence/prepared-source.patch
       - name: Privacy and personal-data preflight
         shell: powershell
         run: .\release\privacy-scan.ps1 -Root .
@@ -73,7 +75,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hardening-native-evidence
-          path: test-evidence/*.json
+          path: test-evidence/*
           if-no-files-found: warn
       - name: Preserve validated development packages
         if: success()
