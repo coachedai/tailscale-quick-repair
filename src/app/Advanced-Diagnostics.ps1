@@ -3,238 +3,91 @@ param(
     [Parameter(Mandatory=$true)][string]$OutputPath,
     [Parameter(Mandatory=$true)][string]$RunId
 )
-
-$ErrorActionPreference = 'SilentlyContinue'
-
-$script:Result = [ordered]@{
-    runId = $RunId
-    done = $false
-    phase = 'Starting'
-    progress = 2
-    severity = 'checking'
-    summary = 'Preparing advanced diagnostics.'
-    udp = 'Unknown'
-    ipv4 = 'Unknown'
-    ipv6 = 'Unknown'
-    nearestDerp = 'Unknown'
-    mapping = 'Unknown'
-    portMapping = 'Unknown'
-    path = 'Unknown'
-    latency = 'Unknown'
-    disco = 'Unknown'
-    tsmp = 'Unknown'
-    icmp = 'Unknown'
-    peerApi = 'Unknown'
-    otherVpns = @()
-    error = ''
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+$clock=[Diagnostics.Stopwatch]::StartNew()
+$script:Result=[ordered]@{
+    schema=2;runId=$RunId;done=$false;phase='Starting';progress=2;severity='checking'
+    summary='Preparing read-only diagnostics.';detail='';updatedUtc=[DateTime]::UtcNow.ToString('o');durationSeconds=0
+    udp='Unknown';ipv4='Unknown';ipv6='Unknown';nearestDerp='Unknown';mapping='Unknown';portMapping='Unknown'
+    netcheckStatus='Incomplete';path='Unknown';latency='Unknown';disco='Unknown';tsmp='Unknown';icmp='Unknown';peerApi='Unknown'
+    otherVpns=@();error=''
 }
-
 function Publish {
-    param(
-        [string]$Phase,
-        [int]$Progress,
-        [bool]$Done = $false,
-        [string]$Severity = 'checking',
-        [string]$Summary = ''
-    )
-
-    $script:Result.phase = $Phase
-    $script:Result.progress = $Progress
-    $script:Result.done = $Done
-    $script:Result.severity = $Severity
-
-    if ($Summary) {
-        $script:Result.summary = $Summary
-    }
-
+    param([string]$Phase,[int]$Progress,[bool]$Done=$false,[string]$Severity='checking',[string]$Summary='')
+    $script:Result.phase=$Phase;$script:Result.progress=$Progress;$script:Result.done=$Done;$script:Result.severity=$Severity
+    $script:Result.updatedUtc=[DateTime]::UtcNow.ToString('o')
+    $script:Result.durationSeconds=[Math]::Round($clock.Elapsed.TotalSeconds,1)
+    if($Summary){$script:Result.summary=$Summary}
+    $temp=$OutputPath+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
     try {
-        $tmp = $OutputPath + '.tmp'
-        $script:Result |
-            ConvertTo-Json -Depth 6 -Compress |
-            Set-Content -LiteralPath $tmp -Encoding UTF8
-        Move-Item -LiteralPath $tmp -Destination $OutputPath -Force
-    }
-    catch {}
+        $bytes=[Text.Encoding]::UTF8.GetBytes(($script:Result|ConvertTo-Json -Depth 6 -Compress))
+        $stream=[IO.File]::Open($temp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        try {$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)} finally {$stream.Dispose()}
+        if(Test-Path -LiteralPath $OutputPath){[IO.File]::Replace($temp,$OutputPath,$null)}
+        else{[IO.File]::Move($temp,$OutputPath)}
+    } catch {} finally {if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue}}
 }
-
 function Get-TailscaleCli {
-    $candidates = @(
-        "$env:ProgramFiles\Tailscale\tailscale.exe",
-        "${env:ProgramFiles(x86)}\Tailscale\tailscale.exe",
-        "$env:LOCALAPPDATA\Tailscale\tailscale.exe"
-    )
-
-    foreach ($candidate in $candidates) {
-        if ($candidate -and (Test-Path -LiteralPath $candidate)) {
-            return $candidate
-        }
+    foreach($candidate in @("$env:ProgramFiles\Tailscale\tailscale.exe","${env:ProgramFiles(x86)}\Tailscale\tailscale.exe","$env:LOCALAPPDATA\Tailscale\tailscale.exe")) {
+        if($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)){return $candidate}
     }
-
-    $command = Get-Command tailscale.exe -ErrorAction SilentlyContinue
-    if ($command) { return $command.Source }
+    $command=Get-Command tailscale.exe -CommandType Application -ErrorAction SilentlyContinue
+    if($command){return $command.Source}
     return $null
 }
-
-function Invoke-TailscalePing {
-    param(
-        [string]$Cli,
-        [string]$PeerAddress,
-        [ValidateSet('disco','tsmp','icmp','peerapi')]
-        [string]$Type
-    )
-
-    try {
-        switch ($Type) {
-            'tsmp'    { $lines = & $Cli ping '--tsmp' '--c=1' '--timeout=3s' $PeerAddress 2>&1 }
-            'icmp'    { $lines = & $Cli ping '--icmp' '--c=1' '--timeout=3s' $PeerAddress 2>&1 }
-            'peerapi' { $lines = & $Cli ping '--peerapi' '--c=1' '--timeout=3s' $PeerAddress 2>&1 }
-            default   { $lines = & $Cli ping '--until-direct=false' '--c=1' '--timeout=3s' $PeerAddress 2>&1 }
-        }
-
-        return [pscustomobject]@{
-            ExitCode = $LASTEXITCODE
-            Output = (($lines | Out-String).Trim())
-        }
-    }
-    catch {
-        return [pscustomobject]@{
-            ExitCode = -1
-            Output = $_.Exception.Message
-        }
-    }
+function Read-Probe {
+    param([string]$Cli,[string]$Type,[int]$LimitMs=3000)
+    $remaining=20000-[int]$clock.Elapsed.TotalMilliseconds
+    if($remaining -lt 100){$r=New-Object Tqr.DiagnosticCommand;$r.TimedOut=$true;return $r}
+    return [Tqr.DiagnosticAnalysis]::Run($Cli,$Type,$Peer,[Math]::Min($LimitMs,$remaining))
 }
-
-function Parse-Netcheck {
-    param([string]$Text)
-
-    foreach ($raw in @($Text -split "`r?`n")) {
-        $line = $raw.Trim()
-
-        if ($line -match '^\*\s*UDP:\s*(.+)$') {
-            $script:Result.udp = if ($Matches[1] -match '^(?i:true|yes)') { 'Available' } else { 'Unavailable' }
-            continue
-        }
-
-        if ($line -match '^\*\s*IPv4:\s*(.+)$') {
-            $script:Result.ipv4 = if ($Matches[1] -match '^(?i:no|false)') { 'Unavailable' } else { 'Available' }
-            continue
-        }
-
-        if ($line -match '^\*\s*IPv6:\s*(.+)$') {
-            $script:Result.ipv6 = if ($Matches[1] -match '^(?i:no|false)') { 'Unavailable' } else { 'Available' }
-            continue
-        }
-
-        if ($line -match '^\*\s*Nearest DERP:\s*(.+)$') {
-            $script:Result.nearestDerp = $Matches[1].Trim()
-            continue
-        }
-
-        if ($line -match '^\*\s*MappingVariesByDestIP:\s*(true|false)') {
-            $script:Result.mapping = if ($Matches[1] -eq 'true') { 'Varies by destination' } else { 'Stable mapping' }
-            continue
-        }
-
-        if ($line -match '^\*\s*PortMapping:\s*(.*)$') {
-            $value = $Matches[1].Trim()
-            $script:Result.portMapping = if ($value) { $value } else { 'None detected' }
-        }
-    }
-}
-
-function Summarize-Ping {
-    param($Ping)
-
-    if (-not $Ping) { return 'Unknown' }
-    if ($Ping.ExitCode -eq 0) { return 'Reachable' }
-    if ($Ping.Output -match '(?i)timeout|timed out|no reply|no response') { return 'Timed out' }
-    if ($Ping.Output) { return 'Unavailable' }
-    return 'Unknown'
-}
-
 function Detect-OtherVpns {
-    $names = [ordered]@{
-        'ProtonVPN' = @('protonvpn','protonvpnservice')
-        'NordVPN' = @('nordvpn','nordvpn-service')
-        'WireGuard' = @('wireguard')
-        'OpenVPN' = @('openvpn','openvpnservice')
-        'Mullvad' = @('mullvad','mullvad-daemon')
+    # Presence only: installed services do not prove a VPN is connected or conflicting.
+    $known=[ordered]@{
+        ProtonVPN=@('protonvpn','protonvpnservice');NordVPN=@('nordvpn','nordvpn-service')
+        WireGuard=@('wireguard');OpenVPN=@('openvpn','openvpnservice');Mullvad=@('mullvad','mullvad-daemon')
     }
-
-    $found = @()
-
-    foreach ($label in $names.Keys) {
-        foreach ($name in $names[$label]) {
-            $hasProcess = [bool](Get-Process -Name $name -ErrorAction SilentlyContinue)
-            $hasService = [bool](Get-Service -Name $name -ErrorAction SilentlyContinue)
-
-            if ($hasProcess -or $hasService) {
-                $found += $label
-                break
+    $found=@()
+    foreach($label in $known.Keys){
+        foreach($name in $known[$label]){
+            if((Get-Process -Name $name -ErrorAction SilentlyContinue) -or (Get-Service -Name $name -ErrorAction SilentlyContinue)){
+                $found+=$label;break
             }
         }
     }
-
-    return @($found | Select-Object -Unique)
+    return $found
 }
-
 try {
     Publish 'Finding Tailscale' 5
-
-    $cli = Get-TailscaleCli
-    if (-not $cli) {
-        $script:Result.error = 'tailscale.exe could not be found.'
-        Publish 'Complete' 100 $true 'bad' 'Tailscale CLI could not be found.'
-        exit
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
     }
-
-    Publish 'Inspecting network conditions' 18
-
-    try {
-        $netcheck = & $cli netcheck 2>&1 | Out-String
-        if ($netcheck) { Parse-Netcheck $netcheck }
-    }
-    catch {}
-
-    Publish 'Checking direct path' 42
-
-    $disco = Invoke-TailscalePing -Cli $cli -PeerAddress $Peer -Type disco
-    $script:Result.disco = Summarize-Ping $disco
-
-    if ($disco.Output -match '(?i)via DERP\(([^)]+)\)') {
-        $script:Result.path = 'Relay · ' + $Matches[1]
-    }
-    elseif ($disco.Output -match '(?i)direct') {
-        $script:Result.path = 'Direct'
-    }
-
-    if ($disco.Output -match '(?i)([0-9]+(?:\.[0-9]+)?)ms') {
-        $roundedLatency = [Math]::Round([double]$Matches[1])
-        $script:Result.latency = ([string]$roundedLatency) + ' ms'
-    }
-
-    Publish 'Checking peer protocols' 62
-
-    $script:Result.tsmp = Summarize-Ping (Invoke-TailscalePing -Cli $cli -PeerAddress $Peer -Type tsmp)
-    $script:Result.icmp = Summarize-Ping (Invoke-TailscalePing -Cli $cli -PeerAddress $Peer -Type icmp)
-    $script:Result.peerApi = Summarize-Ping (Invoke-TailscalePing -Cli $cli -PeerAddress $Peer -Type peerapi)
-
-    Publish 'Checking local VPN environment' 82
-    $script:Result.otherVpns = @(Detect-OtherVpns)
-
-    $issues = @()
-    if ($script:Result.udp -eq 'Unavailable') { $issues += 'UDP unavailable' }
-    if ($script:Result.path -like 'Relay*') { $issues += 'peer is relayed' }
-    if ($script:Result.disco -ne 'Reachable') { $issues += 'peer path did not answer' }
-
-    if ($issues.Count -gt 0) {
-        Publish 'Complete' 100 $true 'warn' ($issues -join ' · ')
-    }
-    else {
-        Publish 'Complete' 100 $true 'good' 'Advanced diagnostics found no obvious connection issue.'
-    }
-}
-catch {
-    $script:Result.error = $_.Exception.Message
-    Publish 'Complete' 100 $true 'bad' 'Advanced diagnostics could not complete.'
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
 }
