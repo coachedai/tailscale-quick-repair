@@ -91,6 +91,7 @@ function Publish-State {
         mode          = $Mode
         phase         = $Phase
         done          = $Done
+        repairPerformed = [bool]$script:RepairPerformed
         client        = $script:Diag.client
         service       = $script:Diag.service
         startup       = $script:Diag.startup

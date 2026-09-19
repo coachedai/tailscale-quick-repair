@@ -106,6 +106,9 @@ internal static class Program
                 }
             }
 
+            if (manifest.RequiresSetup)
+                throw new InvalidOperationException("This release updates protected components. Open Quick Repair and use Update now, or run the release Setup installer. The ordinary package was not applied.");
+
             PreserveLocalPeerConfiguration();
 
             if (currentPid > 0)
@@ -241,6 +244,11 @@ internal static class Program
         result.Version = ReadString(root, "version");
         result.VersionCode = ReadLong(root, "versionCode");
         result.Notes = ReadString(root, "notes");
+        object requiresSetup;
+        if (root.TryGetValue("requiresSetup", out requiresSetup)) {
+            if (!(requiresSetup is bool)) throw new InvalidDataException("Protected-update metadata is invalid.");
+            result.RequiresSetup = (bool)requiresSetup;
+        }
 
         if (!result.Published)
         {
@@ -939,6 +947,7 @@ internal static class Program
     private sealed class UpdateManifest
     {
         public bool Published;
+        public bool RequiresSetup;
         public string Version = String.Empty;
         public long VersionCode;
         public string Notes = String.Empty;

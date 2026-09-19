@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase3.4.2",
-  "versionCode": 30000442,
+  "version": "3.0.0-phase3.5.1",
+  "versionCode": 30000451,
   "requiresSetup": true,
   "publicInstaller": true,
-  "notes": "Package parity and reliability hardening. Both delivery paths now include release-matched Guardian metadata and the same full UI. Baselines are replaced atomically with one local predecessor, and damaged records are preserved. A shared coordinator serializes ownership changes, never expires a live owner, preserves uncertain markers, and prevents rejected repair attempts from overwriting another result. Native Windows packaged-Guardian and cross-process regression gates are required before publishing. No Tailscale recovery algorithm or broad network reset changes."
+  "notes": "Local Health History: bounded privacy-safe typed events across restarts inside Activity, with atomic writes and visible non-critical failures. History retains 40 events up to 30 days without IPs, device names or raw logs. Protected update routing is exercised on native Windows; the ordinary updater now refuses a protected release rather than silently updating only app files. Existing Guardian and targeted repair behavior retained."
 }

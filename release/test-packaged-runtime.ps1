@@ -70,6 +70,12 @@ try {
         $n.Expression.Extent.Text -ceq '$GuardianCheckButton' -and $n.Member.Value -eq 'Add_Click'
     },$true))
     Assert-That ($handlerNodes.Count -eq 1) 'Exactly one delivered Guardian click handler'
+    # History is a real packaged dependency of Guardian; do not stub it away.
+    foreach ($name in @('Initialize-LocalHistory','Write-LocalHistoryEvent')) {
+        $functions=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true))
+        Assert-That ($functions.Count -eq 1) "Packaged history dependency exists: $name"
+        . ([scriptblock]::Create($functions[0].Extent.Text))
+    }
     $handler=$handlerNodes[0].Arguments[0].ScriptBlock.GetScriptBlock()
     $xamlMatch=[regex]::Match($normalUi,'(?s)\[xml\]\$xaml\s*=\s*@"\r?\n(?<xaml>.*?)\r?\n"@')
     Assert-That $xamlMatch.Success 'Final packaged main XAML is present'
@@ -233,6 +239,9 @@ try {
     $rejected=$false
     try {$lease.Dispose()} catch {$rejected=$true}
     Assert-That ($rejected -and (Test-Path $marker)) 'An old lease cannot delete a replacement owner marker'
+    & (Join-Path $PSScriptRoot 'test-backend-report.ps1') -BackendPath (Join-Path $setup 'program\Repair-Backend.ps1') -EvidenceDirectory $EvidenceDirectory
+    & (Join-Path $PSScriptRoot 'test-local-history.ps1') -Dll $dll -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -EvidenceDirectory $EvidenceDirectory
+    & (Join-Path $PSScriptRoot 'test-update-routing.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -EvidenceDirectory $EvidenceDirectory
     Json-Write (Join-Path $EvidenceDirectory 'native-results.json') @{passed=$true;runtime='Windows PowerShell 5.1 / WPF / .NET Framework';scope='Packaged Guardian event and real process ownership; OS integration probes are fixture stubs';cases=$script:results.ToArray()}
     Write-Host "Native package gates passed: $($script:results.Count) assertions."
 } catch {

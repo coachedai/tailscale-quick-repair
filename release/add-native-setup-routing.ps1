@@ -138,7 +138,8 @@ try {
     $libraryArgs = @('/nologo','/target:library','/platform:anycpu','/optimize+',
         ('/out:"{0}"' -f $operationsDll),
         ('/reference:"{0}"' -f (Join-Path $frameworkDir 'System.Web.Extensions.dll')),
-        ('"{0}"' -f (Join-Path $repo 'src\native\OperationGate.cs')))
+        ('"{0}"' -f (Join-Path $repo 'src\native\OperationGate.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\LocalHistory.cs')))
     $libraryBuild = Start-Process -FilePath $compiler -ArgumentList ($libraryArgs -join ' ') `
         -RedirectStandardOutput $compileOut -RedirectStandardError $compileErr -WindowStyle Hidden -Wait -PassThru
     if ($libraryBuild.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $operationsDll)) {
@@ -180,11 +181,16 @@ try {
         }
 
         $requiresSetup = $false
-        try {
-            if ($script:updateManifest.PSObject.Properties.Name -contains 'requiresSetup') {
-                $requiresSetup = [bool]$script:updateManifest.requiresSetup
+        if ($script:updateManifest.PSObject.Properties.Name -contains 'requiresSetup') {
+            if ($script:updateManifest.requiresSetup -isnot [bool]) {
+                $UpdateStatusText.Text = 'Update metadata is invalid'
+                $UpdateStatusText.Foreground = Get-Brush 'Amber'
+                $UpdateDetailText.Text = 'The update type could not be verified. Nothing was changed.'
+                $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
+                return
             }
-        } catch {}
+            $requiresSetup = $script:updateManifest.requiresSetup
+        }
 
         if ($requiresSetup) {
             if (-not (Test-Path -LiteralPath $SetupHostPath)) {
@@ -326,6 +332,7 @@ try {
 
     $utf8Bom = New-Object System.Text.UTF8Encoding($true)
     [IO.File]::WriteAllText($uiPath,$ui,$utf8Bom)
+    & (Join-Path $PSScriptRoot 'add-local-history.ps1') -Path $uiPath
 
     $version = Get-Content -LiteralPath $versionPath -Raw | ConvertFrom-Json
 

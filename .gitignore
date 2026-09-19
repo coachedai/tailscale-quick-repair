@@ -33,3 +33,6 @@ UpdateRollback/
 # Local editor files
 .vscode/
 .idea/
+
+# Local history, never source or release payload
+health-history*
