@@ -37,10 +37,36 @@ else
                         if (Interlocked.CompareExchange(ref completedReaders, 0, 0) < 2) clipped = true;
                     }
 '@
+$visualPath=Join-Path $PSScriptRoot 'test-diagnostics-polish.ps1';$visual=[IO.File]::ReadAllText($visualPath)
+$visual=Replace-Reviewed $visual @'
+    function Settle-Layout {
+        $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
+        $window.UpdateLayout()
+    }
+'@ @'
+    function Settle-Layout {
+        # ScrollViewer applies queued commands over multiple layout passes.
+        for($pass=0;$pass -lt 8;$pass++){
+            $window.UpdateLayout()
+            $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
+            [Threading.Thread]::Sleep(8)
+        }
+    }
+'@
+$visual=Replace-Reviewed $visual @'
+    $HistoryPanel.ScrollToEnd();Settle-Layout
+    Check ($HistoryPanel.VerticalOffset -gt 0) 'History can scroll to the oldest retained event'
+'@ @'
+    $HistoryPanel.ScrollToEnd();Settle-Layout
+    $presenter=$HistoryPanel.Template.FindName('PART_ScrollContentPresenter',$HistoryPanel)
+    [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'history-scroll-end.json'),(@{offset=$HistoryPanel.VerticalOffset;presenterOffset=$presenter.VerticalOffset;canScroll=$presenter.CanVerticallyScroll;ownerMatches=[object]::ReferenceEquals($presenter.ScrollOwner,$HistoryPanel);barValue=$bar.Value}|ConvertTo-Json))
+    Save-HistoryImage 'history-scroll-end.png'
+    Check ($HistoryPanel.VerticalOffset -gt 0) 'History can scroll to the oldest retained event'
+'@
 $v.version='3.0.0-phase5.1.1';$v.versionCode=[int64]30000611
 $publish=[ordered]@{publish=$false;channel='preview';version=$v.version;versionCode=$v.versionCode;requiresSetup=$false;publicInstaller=$true;notes='Diagnostics 2.0 foundation and History polish. History has a slim rounded theme-aware scrollbar with standard scrolling retained, and opens at the newest events. Optional diagnostics now recognize direct endpoint replies, DERP and peer-relay paths, explain independent probe results without inventing a connection failure, and bound CLI execution/output. Raw command output and endpoints are not saved. The unprivileged diagnostics worker is delivered with ordinary updates: five app files are verified, six for Setup. No Tailscale recovery, protected worker, notification preference or network setting changes. Existing native suites plus diagnostic/scroll rendering gates are required.'}
 $utf8=New-Object Text.UTF8Encoding($false)
-foreach($entry in @(@($path,$route),@($writerPath,$writer),@($testPath,$test),@($analysisPath,$analysis))){[IO.File]::WriteAllText($entry[0],$entry[1],$utf8)}
+foreach($entry in @(@($path,$route),@($writerPath,$writer),@($testPath,$test),@($analysisPath,$analysis),@($visualPath,$visual))){[IO.File]::WriteAllText($entry[0],$entry[1],$utf8)}
 [IO.File]::WriteAllText($vp,($v|ConvertTo-Json -Depth 8),$utf8)
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'publish.json'),($publish|ConvertTo-Json -Depth 8),$utf8)
 Write-Host 'Diagnostics/History source integration prepared; publication remains disabled.'
