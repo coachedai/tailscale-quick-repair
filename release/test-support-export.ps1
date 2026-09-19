@@ -89,7 +89,7 @@ try{
     $window=[Windows.Markup.XamlReader]::Load($reader);$reader.Close()
     $window.WindowState='Normal';$window.WindowStartupLocation='Manual';$window.Left=30;$window.Top=30
     $window.Width=1100;$window.Height=850;$window.ShowInTaskbar=$false;$window.Show()
-    Add-Type -ReferencedAssemblies @('PresentationFramework','WindowsBase') -TypeDefinition @'
+    Add-Type -ReferencedAssemblies @('PresentationFramework','PresentationCore','WindowsBase','System.Xaml') -TypeDefinition @'
 using System;
 using System.Windows;
 using System.Windows.Threading;

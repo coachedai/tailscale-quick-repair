@@ -1,9 +1,9 @@
 {
-  "publish": false,
-  "channel": "preview",
-  "version": "3.0.0-phase5.1.2",
-  "versionCode": 30000612,
-  "requiresSetup": false,
-  "publicInstaller": true,
-  "notes": "Repeated-check progress fix. Previous completed results cannot repaint a new main check: embedded UTC timestamps, preserved watermarks and current-worker attachment boundaries exclude stale state before any rendering or History side effects. Diagnostics reset their measured fill before startup and retain prior result evidence behind a new run ID. The scoped diagnostic progress template has no completion animation. History scrollbar, Diagnostics 2.0, notifications and repair decisions are retained. Native repeated-click, state-file and rendered-progress tests join all existing release gates."
+    "publish":  false,
+    "channel":  "preview",
+    "version":  "3.0.0-phase5.2.1",
+    "versionCode":  30000621,
+    "requiresSetup":  false,
+    "publicInstaller":  true,
+    "notes":  "Privacy-safe support export. The existing diagnostic Copy report action becomes Share report: preview a frozen allowlisted snapshot, optionally include ten typed history events, then copy or save a new local .txt file. No addresses, device names, paths, raw logs, tokens or automatic upload. Pending/stale/missing observations are labelled rather than promoted to fresh results. Existing files are never overwritten by export. Five-file ordinary update, with no protected worker or network changes. Existing regression suites plus privacy-injection, native preview and save tests remain required."
 }

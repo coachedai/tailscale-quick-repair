@@ -142,7 +142,13 @@ try {
         ('"{0}"' -f (Join-Path $repo 'src\native\LocalHistory.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\ConnectionQuality.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\SmartNotifications.cs')),
-        ('"{0}"' -f (Join-Path $repo 'src\native\DiagnosticAnalysis.cs')))
+        ('"{0}"' -f (Join-Path $repo 'src\native\DiagnosticAnalysis.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\SupportReport.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\SupportReportWindow.cs')))
+    Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Xaml
+    foreach($assembly in @([Windows.Window].Assembly,[Windows.Media.Brush].Assembly,[Windows.DependencyObject].Assembly,[System.Xaml.XamlServices].Assembly)){
+        $libraryArgs += ('/reference:"{0}"' -f $assembly.Location)
+    }
     $libraryBuild = Start-Process -FilePath $compiler -ArgumentList ($libraryArgs -join ' ') `
         -RedirectStandardOutput $compileOut -RedirectStandardError $compileErr -WindowStyle Hidden -Wait -PassThru
     if ($libraryBuild.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $operationsDll)) {
@@ -341,6 +347,7 @@ try {
     & $notificationTransform -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-diagnostics-polish.ps1') -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-progress-reset.ps1') -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-support-export.ps1') -Path $uiPath
     Copy-Item -LiteralPath (Join-Path $repo 'src\app\Advanced-Diagnostics.ps1') -Destination (Join-Path $appDir 'Advanced-Diagnostics.ps1') -Force
 
     $version = Get-Content -LiteralPath $versionPath -Raw | ConvertFrom-Json
