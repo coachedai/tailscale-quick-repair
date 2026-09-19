@@ -1,0 +1,63 @@
+name: History development verification
+on:
+  push:
+    branches: [work/3.5-history]
+    paths: [src/**, release/**, docs/**, version.json, .github/workflows/history-development.yml]
+permissions:
+  contents: read
+concurrency:
+  group: tqr-history-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require repository identity and unpublished development
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne 'coachedai/tailscale-quick-repair' -or $env:GITHUB_REF_NAME -ne 'work/3.5-history') { throw 'Wrong repository or branch.' }
+          if ((git remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?$') { throw 'Wrong origin.' }
+          if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) { throw 'Checkout changed.' }
+          if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Development must not enable publication.' }
+      - name: Privacy and isolation preflight
+        shell: powershell
+        run: .\release\privacy-scan.ps1 -Root .
+      - name: Preserve tracked public source for exact local review
+        shell: pwsh
+        run: |
+          git archive --format=zip --output=source-review.zip HEAD src release docs .github version.json .gitattributes .gitignore README.md
+          if ($LASTEXITCODE -ne 0) { throw 'Source archive failed.' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-review
+          path: source-review.zip
+          if-no-files-found: error
+      - name: Build both delivery paths
+        shell: powershell
+        run: |
+          .\release\build.ps1 -OutputDirectory .\dist
+          .\release\finalize-package.ps1 -OutputDirectory .\dist
+          .\release\add-native-setup-routing.ps1 -OutputDirectory .\dist
+          .\release\build-public.ps1 -OutputDirectory .\dist-public
+          Copy-Item .\dist-public\* .\dist\ -Force
+      - name: Native packaged regression gates
+        shell: powershell
+        run: .\release\test-packaged-runtime.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Preserve runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-evidence
+          path: test-evidence/*.json
+          if-no-files-found: warn
+      - name: Preserve validated development packages
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validated-packages
+          path: dist/*
+          if-no-files-found: error
