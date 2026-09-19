@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 public static class TqrScrollEvidence
 {
@@ -17,6 +18,13 @@ public static class TqrScrollEvidence
         viewer.ScrollChanged += observer;
         try
         {
+            trace.Add("Window: visible=" + window.IsVisible + " loaded=" + window.IsLoaded + " state=" + window.WindowState);
+            trace.Add("Same named viewer: " + Object.ReferenceEquals(window.FindName("HistoryPanel"),viewer));
+            for (DependencyObject node=viewer; node!=null; node=VisualTreeHelper.GetParent(node))
+            {
+                FrameworkElement element=node as FrameworkElement;
+                if(element!=null) trace.Add("Ancestor " + element.GetType().Name + " " + element.Name + " visibility="+element.Visibility+" loaded="+element.IsLoaded+" visible="+element.IsVisible+" sameWindow="+Object.ReferenceEquals(node,window));
+            }
             trace.Add("Before: visible=" + viewer.IsVisible + " loaded=" + viewer.IsLoaded + " enabled=" + viewer.IsEnabled + " offset=" + viewer.VerticalOffset);
             viewer.BringIntoView(); Pump();
             trace.Add("Brought into view: " + viewer.TranslatePoint(new Point(0,0),window));
