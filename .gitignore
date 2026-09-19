@@ -37,5 +37,7 @@ UpdateRollback/
 .vscode/
 .idea/
 
-# Local history, never source or release payload
+# Local history and exported reports, never source or release payload
 health-history*
+QuickRepair-report-*.txt
+sample-support-report.txt
