@@ -34,6 +34,8 @@ public class TqrRouteProbe {
     foreach($kind in @('protected','ordinary','invalid')) {
         [xml]$xaml=$xamlMatch.Groups['xaml'].Value
         $reader=New-Object Xml.XmlNodeReader $xaml;$window=[Windows.Markup.XamlReader]::Load($reader);$reader.Close()
+        $script:routeFixtureClosed=$false
+        $window.Add_Closed({$script:routeFixtureClosed=$true})
         $UpdateNowButton=$window.FindName('UpdateNowButton');$CheckForUpdatesButton=$window.FindName('CheckForUpdatesButton')
         $UpdateStatusText=$window.FindName('UpdateStatusText');$UpdateDetailText=$window.FindName('UpdateDetailText')
         $SetupHostPath=$stub;$UpdaterHostPath=$stub;$ProductVersionCode=[int64]1
@@ -57,9 +59,15 @@ public class TqrRouteProbe {
             if($kind -eq 'protected') { Check ($probeArgs.Count -eq 1 -and $probeArgs[0] -eq '--upgrade') 'Protected release invokes Setup --upgrade, not the ordinary updater' }
             else { Check ($probeArgs[0] -eq '--silent' -and $probeArgs -contains '--current-pid' -and $probeArgs -notcontains '--upgrade') 'Ordinary release invokes the normal native updater' }
         }
+        # The real updater callback posts Close at Background priority. Drain it
+        # while its fixture variables still exist; otherwise a later suite's WPF
+        # window could be closed by this dynamically scoped PowerShell delegate.
+        $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
+        if($kind -ne 'invalid') { Check $script:routeFixtureClosed "$kind updater deferred close completed in its own fixture" }
+        else { Check (-not $script:routeFixtureClosed) 'Invalid metadata leaves the app window open' }
         $window.Close()
     }
-    [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'update-routing-results.json'),(@{passed=$true;scope='Actual packaged WPF Update now event with harmless native executable fixture';cases=$cases.ToArray()}|ConvertTo-Json -Depth 8))
+    [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'update-routing-results.json'),(@{passed=$true;scope='Actual packaged WPF Update now event and deferred close with harmless native executable fixture';cases=$cases.ToArray()}|ConvertTo-Json -Depth 8))
 } catch {
     [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'update-routing-results.json'),(@{passed=$false;failure=$_.Exception.Message;cases=$cases.ToArray()}|ConvertTo-Json -Depth 8));throw
 } finally {$env:TQR_ROUTING_PROBE=$oldProbe}
