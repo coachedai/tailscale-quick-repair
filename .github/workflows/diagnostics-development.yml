@@ -46,11 +46,11 @@ jobs:
         shell: pwsh
         run: |
           if ((git branch --show-current).Trim() -ne 'work/5.1-diagnostics-polish') { throw 'Wrong branch.' }
-          git add -u -- release/add-native-setup-routing.ps1 release/write-integrity-manifest.ps1 release/test-packaged-runtime.ps1 src/native/DiagnosticAnalysis.cs release/publish.json version.json
+          git add -u -- release/add-native-setup-routing.ps1 release/write-integrity-manifest.ps1 release/test-packaged-runtime.ps1 release/test-diagnostics-polish.ps1 src/native/DiagnosticAnalysis.cs release/publish.json version.json
           $changes = @(git diff --cached --name-only)
           if ($changes.Count -eq 0) { Write-Host 'Current source passed.'; exit 0 }
           foreach ($p in $changes) {
-            if ($p -notin @('release/add-native-setup-routing.ps1','release/write-integrity-manifest.ps1','release/test-packaged-runtime.ps1','src/native/DiagnosticAnalysis.cs','release/publish.json','version.json')) { throw 'Unexpected staged path.' }
+            if ($p -notin @('release/add-native-setup-routing.ps1','release/write-integrity-manifest.ps1','release/test-packaged-runtime.ps1','release/test-diagnostics-polish.ps1','src/native/DiagnosticAnalysis.cs','release/publish.json','version.json')) { throw 'Unexpected staged path.' }
           }
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
