@@ -40,8 +40,6 @@ try{
     Check ([Tqr.DiagnosticAnalysis]::Explain($net,$direct,$unknown,$icmp,$api).Severity -eq 'warn') 'Discovery alone does not prove a working tunnel probe'
     Check ([Tqr.DiagnosticAnalysis]::Explain($net,$unknown,$unknown,$unknown,$unknown).Severity -eq 'warn') 'Missing evidence never becomes no obvious issue'
     Check (-not [Tqr.DiagnosticAnalysis]::ValidPeer('fixture" --extra') -and -not [Tqr.DiagnosticAnalysis]::ValidPeer('-other') -and [Tqr.DiagnosticAnalysis]::ValidPeer('fixture.example')) 'Peer arguments cannot introduce CLI switches or quotes'
-
-    # Actual child process tests, with a synthetic CLI. No live Tailscale call.
     $fake=Join-Path $root 'fixture-cli.exe'
     $fakeCode=@'
 using System;
@@ -76,6 +74,8 @@ public static class FixtureCli {
         Check ($cliNode.Count -eq 1) 'Worker CLI discovery has one injectable fixture boundary'
         $replacement="function Get-TailscaleCli { return '"+$fake.Replace("'","''")+"' }"
         $worker=$worker.Remove($cliNode[0].Extent.StartOffset,$cliNode[0].Extent.EndOffset-$cliNode[0].Extent.StartOffset).Insert($cliNode[0].Extent.StartOffset,$replacement)
+        # Retain exception detail ONLY in this synthetic worker; never change the installed worker's privacy policy.
+        $worker=$worker.Replace('$script:Result.error=''inspection_incomplete''','$script:Result.error=$_.Exception.GetType().FullName + '': '' + $_.Exception.Message')
         $workerFile=Join-Path $root 'Advanced-Diagnostics.ps1';[IO.File]::WriteAllText($workerFile,$worker)
         Copy-Item $LibraryPath (Join-Path $root 'TailscaleQuickRepair.Operations.dll')
         $state=Join-Path $root 'diagnostics-result.json'
@@ -85,10 +85,9 @@ public static class FixtureCli {
         $child=[Diagnostics.Process]::Start($psi)
         try{if(-not $child.WaitForExit(25000)){$child.Kill();throw 'Fixture worker timed out'};Check ($child.ExitCode -eq 0) 'Native worker completes without changing live network state'}finally{$child.Dispose()}
         $r=Get-Content $state -Raw | ConvertFrom-Json
-        Check ($r.done -and $r.schema -eq 2 -and $r.path -eq 'Direct' -and $r.severity -eq 'good' -and $r.runId -eq 'fixture-run') 'Actual worker writes the expected structured completed result'
+        Check ($r.done -and $r.schema -eq 2 -and $r.path -eq 'Direct' -and $r.severity -eq 'good' -and $r.runId -eq 'fixture-run') ("Actual worker writes the expected structured completed result; fixture reason: "+$r.error)
         Check ((Get-Content $state -Raw) -notmatch '127\.0\.0\.1|pong from|fixture-cli') 'Raw endpoints and CLI output are not persisted in the diagnostic report'
     }finally{$env:TQR_DIAG_TEST=$prior}
-
     $ui=[IO.File]::ReadAllText($UiPath,[Text.Encoding]::UTF8);$tk=$null;$er=$null
     $ast=[Management.Automation.Language.Parser]::ParseInput($ui,[ref]$tk,[ref]$er)
     Check ($er.Count -eq 0) 'Final themed UI parses on Windows PowerShell 5.1'
@@ -100,15 +99,7 @@ public static class FixtureCli {
     $HistoryText.Text=(1..40|ForEach-Object {"Event $_ - Connection check passed"}) -join "`n"
     $window.Width=1100;$window.Height=850;$window.Measure([Windows.Size]::new(1100,850));$window.Arrange([Windows.Rect]::new(0,0,1100,850));$window.UpdateLayout()
     $HistoryPanel.ApplyTemplate()|Out-Null;$HistoryPanel.UpdateLayout()
-    function Find-Child($Parent,[type]$Type){
-        for($i=0;$i -lt [Windows.Media.VisualTreeHelper]::GetChildrenCount($Parent);$i++){
-            $node=[Windows.Media.VisualTreeHelper]::GetChild($Parent,$i)
-            if($node -is $Type){return $node}
-            $found=Find-Child $node $Type;if($found){return $found}
-        }
-        return $null
-    }
-    $bar=Find-Child $HistoryPanel ([Windows.Controls.Primitives.ScrollBar]);$bar.ApplyTemplate()|Out-Null
+    $bar=$HistoryPanel.Template.FindName('PART_VerticalScrollBar',$HistoryPanel);$bar.ApplyTemplate()|Out-Null
     $track=$bar.Template.FindName('PART_Track',$bar)
     Check ($bar.Width -eq 12 -and $null -ne $track -and $track.Thumb.MinHeight -ge 28) 'History uses a slim themed scrollbar with a usable draggable thumb'
     Check ($bar.Background.Color.A -eq 0 -and $HistoryPanel.ScrollableHeight -gt 0) 'No white scrollbar rail is drawn and long history remains scrollable'
