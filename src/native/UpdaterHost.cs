@@ -26,110 +26,23 @@ internal static class Program
 
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
 
-    private static string GetOperationLockPath()
-    {
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "TailscaleQuickRepair",
-            "operation.lock"
-        );
-    }
-
-    private static bool IsProcessAlive(int pid)
-    {
-        if (pid <= 0) return false;
-        try
-        {
-            using (Process process = Process.GetProcessById(pid))
-            {
-                return !process.HasExited;
-            }
-        }
-        catch { return false; }
-    }
-
-    private static bool RemoveStaleOperationLock()
-    {
-        string path = GetOperationLockPath();
-        if (!File.Exists(path)) return true;
-
-        try
-        {
-            FileInfo file = new FileInfo(path);
-            if ((DateTime.UtcNow - file.LastWriteTimeUtc).TotalMinutes > 30)
-            {
-                File.Delete(path);
-                return true;
-            }
-
-            Dictionary<string, object> info = Json.Deserialize<Dictionary<string, object>>(File.ReadAllText(path, Encoding.UTF8));
-            int ownerPid = 0;
-            object raw;
-            if (info != null && info.TryGetValue("ownerPid", out raw))
-                Int32.TryParse(Convert.ToString(raw), out ownerPid);
-
-            if (IsProcessAlive(ownerPid)) return false;
-        }
-        catch
-        {
-            try
-            {
-                FileInfo file = new FileInfo(path);
-                if ((DateTime.UtcNow - file.LastWriteTimeUtc).TotalSeconds < 10) return false;
-            }
-            catch { }
-        }
-
-        try { File.Delete(path); return true; } catch { return false; }
-    }
+    private static Tqr.OperationLease operationLease;
 
     private static bool TryAcquireOperationLock(string kind)
     {
-        string path = GetOperationLockPath();
-        Directory.CreateDirectory(Path.GetDirectoryName(path));
-
-        for (int attempt = 0; attempt < 2; attempt++)
-        {
-            try
-            {
-                using (FileStream stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                {
-                    Dictionary<string, object> info = new Dictionary<string, object>();
-                    info["schema"] = 1;
-                    info["kind"] = kind;
-                    info["ownerPid"] = Process.GetCurrentProcess().Id;
-                    info["startedUtc"] = DateTime.UtcNow.ToString("o");
-                    info["expiresUtc"] = DateTime.UtcNow.AddMinutes(15).ToString("o");
-                    byte[] data = Encoding.UTF8.GetBytes(Json.Serialize(info));
-                    stream.Write(data, 0, data.Length);
-                    stream.Flush();
-                }
-                return true;
-            }
-            catch (IOException)
-            {
-                if (!RemoveStaleOperationLock()) return false;
-            }
-            catch { return false; }
-        }
-
-        return false;
+        operationLease = Tqr.OperationGate.TryAcquire(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "TailscaleQuickRepair"), kind);
+        return operationLease != null;
     }
 
     private static void ReleaseOperationLock()
     {
-        string path = GetOperationLockPath();
-        try
+        if (operationLease != null)
         {
-            if (!File.Exists(path)) return;
-            Dictionary<string, object> info = Json.Deserialize<Dictionary<string, object>>(File.ReadAllText(path, Encoding.UTF8));
-            object raw;
-            int ownerPid = 0;
-            if (info != null && info.TryGetValue("ownerPid", out raw))
-                Int32.TryParse(Convert.ToString(raw), out ownerPid);
-            if (ownerPid == Process.GetCurrentProcess().Id) File.Delete(path);
+            operationLease.Dispose();
+            operationLease = null;
         }
-        catch { }
     }
 
     [STAThread]

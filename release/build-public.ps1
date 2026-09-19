@@ -212,6 +212,7 @@ try {
     # then expand it into the complete fresh-install bundle.
     & (Join-Path $PSScriptRoot 'build.ps1') -OutputDirectory $baseOut
     & (Join-Path $PSScriptRoot 'finalize-package.ps1') -OutputDirectory $baseOut
+    & (Join-Path $PSScriptRoot 'add-native-setup-routing.ps1') -OutputDirectory $baseOut
 
     $baseZip = @(Get-ChildItem -LiteralPath $baseOut -Filter 'TailscaleQuickRepair-*.zip' -File)
     if ($baseZip.Count -ne 1) { throw "Expected one validated base update ZIP; found $($baseZip.Count)." }
@@ -229,7 +230,8 @@ try {
     Invoke-CSharpBuild -Output $setupHostInstalled `
         -Sources @(
             (Join-Path $repo 'src\native\PublicSetupHost.cs'),
-            (Join-Path $repo 'src\native\PublicSetupEntry.cs')
+            (Join-Path $repo 'src\native\PublicSetupEntry.cs'),
+            (Join-Path $repo 'src\native\OperationGate.cs')
         ) `
         -References @($webExtensions,$compression,$compressionFs,$windowsForms,$drawing) `
         -MainType 'PublicSetupEntry' -Icon $brandIcon
@@ -277,7 +279,8 @@ try {
     [IO.File]::WriteAllText((Join-Path $packageProgram 'Repair-Backend.ps1'),$backend,$utf8Bom)
 
     $uiPath = Join-Path $packageApp 'Tailscale-Repair-UI.ps1'
-    & (Join-Path $PSScriptRoot 'public-ui.ps1') -Path $uiPath -Version $version -VersionCode $versionCode
+    # Already transformed and routed in the shared base package; never apply twice.
+    Copy-Item (Join-Path $packageApp 'TailscaleQuickRepair.Operations.dll') (Join-Path $packageProgram 'TailscaleQuickRepair.Operations.dll') -Force
 
     [void][scriptblock]::Create([IO.File]::ReadAllText($uiPath,[Text.Encoding]::UTF8))
     foreach ($scriptPath in @(
@@ -305,6 +308,8 @@ try {
     }
 
     Copy-Item (Join-Path $repo 'version.json') (Join-Path $packageRoot 'version.json') -Force
+
+    & (Join-Path $PSScriptRoot 'write-integrity-manifest.ps1') -AppDirectory $packageApp -VersionPath (Join-Path $packageRoot 'version.json') -Profile 'setup'
 
     $entries = @(
         Get-ChildItem -LiteralPath $packageRoot -File -Recurse |

@@ -48,6 +48,7 @@ $UpdaterHostPath = Join-Path $StateDir 'TailscaleQuickRepairUpdater.exe'
 $UpdateInstallerPath = Join-Path $env:ProgramData 'TailscaleQuickRepair\Update-Installer.ps1'
 $UpdateResultPath = Join-Path $StateDir 'update-result.json'
 $OperationLockPath = Join-Path $StateDir 'operation.lock'
+$OperationsLibraryPath = Join-Path $StateDir 'TailscaleQuickRepair.Operations.dll'
 
 # ------------------------------------------------------------------
 # Single-instance behaviour.
@@ -2252,121 +2253,44 @@ try {
         }
     }
 
+    function Initialize-OperationGate {
+        if (-not ('Tqr.OperationGate' -as [type])) {
+            Add-Type -Path $OperationsLibraryPath -ErrorAction Stop
+        }
+    }
+
     function Get-ActiveOperationLock {
         param([switch]$RecoverStale)
-
-        if (-not (Test-Path -LiteralPath $OperationLockPath -PathType Leaf)) {
-            return $null
-        }
-
-        $item = $null
-        try { $item = Get-Item -LiteralPath $OperationLockPath -ErrorAction Stop } catch {}
-        $ageSeconds = if ($item) { [Math]::Max(0, ((Get-Date) - $item.LastWriteTime).TotalSeconds) } else { 0 }
-
-        $info = $null
         try {
-            $info = Get-Content -LiteralPath $OperationLockPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            Initialize-OperationGate
+            return [Tqr.OperationGate]::Inspect($StateDir)
         }
         catch {
-            if ($RecoverStale -and $ageSeconds -gt 10) {
-                try { Remove-Item -LiteralPath $OperationLockPath -Force -ErrorAction Stop } catch {}
-                Add-ReliabilityEvent 'Recovered an incomplete operation marker.'
-                return $null
-            }
-
-            return [pscustomobject]@{ kind = 'another Quick Repair operation'; ownerPid = 0 }
+            # Inspection never deletes a marker or treats an unreadable owner as idle.
+            return [pscustomobject]@{ kind = 'operation ownership verification'; ownerPid = 0 }
         }
-
-        $ownerPid = 0
-        try { $ownerPid = [int]$info.ownerPid } catch {}
-        $ownerAlive = $false
-
-        if ($ownerPid -gt 0) {
-            try {
-                $process = Get-Process -Id $ownerPid -ErrorAction Stop
-                $ownerAlive = -not $process.HasExited
-            }
-            catch {}
-        }
-
-        $stale = (-not $ownerAlive) -or ($ageSeconds -gt 1800)
-
-        if ($stale -and $RecoverStale) {
-            $kind = [string]$info.kind
-            try { Remove-Item -LiteralPath $OperationLockPath -Force -ErrorAction Stop } catch {}
-
-            if ([string]::IsNullOrWhiteSpace($kind)) { $kind = 'Quick Repair' }
-            Add-ReliabilityEvent "Recovered interrupted $kind operation state."
-            return $null
-        }
-
-        if ($stale) { return $null }
-        return $info
     }
 
     function Acquire-UiOperationLock {
-        param(
-            [Parameter(Mandatory=$true)][string]$Kind,
-            [int]$Minutes = 3
-        )
-
-        [void](Get-ActiveOperationLock -RecoverStale)
-
-        for ($attempt = 0; $attempt -lt 2; $attempt++) {
-            $stream = $null
-
-            try {
-                $stream = [IO.File]::Open(
-                    $OperationLockPath,
-                    [IO.FileMode]::CreateNew,
-                    [IO.FileAccess]::Write,
-                    [IO.FileShare]::None
-                )
-
-                $metadata = [ordered]@{
-                    schema = 1
-                    kind = $Kind
-                    ownerPid = $PID
-                    startedUtc = [DateTime]::UtcNow.ToString('o')
-                    expiresUtc = [DateTime]::UtcNow.AddMinutes($Minutes).ToString('o')
-                } | ConvertTo-Json -Compress
-
-                $bytes = [Text.Encoding]::UTF8.GetBytes($metadata)
-                $stream.Write($bytes,0,$bytes.Length)
-                $stream.Flush()
-                $script:uiOperationKind = $Kind
-                return $true
-            }
-            catch [IO.IOException] {
-                $active = Get-ActiveOperationLock -RecoverStale
-                if ($active) { return $false }
-            }
-            catch {
-                return $false
-            }
-            finally {
-                if ($stream) { try { $stream.Dispose() } catch {} }
-            }
+        param([Parameter(Mandatory=$true)][string]$Kind, [int]$Minutes = 3)
+        try {
+            Initialize-OperationGate
+            if ($script:uiOperationLease) { return $false }
+            $script:uiOperationLease = [Tqr.OperationGate]::TryAcquire($StateDir, $Kind)
+            if (-not $script:uiOperationLease) { return $false }
+            $script:uiOperationKind = $Kind
+            return $true
         }
-
-        return $false
+        catch { return $false }
     }
 
     function Release-UiOperationLock {
         param([string]$Kind = '')
-
-        try {
-            if (-not (Test-Path -LiteralPath $OperationLockPath -PathType Leaf)) { return }
-            $info = Get-Content -LiteralPath $OperationLockPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-            if ([int]$info.ownerPid -ne $PID) { return }
-            if ($Kind -and [string]$info.kind -ne $Kind) { return }
-            Remove-Item -LiteralPath $OperationLockPath -Force -ErrorAction Stop
-        }
-        catch {}
-
-        if (-not $Kind -or $script:uiOperationKind -eq $Kind) {
-            $script:uiOperationKind = ''
-        }
+        if (-not $script:uiOperationLease) { return }
+        if ($Kind -and $script:uiOperationLease.Kind -ne $Kind) { return }
+        $script:uiOperationLease.Dispose()
+        $script:uiOperationLease = $null
+        $script:uiOperationKind = ''
     }
 
     function Update-AutoRepairStatus {
@@ -4495,20 +4419,12 @@ try {
             return
         }
 
-        Remove-Item -LiteralPath $StateFile -Force -ErrorAction SilentlyContinue
+        # Preserve the previous result until the newly owned backend publishes.
 
         $script:lastAppliedStateWriteUtc = [DateTime]::MinValue
         $script:launchUtc = [DateTime]::UtcNow
 
-        $HeroDetail.Text = 'Checking the desktop client before starting the repair engine.'
-
-        $clientResult = Ensure-TailscaleClient
-
-        if ($clientResult -eq 'Started') {
-            Set-Badge $HeroBadge $HeroBadgeText 'REPAIRING' 'repairing'
-            $HeroTitle.Text = 'Opening Tailscale'
-            $HeroDetail.Text = 'The desktop client was closed, so it has been reopened automatically.'
-        }
+        $HeroDetail.Text = 'Starting the protected check.'
 
         try {
             [void](Invoke-RepairTask)
@@ -4612,6 +4528,17 @@ try {
 
             if ($script:repairActive) {
                 $taskState = Get-RepairTaskState
+
+                if ($taskState -notin @('Running','Queued') -and
+                    -not $script:lastFreshStateUtc -and
+                    ([DateTime]::UtcNow - $script:launchUtc).TotalSeconds -gt 4) {
+                    $script:repairActive = $false
+                    Set-Badge $HeroBadge $HeroBadgeText 'ATTENTION' 'warning'
+                    $HeroTitle.Text = 'The check did not start'
+                    $HeroDetail.Text = 'No new repair result was returned. Let any other Quick Repair operation finish, then try again.'
+                    Set-ActionButton 'Try Again' 'repair' $true
+                    return
+                }
 
                 if (
                     $taskState -ne 'Running' -and

@@ -476,13 +476,22 @@ $guardianEventNew = @'
         $issues = New-Object 'System.Collections.Generic.List[string]'
         $safeFixes = New-Object 'System.Collections.Generic.List[string]'
         $verifiedReleaseFiles = 0
+        $guardianLease = $null
         $integrityManifestSha256 = ''
         $snapshotEstablished = $false
         $snapshotConfirmed = $false
 
         try {
+            Initialize-OperationGate
+            $guardianLease = [Tqr.OperationGate]::TryAcquire($StateDir, 'integrity')
+            if (-not $guardianLease) {
+                $GuardianStatusText.Text = 'Waiting for another operation'
+                $GuardianDetailText.Text = 'Let the current Quick Repair operation finish, then check integrity again.'
+                return
+            }
             $requiredFiles = @(
                 $NativeHostPath,
+                $OperationsLibraryPath,
                 (Join-Path $StateDir 'Tailscale-Repair-UI.ps1'),
                 $UpdaterHostPath,
                 $SetupHostPath,
@@ -534,6 +543,8 @@ $guardianEventNew = @'
                     $integrityManifestSha256 = (Get-FileHash -LiteralPath $integrityManifestPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
 
                     if (
+                        [string]$integrityManifest.product -cne 'Tailscale Quick Repair' -or
+                        [string]$integrityManifest.version -cne $ProductVersion -or
                         [int]$integrityManifest.schema -ne 1 -or
                         [int64]$integrityManifest.versionCode -ne $ProductVersionCode -or
                         [string]$integrityManifest.algorithm -ne 'SHA256'
@@ -541,6 +552,19 @@ $guardianEventNew = @'
                         throw 'Release integrity metadata does not match this build.'
                     }
 
+                    $expectedNames = @('Tailscale-Repair-UI.ps1','TailscaleQuickRepairUpdater.exe','TailscaleQuickRepairSetup.exe','TailscaleQuickRepair.Operations.dll')
+                    if ([string]$integrityManifest.profile -eq 'setup') {
+                        $expectedNames += 'TailscaleQuickRepair.exe','Advanced-Diagnostics.ps1'
+                    }
+                    elseif ([string]$integrityManifest.profile -ne 'update') {
+                        throw 'Release integrity profile is unsupported.'
+                    }
+                    $fileNames = @($integrityManifest.files | ForEach-Object { [string]$_.path })
+                    if ($fileNames.Count -ne $expectedNames.Count -or
+                        @($fileNames | Sort-Object -Unique).Count -ne $expectedNames.Count -or
+                        @($fileNames | Where-Object { $_ -notin $expectedNames }).Count -ne 0) {
+                        throw 'Release integrity file coverage is incomplete or duplicated.'
+                    }
                     foreach ($entry in @($integrityManifest.files)) {
                         $name = [string]$entry.path
                         $expectedHash = ([string]$entry.sha256).ToLowerInvariant()
@@ -548,6 +572,7 @@ $guardianEventNew = @'
 
                         if (
                             [string]::IsNullOrWhiteSpace($name) -or
+                            $name -notin $expectedNames -or
                             $name -match '[\\/]' -or
                             $expectedHash.Length -ne 64 -or
                             $expectedHash -match '[^a-f0-9]' -or
@@ -562,6 +587,9 @@ $guardianEventNew = @'
                             continue
                         }
 
+                        if (((Get-Item -LiteralPath $candidate -ErrorAction Stop).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                            throw 'Release files cannot use a reparse point.'
+                        }
                         if ((Get-Item -LiteralPath $candidate -ErrorAction Stop).Length -ne $expectedSize) {
                             [void]$issues.Add("Release file size changed: $name")
                             continue
@@ -598,7 +626,7 @@ $guardianEventNew = @'
                     if ($startupValue -ieq $canonicalStartup) {
                         # Canonical and healthy.
                     }
-                    elseif ($startupValue -ieq $legacyStartup) {
+                    elseif ($startupValue -ieq $legacyStartup -and $issues.Count -eq 0) {
                         New-ItemProperty -Path $StartupRegistryPath -Name $StartupRegistryName -Value $canonicalStartup -PropertyType String -Force | Out-Null
                         [void]$safeFixes.Add('Windows startup command repaired.')
                     }
@@ -643,10 +671,18 @@ $guardianEventNew = @'
                 }
                 catch {
                     $snapshot = $null
-                    [void]$safeFixes.Add('Known-good snapshot rebuilt.')
+                    [void]$issues.Add('Known-good baseline could not be read. The previous record was preserved.')
                 }
             }
 
+            if ($snapshot -and (
+                [int]$snapshot.schema -ne 1 -or [int64]$snapshot.versionCode -le 0 -or
+                [int64]$snapshot.versionCode -gt $ProductVersionCode -or
+                ([string]$snapshot.integrityManifestSha256).Length -ne 64 -or
+                [string]$snapshot.integrityManifestSha256 -match '[^a-fA-F0-9]' -or
+                [int]$snapshot.verifiedReleaseFiles -le 0)) {
+                [void]$issues.Add('Known-good baseline metadata is invalid. The previous record was preserved.')
+            }
             if ($issues.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace($integrityManifestSha256)) {
                 if ($snapshot -and [int64]$snapshot.versionCode -eq $ProductVersionCode -and -not [string]::IsNullOrWhiteSpace([string]$snapshot.integrityManifestSha256) -and [string]$snapshot.integrityManifestSha256 -ne $integrityManifestSha256) {
                     [void]$issues.Add('Known-good release record changed unexpectedly.')
@@ -666,11 +702,26 @@ $guardianEventNew = @'
                         verifiedUtc = [DateTime]::UtcNow.ToString('o')
                     }
 
-                    $snapshotTemp = "$snapshotPath.$PID.tmp"
-                    $snapshotJson = $snapshotValue | ConvertTo-Json -Depth 4
-                    [IO.File]::WriteAllText($snapshotTemp,$snapshotJson,(New-Object System.Text.UTF8Encoding($false)))
-                    if (Test-Path -LiteralPath $snapshotPath) { Remove-Item -LiteralPath $snapshotPath -Force -ErrorAction Stop }
-                    Move-Item -LiteralPath $snapshotTemp -Destination $snapshotPath -Force
+                    $snapshotTemp = $snapshotPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+                    $snapshotBackup = Join-Path $StateDir 'guardian-known-good.previous.json'
+                    try {
+                        foreach ($recordPath in @($snapshotPath,$snapshotBackup)) {
+                            if ((Test-Path -LiteralPath $recordPath) -and
+                                ((Get-Item -LiteralPath $recordPath).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                                throw 'Known-good records cannot use a reparse point.'
+                            }
+                        }
+                        $snapshotJson = $snapshotValue | ConvertTo-Json -Depth 4
+                        $snapshotBytes = [Text.Encoding]::UTF8.GetBytes($snapshotJson)
+                        $snapshotStream = [IO.File]::Open($snapshotTemp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+                        try { $snapshotStream.Write($snapshotBytes,0,$snapshotBytes.Length); $snapshotStream.Flush($true) }
+                        finally { $snapshotStream.Dispose() }
+                        if (Test-Path -LiteralPath $snapshotPath) { [IO.File]::Replace($snapshotTemp,$snapshotPath,$snapshotBackup) }
+                        else { [IO.File]::Move($snapshotTemp,$snapshotPath) }
+                    }
+                    finally {
+                        if (Test-Path -LiteralPath $snapshotTemp) { Remove-Item -LiteralPath $snapshotTemp -Force -ErrorAction SilentlyContinue }
+                    }
                 }
             }
 
@@ -684,7 +735,7 @@ $guardianEventNew = @'
                 if ($snapshotEstablished) { [void]$healthyParts.Add('Known-good baseline established.') }
                 elseif ($snapshotConfirmed) { [void]$healthyParts.Add('Known-good baseline confirmed.') }
                 if ($safeFixes.Count -gt 0) { [void]$healthyParts.Add(($safeFixes -join ' ')) }
-                [void]$healthyParts.Add('Configuration and Windows integration verified.')
+                [void]$healthyParts.Add('Windows integration checked.')
                 $GuardianDetailText.Text = $healthyParts -join ' '
                 $GuardianDetailText.Foreground = Get-Brush 'Faint'
             }
@@ -717,6 +768,7 @@ $guardianEventNew = @'
             $GuardianDetailText.Foreground = Get-Brush 'Amber'
         }
         finally {
+            if ($guardianLease) { try { $guardianLease.Dispose() } catch {} }
             try { $GuardianCheckButton.IsEnabled = $true } catch {}
         }
     })

@@ -80,7 +80,7 @@ $forbiddenFileNames = @(
 
 $textExtensions = @(
     '.ps1', '.psm1', '.psd1',
-    '.cs', '.vbs',
+    '.cs', '.vbs', '.py',
     '.json', '.yml', '.yaml',
     '.md', '.txt', '.gitignore',
     '.xml', '.config'

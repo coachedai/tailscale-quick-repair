@@ -14,7 +14,7 @@ $script:results = New-Object 'Collections.Generic.List[object]'
 $root = Join-Path $env:TEMP ('TQR-NativeGate-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root | Out-Null
 function Assert-That([bool]$Value,[string]$Name) {
-    if (-not $Value) { throw "FAILED: $Name" }
+    if (-not $Value) { throw "FAILED: $Name; Guardian detail: $($global:GuardianDetailText.Text)" }
     $script:results.Add([pscustomobject]@{name=$Name;passed=$true})
     Write-Host "PASS: $Name"
 }
@@ -75,7 +75,7 @@ try {
     Assert-That $xamlMatch.Success 'Final packaged main XAML is present'
 
     foreach ($profile in @('setup','update-overlay')) {
-        $fixture=Join-Path $root $profile
+        $fixture=Join-Path $root ('fixture-' + $profile)
         New-Item -ItemType Directory -Path $fixture | Out-Null
         Copy-Item (Join-Path $setup 'app') (Join-Path $fixture 'app') -Recurse
         Copy-Item (Join-Path $setup 'program') (Join-Path $fixture 'program') -Recurse
@@ -200,9 +200,16 @@ try {
     }
     function Await-Worker($Worker) {
         $end=[DateTime]::UtcNow.AddSeconds(10)
-        while(-not(Test-Path $Worker.Result) -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 20}
-        if(-not(Test-Path $Worker.Result)){throw 'Native child did not report a result'}
-        [IO.File]::ReadAllText($Worker.Result)
+        while([DateTime]::UtcNow -lt $end) {
+            try {
+                if(Test-Path $Worker.Result) {
+                    $answer=[IO.File]::ReadAllText($Worker.Result)
+                    if($answer -in @('acquired','busy')) { return $answer }
+                }
+            } catch {}
+            Start-Sleep -Milliseconds 20
+        }
+        throw 'Native child did not report a complete result' 
     }
     $one=Start-LeaseWorker 'one'; $two=Start-LeaseWorker 'two'
     try {

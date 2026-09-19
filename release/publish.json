@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase3.4.1",
-  "versionCode": 30000441,
+  "version": "3.0.0-phase3.4.2",
+  "versionCode": 30000442,
   "requiresSetup": true,
-  "publicInstaller": false,
-  "notes": "Phase 3.3 Operation Coordinator + Phase 3.4 Recovery Foundation. Adds an atomic cross-process operation lock for Repair, Auto Repair, Advanced Diagnostics, Updater and Setup; pauses Auto Repair during other operations; clears stale crash markers safely; prevents overlapping work; and fixes the stage rail so blue only advances when that stage is actually reached. Existing repair, Guardian, updater, diagnostics, tray and connection-intelligence features are preserved."
+  "publicInstaller": true,
+  "notes": "Package parity and reliability hardening. Both delivery paths now include release-matched Guardian metadata and the same full UI. Baselines are replaced atomically with one local predecessor, and damaged records are preserved. A shared coordinator serializes ownership changes, never expires a live owner, preserves uncertain markers, and prevents rejected repair attempts from overwriting another result. Native Windows packaged-Guardian and cross-process regression gates are required before publishing. No Tailscale recovery algorithm or broad network reset changes."
 }

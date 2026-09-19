@@ -370,6 +370,7 @@ try {
         ('/out:"{0}"' -f $updaterExe)
         ('"{0}"' -f $updaterSource)
         ('"{0}"' -f $updaterEntry)
+        ('"{0}"' -f (Join-Path $repo 'src\native\OperationGate.cs'))
     )
 
     $compile = Start-Process `

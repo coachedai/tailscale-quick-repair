@@ -58,31 +58,15 @@ function Write-State {
 }
 
 function Get-ActiveOperation {
-    if (-not (Test-Path -LiteralPath $OperationLockPath -PathType Leaf)) { return $null }
-
     try {
-        $item = Get-Item -LiteralPath $OperationLockPath -ErrorAction Stop
-        $info = Get-Content -LiteralPath $OperationLockPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-        $ownerPid = 0
-        try { $ownerPid = [int]$info.ownerPid } catch {}
-        $alive = $false
-        if ($ownerPid -gt 0) {
-            try { $process = Get-Process -Id $ownerPid -ErrorAction Stop; $alive = -not $process.HasExited } catch {}
+        if (-not ('Tqr.OperationGate' -as [type])) {
+            Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
         }
-
-        if ($alive -and ((Get-Date) - $item.LastWriteTime).TotalMinutes -lt 30) { return $info }
+        return [Tqr.OperationGate]::Inspect($AppDir)
     }
     catch {
-        try {
-            $item = Get-Item -LiteralPath $OperationLockPath -ErrorAction Stop
-            if (((Get-Date) - $item.LastWriteTime).TotalSeconds -lt 10) {
-                return [pscustomobject]@{ kind = 'another Quick Repair operation' }
-            }
-        } catch {}
+        return [pscustomobject]@{ kind = 'operation ownership verification' }
     }
-
-    try { Remove-Item -LiteralPath $OperationLockPath -Force -ErrorAction SilentlyContinue } catch {}
-    return $null
 }
 
 function Get-Enabled {
