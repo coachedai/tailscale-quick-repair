@@ -58,6 +58,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Source commit failed.' }
           git push origin HEAD:refs/heads/work/5.1-diagnostics-polish
           if ($LASTEXITCODE -ne 0) { throw 'Source push failed or branch moved; no force push attempted.' }
+      - name: Retain synthetic worker outputs
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path test-evidence -Force | Out-Null
+          $index = 0
+          foreach ($fixture in @(Get-ChildItem -LiteralPath $env:TEMP -Directory -Filter 'TQR-DiagnosticTest-*')) {
+            $result = Join-Path $fixture.FullName 'diagnostics-result.json'
+            if (Test-Path -LiteralPath $result -PathType Leaf) {
+              $index++
+              Copy-Item -LiteralPath $result -Destination "test-evidence/worker-fixture-$index.json"
+              Write-Host (Get-Content -LiteralPath $result -Raw)
+            }
+          }
       - name: Preserve native test and visual evidence
         if: always()
         uses: actions/upload-artifact@v4
