@@ -1,0 +1,74 @@
+name: Repeated-check progress verification
+on:
+  push:
+    branches: [work/5.1.2-progress-reset]
+    paths: [src/**, release/**, docs/**, version.json, .github/workflows/progress-development.yml]
+concurrency:
+  group: tqr-progress-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require exact isolated repository and source
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne 'coachedai/tailscale-quick-repair' -or $env:GITHUB_REF_NAME -ne 'work/5.1.2-progress-reset') { throw 'Wrong repository or branch.' }
+          if ((git remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?$') { throw 'Wrong origin.' }
+          if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) { throw 'Checkout mismatch.' }
+      - name: Prepare reviewed source integration
+        shell: powershell
+        run: |
+          if (Test-Path release/prepare-progress-reset.ps1) { .\release\prepare-progress-reset.ps1 }
+          if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Development publication is forbidden.' }
+      - name: Privacy and isolation preflight
+        shell: powershell
+        run: .\release\privacy-scan.ps1 -Root .
+      - name: Build both delivery paths
+        shell: powershell
+        run: |
+          .\release\build.ps1 -OutputDirectory .\dist
+          .\release\finalize-package.ps1 -OutputDirectory .\dist
+          .\release\add-native-setup-routing.ps1 -OutputDirectory .\dist
+          .\release\build-public.ps1 -OutputDirectory .\dist-public
+          Copy-Item .\dist-public\* .\dist\ -Force
+      - name: All native package and repeated-check gates
+        shell: powershell
+        run: .\release\test-packaged-runtime.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Recheck privacy before committing tested integration
+        shell: powershell
+        run: .\release\privacy-scan.ps1 -Root .
+      - name: Commit only verified integration changes
+        shell: pwsh
+        run: |
+          if ((git branch --show-current).Trim() -ne 'work/5.1.2-progress-reset') { throw 'Wrong branch.' }
+          git add -u -- release/add-native-setup-routing.ps1 release/test-packaged-runtime.ps1 release/publish.json version.json
+          $changes = @(git diff --cached --name-only)
+          foreach ($p in $changes) {
+            if ($p -notin @('release/add-native-setup-routing.ps1','release/test-packaged-runtime.ps1','release/publish.json','version.json')) { throw 'Unexpected staged change.' }
+          }
+          if ($changes.Count -eq 0) { exit 0 }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Wire and verify 5.1.2 repeated-check progress isolation'
+          if ($LASTEXITCODE -ne 0) { throw 'Commit failed.' }
+          git push origin HEAD:refs/heads/work/5.1.2-progress-reset
+          if ($LASTEXITCODE -ne 0) { throw 'Branch changed or push failed; no force push attempted.' }
+      - name: Preserve test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: progress-native-evidence
+          path: test-evidence/*
+          if-no-files-found: warn
+      - name: Preserve validated packages
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: progress-validated-packages
+          path: dist/*
+          if-no-files-found: error
