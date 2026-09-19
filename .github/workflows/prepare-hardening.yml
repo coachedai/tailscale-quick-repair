@@ -18,6 +18,7 @@ jobs:
         run: |
           if ($env:GITHUB_REPOSITORY -ne 'coachedai/tailscale-quick-repair' -or $env:GITHUB_REF_NAME -ne 'fix/3.4.2-package-and-runtime-guards') { throw 'Wrong repository or branch.' }
           if ((git remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?$') { throw 'Wrong origin.' }
+          if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) { throw 'Branch changed before checkout; review the newer source first.' }
       - name: Prepare reviewed source changes with publishing disabled
         shell: pwsh
         run: |
@@ -63,19 +64,24 @@ jobs:
       - name: Scan source again before committing tested changes
         shell: powershell
         run: .\release\privacy-scan.ps1 -Root .
-      - name: Commit only tested source to the development branch
+      - name: Commit tested product source only
         shell: pwsh
         run: |
           if ((git branch --show-current).Trim() -ne 'fix/3.4.2-package-and-runtime-guards') { throw 'Wrong working branch.' }
           if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Publishing must remain disabled.' }
-          git rm release/prepare-3.4.2.py .github/workflows/prepare-hardening.yml
-          git add src release .github/workflows/release.yml version.json
+          # Workflow changes are reviewed and written through the authorized connector.
+          # The CI token commits product source only, never .github or untracked output.
+          git add -u -- src release version.json
+          $staged = @(git diff --cached --name-only)
+          foreach ($path in $staged) {
+            if ($path -notmatch '^(src/|release/|version\.json$)' -or $path -match '(__pycache__|\.pyc$|\.exe$|\.dll$|\.zip$)') { throw "Unexpected staged path: $path" }
+          }
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'Verify 3.4.2 package parity and ownership on native Windows'
           if ($LASTEXITCODE -ne 0) { throw 'Source commit failed.' }
           git push origin HEAD:refs/heads/fix/3.4.2-package-and-runtime-guards
-          if ($LASTEXITCODE -ne 0) { throw 'Development branch changed; no force push is permitted.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Development-branch push failed; no force push or permission changes were attempted.' }
           git rev-parse HEAD
       - name: Preserve test evidence
         if: always()
