@@ -4,7 +4,7 @@ on:
     branches: [work/3.5-history]
     paths: [src/**, release/**, docs/**, version.json, .github/workflows/history-development.yml]
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: tqr-history-${{ github.ref }}
   cancel-in-progress: false
@@ -14,8 +14,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
       - name: Require repository identity and unpublished development
         shell: pwsh
         run: |
@@ -23,19 +21,19 @@ jobs:
           if ((git remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?$') { throw 'Wrong origin.' }
           if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) { throw 'Checkout changed.' }
           if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Development must not enable publication.' }
+      - name: Apply exact integration patch when needed
+        shell: pwsh
+        run: |
+          $version = (Get-Content version.json -Raw | ConvertFrom-Json).version
+          if ($version -eq '3.0.0-phase3.4.2') {
+            git apply --check release/history-source.patch
+            if ($LASTEXITCODE -ne 0) { throw 'Reviewed patch no longer applies; no source changed.' }
+            git apply release/history-source.patch
+            if ($LASTEXITCODE -ne 0) { throw 'Source preparation failed.' }
+          } elseif ($version -ne '3.0.0-phase3.5.1') { throw 'Unexpected source version.' }
       - name: Privacy and isolation preflight
         shell: powershell
         run: .\release\privacy-scan.ps1 -Root .
-      - name: Preserve tracked public source for exact local review
-        shell: pwsh
-        run: |
-          git archive --format=zip --output=source-review.zip HEAD src release docs .github version.json .gitattributes .gitignore README.md
-          if ($LASTEXITCODE -ne 0) { throw 'Source archive failed.' }
-      - uses: actions/upload-artifact@v4
-        with:
-          name: source-review
-          path: source-review.zip
-          if-no-files-found: error
       - name: Build both delivery paths
         shell: powershell
         run: |
@@ -47,6 +45,27 @@ jobs:
       - name: Native packaged regression gates
         shell: powershell
         run: .\release\test-packaged-runtime.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Scan tested source before committing
+        shell: powershell
+        run: .\release\privacy-scan.ps1 -Root .
+      - name: Commit only tested integration source
+        shell: pwsh
+        run: |
+          if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Publishing must remain disabled.' }
+          git add -u -- src release version.json .gitignore
+          $staged = @(git diff --cached --name-only)
+          foreach ($path in $staged) {
+            if ($path -notmatch '^(src/|release/|version\.json$|\.gitignore$)' -or $path -match '(__pycache__|\.pyc$|\.exe$|\.dll$|\.zip$)') { throw "Unexpected staged path: $path" }
+          }
+          if ($staged.Count -gt 0) {
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Integrate native-tested local history and protected update policy'
+            if ($LASTEXITCODE -ne 0) { throw 'Source commit failed.' }
+            git push origin HEAD:refs/heads/work/3.5-history
+            if ($LASTEXITCODE -ne 0) { throw 'Branch advanced; no force push allowed.' }
+          }
+          git rev-parse HEAD
       - name: Preserve runtime evidence
         if: always()
         uses: actions/upload-artifact@v4
