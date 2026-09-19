@@ -150,7 +150,7 @@ namespace Tqr
             switch (entry.code) {
                 case "check_healthy": return "Connection check passed";
                 case "check_attention": return "Connection check needs attention";
-                case "repair_completed": return "Repair completed";
+                case "repair_completed": return "Repair actions performed";
                 case "route_direct": return "Connection changed to Direct";
                 case "route_relay": return "Connection changed to Relay";
                 case "latency_up": return "Latency increased: " + entry.before + " to " + entry.after + " ms";
