@@ -82,12 +82,18 @@ Replace-One "    `$AdvancedDiagnosticsSummary = `$window.FindName('AdvancedDiagn
     $AdvancedDiagnosticsDetailText=$window.FindName('AdvancedDiagnosticsDetailText')
     $AdvancedDiagnosticsSummary = $window.FindName('AdvancedDiagnosticsSummary')
 '@
-Replace-One '            $AdvancedDiagnosticsSummary.Text = $summary' @'
+Replace-One @'
+            $AdvancedDiagnosticsSummary.Text = $summary
+
+            $severity = Get-AdvancedValue $Result 'severity'
+'@ @'
             $AdvancedDiagnosticsSummary.Text = $summary
             $explanation=Get-AdvancedValue $Result 'detail'
             if($explanation -eq 'Unknown'){$explanation='Results describe this optional run only; no network settings were changed.'}
             $AdvancedDiagnosticsDetailText.Text=$explanation
             $AdvancedDiagnosticsDetailText.ToolTip='DISCO checks discovery. TSMP checks the encrypted tunnel without the remote OS network stack. ICMP and Peer API are independent probes, not tests of your RDP service.'
+
+            $severity = Get-AdvancedValue $Result 'severity'
 '@
 Replace-One @'
                 "Path       $(Get-AdvancedValue $Result 'path')"
@@ -105,4 +111,21 @@ Replace-One '                "Summary: $summary"' @'
                 "Observed UTC: $(Get-AdvancedValue $Result 'updatedUtc')"
                 "Duration seconds: $(Get-AdvancedValue $Result 'durationSeconds')"
 '@
-Replace-One "            `$AdvancedDiagnosticsReport.Text = ''" "            `$AdvancedDiagnosticsReport.Text = ''"
+Replace-One "            `$AdvancedNetworkText.Text = 'Unavailable'" @'
+            $AdvancedDiagnosticsDetailText.Text='The main connection result is unchanged. No network settings were changed.'
+            $AdvancedNetworkText.Text = 'Unavailable'
+'@
+Replace-One '            $AdvancedDiagnosticsProgress.Value = 2' @'
+            $AdvancedDiagnosticsDetailText.Text='Optional read-only probes. Each command has a time limit.'
+            $AdvancedDiagnosticsProgress.Value = 2
+'@
+Replace-One '((Get-Date) - $script:advancedDiagnosticsStartedAt).TotalSeconds -gt 25' '((Get-Date) - $script:advancedDiagnosticsStartedAt).TotalSeconds -gt 30'
+Replace-One @'
+                    $expectedNames = @('Tailscale-Repair-UI.ps1','TailscaleQuickRepairUpdater.exe','TailscaleQuickRepairSetup.exe','TailscaleQuickRepair.Operations.dll')
+'@ @'
+                    $expectedNames = @('Tailscale-Repair-UI.ps1','TailscaleQuickRepairUpdater.exe','TailscaleQuickRepairSetup.exe','TailscaleQuickRepair.Operations.dll','Advanced-Diagnostics.ps1')
+'@
+Replace-One "                        `$expectedNames += 'TailscaleQuickRepair.exe','Advanced-Diagnostics.ps1'" "                        `$expectedNames += 'TailscaleQuickRepair.exe'"
+[void][scriptblock]::Create($script:text)
+[IO.File]::WriteAllText($Path,$script:text,(New-Object Text.UTF8Encoding($true)))
+Write-Host 'History scroll theme and Diagnostics 2.0 presentation applied.'
