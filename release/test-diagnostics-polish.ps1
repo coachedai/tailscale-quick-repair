@@ -5,6 +5,7 @@ Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System
 if(-not ('Tqr.DiagnosticAnalysis' -as [type])){Add-Type -Path $LibraryPath}
 $root=Join-Path $env:TEMP ('TQR-DiagnosticTest-'+[Guid]::NewGuid().ToString('N'));New-Item -ItemType Directory -Path $root | Out-Null
 $cases=New-Object 'Collections.Generic.List[object]'
+$window=$null
 function Check([bool]$Good,[string]$Name){if(-not $Good){throw "FAILED diagnostics/polish: $Name"};$cases.Add([pscustomobject]@{name=$Name;passed=$true});Write-Host "PASS: $Name"}
 function Command([string]$Text,[int]$Code=0){$c=New-Object Tqr.DiagnosticCommand;$c.Output=$Text;$c.ExitCode=$Code;return $c}
 function Probe([string]$Via='127.0.0.1:41641',[string]$Type='disco'){[Tqr.DiagnosticAnalysis]::ParseProbe((Command "pong from fixture via $Via in 11ms"),$Type)}
@@ -74,8 +75,6 @@ public static class FixtureCli {
         Check ($cliNode.Count -eq 1) 'Worker CLI discovery has one injectable fixture boundary'
         $replacement="function Get-TailscaleCli { return '"+$fake.Replace("'","''")+"' }"
         $worker=$worker.Remove($cliNode[0].Extent.StartOffset,$cliNode[0].Extent.EndOffset-$cliNode[0].Extent.StartOffset).Insert($cliNode[0].Extent.StartOffset,$replacement)
-        # Retain exception detail ONLY in this synthetic worker; never change the installed worker's privacy policy.
-        $worker=$worker.Replace('$script:Result.error=''inspection_incomplete''','$script:Result.error=$_.Exception.GetType().FullName + '': '' + $_.Exception.Message')
         $workerFile=Join-Path $root 'Advanced-Diagnostics.ps1';[IO.File]::WriteAllText($workerFile,$worker)
         Copy-Item $LibraryPath (Join-Path $root 'TailscaleQuickRepair.Operations.dll')
         $state=Join-Path $root 'diagnostics-result.json'
@@ -84,10 +83,11 @@ public static class FixtureCli {
         $psi.Arguments='-NoProfile -NonInteractive -File "'+$workerFile+'" -Peer fixture -OutputPath "'+$state+'" -RunId fixture-run'
         $child=[Diagnostics.Process]::Start($psi)
         try{if(-not $child.WaitForExit(25000)){$child.Kill();throw 'Fixture worker timed out'};Check ($child.ExitCode -eq 0) 'Native worker completes without changing live network state'}finally{$child.Dispose()}
-        $r=Get-Content $state -Raw | ConvertFrom-Json
-        Check ($r.done -and $r.schema -eq 2 -and $r.path -eq 'Direct' -and $r.severity -eq 'good' -and $r.runId -eq 'fixture-run') ("Actual worker writes the expected structured completed result; fixture reason: "+$r.error)
+        $workerResult=Get-Content $state -Raw | ConvertFrom-Json
+        Check ($workerResult.done -and $workerResult.schema -eq 2 -and $workerResult.path -eq 'Direct' -and $workerResult.severity -eq 'good' -and $workerResult.runId -eq 'fixture-run') 'Actual worker replaces progress with the expected structured completed result'
         Check ((Get-Content $state -Raw) -notmatch '127\.0\.0\.1|pong from|fixture-cli') 'Raw endpoints and CLI output are not persisted in the diagnostic report'
     }finally{$env:TQR_DIAG_TEST=$prior}
+
     $ui=[IO.File]::ReadAllText($UiPath,[Text.Encoding]::UTF8);$tk=$null;$er=$null
     $ast=[Management.Automation.Language.Parser]::ParseInput($ui,[ref]$tk,[ref]$er)
     Check ($er.Count -eq 0) 'Final themed UI parses on Windows PowerShell 5.1'
@@ -97,28 +97,75 @@ public static class FixtureCli {
     $HistoryPanel=$window.FindName('HistoryPanel');$HistoryText=$window.FindName('HistoryText')
     $DetailsPanel=$window.FindName('DetailsPanel');$DetailsPanel.Visibility='Visible';$HistoryPanel.Visibility='Visible'
     $HistoryText.Text=(1..40|ForEach-Object {"Event $_ - Connection check passed"}) -join "`n"
-    $window.Width=1100;$window.Height=850;$window.Measure([Windows.Size]::new(1100,850));$window.Arrange([Windows.Rect]::new(0,0,1100,850));$window.UpdateLayout()
-    $HistoryPanel.ApplyTemplate()|Out-Null;$HistoryPanel.UpdateLayout()
+    # Realize the actual WPF template on the disposable runner. No product event
+    # handlers or network operations are wired to this synthetic test window.
+    $window.ShowInTaskbar=$false;$window.ShowActivated=$false;$window.WindowStartupLocation='Manual'
+    $window.Left=-2000;$window.Top=0;$window.Width=1100;$window.Height=850
+    $window.Show()
+    function Settle-Layout {
+        $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
+        $window.UpdateLayout()
+    }
+    function Save-HistoryImage([string]$Name){
+        $width=[int][Math]::Ceiling($HistoryPanel.ActualWidth);$height=[int][Math]::Ceiling($HistoryPanel.ActualHeight)
+        if($width -le 0 -or $height -le 0){return}
+        $drawing=New-Object Windows.Media.DrawingVisual;$dc=$drawing.RenderOpen()
+        $dc.DrawRectangle($window.Background,$null,[Windows.Rect]::new(0,0,$width,$height))
+        $dc.DrawRectangle([Windows.Media.VisualBrush]::new($HistoryPanel),$null,[Windows.Rect]::new(0,0,$width,$height));$dc.Close()
+        $bitmap=[Windows.Media.Imaging.RenderTargetBitmap]::new($width,$height,96,96,[Windows.Media.PixelFormats]::Pbgra32)
+        $bitmap.Render($drawing);$encoder=New-Object Windows.Media.Imaging.PngBitmapEncoder;$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
+        $png=[IO.File]::Create((Join-Path $EvidenceDirectory $Name));try{$encoder.Save($png)}finally{$png.Dispose()}
+    }
+    Settle-Layout
+    $HistoryPanel.ApplyTemplate()|Out-Null;Settle-Layout
     $bar=$HistoryPanel.Template.FindName('PART_VerticalScrollBar',$HistoryPanel);$bar.ApplyTemplate()|Out-Null
     $track=$bar.Template.FindName('PART_Track',$bar)
+    Save-HistoryImage 'history-scrollbar.png'
+    [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'history-layout.json'),(@{railAlpha=$bar.Background.Color.A;viewport=$HistoryPanel.ViewportHeight;extent=$HistoryPanel.ExtentHeight;scrollable=$HistoryPanel.ScrollableHeight;width=$HistoryPanel.ActualWidth;height=$HistoryPanel.ActualHeight}|ConvertTo-Json))
     Check ($bar.Width -eq 12 -and $null -ne $track -and $track.Thumb.MinHeight -ge 28) 'History uses a slim themed scrollbar with a usable draggable thumb'
-    Check ($bar.Background.Color.A -eq 0 -and $HistoryPanel.ScrollableHeight -gt 0) 'No white scrollbar rail is drawn and long history remains scrollable'
-    $HistoryPanel.ScrollToEnd();$HistoryPanel.UpdateLayout()
+    Check ($bar.Background.Color.A -eq 0) 'History scrollbar has no opaque system-colored rail'
+    Check ($HistoryPanel.ScrollableHeight -gt 0) 'Forty retained events have a real scrollable extent'
+    $HistoryPanel.ScrollToEnd();Settle-Layout
     Check ($HistoryPanel.VerticalOffset -gt 0) 'History can scroll to the oldest retained event'
-    $HistoryPanel.ScrollToHome();$HistoryPanel.UpdateLayout()
+    $HistoryPanel.ScrollToHome();Settle-Layout
     Check ($HistoryPanel.VerticalOffset -eq 0) 'History can return to the newest retained event'
-    [Windows.Controls.Primitives.ScrollBar]::PageDownCommand.Execute($null,$bar);$HistoryPanel.UpdateLayout()
+    [Windows.Controls.Primitives.ScrollBar]::PageDownCommand.Execute($null,$bar);Settle-Layout
     Check ($HistoryPanel.VerticalOffset -gt 0) 'Scrollbar page commands still reach the ScrollViewer'
-    $HistoryPanel.ScrollToTop();$HistoryPanel.UpdateLayout()
-    Check ($HistoryPanel.Focusable -and $HistoryPanel.PanningMode -eq 'VerticalOnly') 'Keyboard focus and touch scrolling remain enabled'
-    $bitmap=[Windows.Media.Imaging.RenderTargetBitmap]::new([int][Math]::Ceiling($HistoryPanel.ActualWidth),[int][Math]::Ceiling($HistoryPanel.ActualHeight),96,96,[Windows.Media.PixelFormats]::Pbgra32)
-    $bitmap.Render($HistoryPanel);$encoder=New-Object Windows.Media.Imaging.PngBitmapEncoder;$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
-    $png=[IO.File]::Create((Join-Path $EvidenceDirectory 'history-scrollbar.png'));try{$encoder.Save($png)}finally{$png.Dispose()}
-    $HistoryText.Text='One saved event';$HistoryPanel.UpdateLayout()
+    $HistoryPanel.ScrollToTop();Settle-Layout
+    $wheel=[Windows.Input.MouseWheelEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,[Environment]::TickCount,-120)
+    $wheel.RoutedEvent=[Windows.Input.Mouse]::MouseWheelEvent;$HistoryPanel.RaiseEvent($wheel);Settle-Layout
+    Check ($HistoryPanel.VerticalOffset -gt 0) 'Mouse-wheel scrolling moves the real History viewport'
+    $HistoryPanel.ScrollToTop();Settle-Layout
+    $drag=[Windows.Controls.Primitives.DragDeltaEventArgs]::new(0,25)
+    $track.Thumb.RaiseEvent($drag);Settle-Layout
+    Check ($HistoryPanel.VerticalOffset -gt 0) 'Dragging the themed thumb updates the History offset'
+    $HistoryPanel.ScrollToTop();Settle-Layout
+    Check ($HistoryPanel.Focusable -and $HistoryPanel.PanningMode -eq 'VerticalOnly') 'Keyboard focus and touch panning remain enabled'
+    Save-HistoryImage 'history-scrollbar.png'
+    $HistoryText.Text='One saved event';Settle-Layout
     Check ($HistoryPanel.ComputedVerticalScrollBarVisibility -eq 'Collapsed') 'Scrollbar disappears when history fits without scrolling'
-    Check ($window.FindName('AdvancedDiagnosticsDetailText') -ne $null -and $ui.Contains('VPN software')) 'Diagnostic explanation has one dedicated inline slot and honest VPN labeling'
-    $window.Close()
-    [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'diagnostics-polish-results.json'),(@{passed=$true;scope='Native parser, owned CLI fixture, actual worker and final WPF layout; not a live network or power-loss test';cases=$cases.ToArray()}|ConvertTo-Json -Depth 8))
+
+    foreach($name in @('Get-AdvancedValue','Complete-AdvancedDiagnostics','Update-AdvancedDiagnostics')){
+        $nodes=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true))
+        Check ($nodes.Count -eq 1) "One actual packaged $name implementation"
+        . ([scriptblock]::Create($nodes[0].Extent.Text))
+    }
+    function Get-Brush([string]$Name){if($Name -eq 'Green'){return [Windows.Media.Brushes]::Green};if($Name -eq 'Amber'){return [Windows.Media.Brushes]::Orange};return [Windows.Media.Brushes]::Gray}
+    foreach($name in @('AdvancedDiagnosticsDetailText','AdvancedDiagnosticsSummary','AdvancedDiagnosticsProgress','AdvancedDiagnosticsButton','AdvancedCopyButton','AdvancedNetworkText','AdvancedPeerText','AdvancedEnvironmentText','HeroTitle')){Set-Variable -Name $name -Value ($window.FindName($name))}
+    $HeroTitle.Text='Main connection result unchanged';$script:advancedDiagnosticsTimer=$null;$script:advancedDiagnosticsOwnsOperation=$false
+    Complete-AdvancedDiagnostics $workerResult
+    Check ($AdvancedPeerText.Text -match 'Direct' -and $AdvancedPeerText.Text -match 'Latency\s+11 ms' -and $AdvancedDiagnosticsDetailText.Text -match 'point-in-time') 'Actual packaged result renderer shows measured path latency and explanation'
+    Check ($script:advancedDiagnosticsReport -match 'Observed UTC:' -and $script:advancedDiagnosticsReport -match 'Network inspection: Complete') 'Copied report includes observation scope and network completeness'
+    Check ($HeroTitle.Text -eq 'Main connection result unchanged') 'Optional diagnostics do not replace the main health result'
+    $AdvancedDiagnosticsStateFile=$state;$script:advancedDiagnosticsRunId='a-different-run';$AdvancedDiagnosticsSummary.Text='Keep current run'
+    Update-AdvancedDiagnostics
+    Check ($AdvancedDiagnosticsSummary.Text -eq 'Keep current run') 'A late result from another run is ignored'
+    $script:advancedDiagnosticsRunId='fixture-run';Update-AdvancedDiagnostics
+    Check ($AdvancedDiagnosticsSummary.Text -eq $workerResult.summary) 'Current-run worker state reaches the final WPF summary'
+    Complete-AdvancedDiagnostics $null 'Fixture inspection incomplete'
+    Check ($AdvancedDiagnosticsSummary.Text -eq 'Fixture inspection incomplete' -and $AdvancedPeerText.Text -eq 'Unavailable') 'Incomplete inspection clears obsolete diagnostic measurements without changing health'
+    Check ($window.FindName('AdvancedDiagnosticsDetailText') -ne $null -and $ui.Contains('VPN software')) 'Diagnostic explanation has one inline slot and honest VPN labeling'
+    [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'diagnostics-polish-results.json'),(@{passed=$true;scope='Native parser, synthetic CLI worker, final WPF layout/events and result renderer; not a live network, touch-hardware or power-loss test';cases=$cases.ToArray()}|ConvertTo-Json -Depth 8))
 }catch{
     [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'diagnostics-polish-results.json'),(@{passed=$false;failure=$_.Exception.Message;cases=$cases.ToArray()}|ConvertTo-Json -Depth 8));throw
-}
+}finally{if($window){$window.Close()}}
