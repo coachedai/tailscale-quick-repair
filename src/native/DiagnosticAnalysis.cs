@@ -204,14 +204,14 @@ namespace Tqr
                 default: return result;
             }
             if (type != "netcheck") arguments += "\"" + peer + "\"";
-            object sync = new object(); StringBuilder captured = new StringBuilder(); bool clipped = false;
+            object sync = new object(); StringBuilder captured = new StringBuilder(); bool clipped = false; int completedReaders = 0;
             using (Process process = new Process())
             {
                 process.StartInfo = new ProcessStartInfo(executable, arguments) { UseShellExecute = false, CreateNoWindow = true,
                     WindowStyle = ProcessWindowStyle.Hidden, RedirectStandardOutput = true, RedirectStandardError = true };
                 DataReceivedEventHandler collect = delegate(object sender, DataReceivedEventArgs e)
                 {
-                    if (e.Data == null) return;
+                    if (e.Data == null) { Interlocked.Increment(ref completedReaders); return; }
                     lock (sync)
                     {
                         int remaining = 65536 - captured.Length;
@@ -231,7 +231,12 @@ namespace Tqr
                         process.Kill(); // Only the exact child created by this call.
                         if (!process.WaitForExit(1000)) return result;
                     }
-                    else process.WaitForExit(); // The known CLI has exited; drain its async stdout/stderr.
+                    else
+                    {
+                        Stopwatch drain = Stopwatch.StartNew();
+                        while (Interlocked.CompareExchange(ref completedReaders, 0, 0) < 2 && drain.ElapsedMilliseconds < 500) Thread.Sleep(5);
+                        if (Interlocked.CompareExchange(ref completedReaders, 0, 0) < 2) clipped = true;
+                    }
                     result.ExitCode = process.ExitCode;
                 }
                 catch { result.ExitCode = -1; }

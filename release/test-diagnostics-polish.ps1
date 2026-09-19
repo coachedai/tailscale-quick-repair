@@ -99,33 +99,48 @@ public static class FixtureCli {
     $HistoryText.Text=(1..40|ForEach-Object {"Event $_ - Connection check passed"}) -join "`n"
     # Only the synthetic fixture is positioned/resized. Packaged window defaults are unchanged.
     $window.WindowState='Normal'
-    $window.ShowInTaskbar=$false;$window.ShowActivated=$false;$window.WindowStartupLocation='Manual'
-    $window.Left=-2000;$window.Top=0;$window.Width=1100;$window.Height=850
+    $window.ShowInTaskbar=$false;$window.ShowActivated=$true;$window.WindowStartupLocation='Manual'
+    $window.Left=40;$window.Top=0;$window.Width=1100;$window.Height=850
     $window.Show()
     function Settle-Layout {
-        $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
-        $window.UpdateLayout()
+        $frame=New-Object Windows.Threading.DispatcherFrame
+        $timer=New-Object Windows.Threading.DispatcherTimer
+        $timer.Interval=[TimeSpan]::FromMilliseconds(120)
+        $finish=[EventHandler]({param($sender,$eventArgs) $frame.Continue=$false}.GetNewClosure())
+        $timer.Add_Tick($finish)
+        try{
+            $window.UpdateLayout();$timer.Start()
+            [Windows.Threading.Dispatcher]::PushFrame($frame)
+            $window.UpdateLayout()
+        }finally{$timer.Stop();$timer.Remove_Tick($finish)}
     }
     function Save-HistoryImage([string]$Name){
         $width=[int][Math]::Ceiling($HistoryPanel.ActualWidth);$height=[int][Math]::Ceiling($HistoryPanel.ActualHeight)
         if($width -le 0 -or $height -le 0){return}
         $drawing=New-Object Windows.Media.DrawingVisual;$dc=$drawing.RenderOpen()
         $dc.DrawRectangle($window.Background,$null,[Windows.Rect]::new(0,0,$width,$height))
-        $dc.DrawRectangle([Windows.Media.VisualBrush]::new($HistoryPanel),$null,[Windows.Rect]::new(0,0,$width,$height));$dc.Close()
+        $brush=[Windows.Media.VisualBrush]::new($HistoryPanel);$brush.AutoLayoutContent=$false
+        $dc.DrawRectangle($brush,$null,[Windows.Rect]::new(0,0,$width,$height));$dc.Close()
         $bitmap=[Windows.Media.Imaging.RenderTargetBitmap]::new($width,$height,96,96,[Windows.Media.PixelFormats]::Pbgra32)
         $bitmap.Render($drawing);$encoder=New-Object Windows.Media.Imaging.PngBitmapEncoder;$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
         $png=[IO.File]::Create((Join-Path $EvidenceDirectory $Name));try{$encoder.Save($png)}finally{$png.Dispose()}
     }
     Settle-Layout
     $HistoryPanel.ApplyTemplate()|Out-Null;Settle-Layout
+    & (Join-Path $PSScriptRoot 'trace-history-scroll.ps1') -Window $window -Viewer $HistoryPanel -EvidenceDirectory $EvidenceDirectory
+    Settle-Layout
     $bar=$HistoryPanel.Template.FindName('PART_VerticalScrollBar',$HistoryPanel);$bar.ApplyTemplate()|Out-Null
     $track=$bar.Template.FindName('PART_Track',$bar)
+    $rail=$bar.Template.FindName('HistoryRail',$bar)
     Save-HistoryImage 'history-scrollbar.png'
-    [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'history-layout.json'),(@{railAlpha=$bar.Background.Color.A;viewport=$HistoryPanel.ViewportHeight;extent=$HistoryPanel.ExtentHeight;scrollable=$HistoryPanel.ScrollableHeight;width=$HistoryPanel.ActualWidth;height=$HistoryPanel.ActualHeight}|ConvertTo-Json))
+    [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'history-layout.json'),(@{railAlpha=$rail.Background.Color.A;viewport=$HistoryPanel.ViewportHeight;extent=$HistoryPanel.ExtentHeight;scrollable=$HistoryPanel.ScrollableHeight;width=$HistoryPanel.ActualWidth;height=$HistoryPanel.ActualHeight}|ConvertTo-Json))
     Check ($bar.Width -eq 12 -and $null -ne $track -and $track.Thumb.MinHeight -ge 28) 'History uses a slim themed scrollbar with a usable draggable thumb'
-    Check ($bar.Background.Color.A -eq 0) 'History scrollbar has no opaque system-colored rail'
+    Check ($null -ne $rail -and $rail.Background.Color.A -eq 0) 'History scrollbar has no opaque system-colored rail'
     Check ($HistoryPanel.ScrollableHeight -gt 0) 'Forty retained events have a real scrollable extent'
     $HistoryPanel.ScrollToEnd();Settle-Layout
+    $presenter=$HistoryPanel.Template.FindName('PART_ScrollContentPresenter',$HistoryPanel)
+    [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'history-scroll-end.json'),(@{offset=$HistoryPanel.VerticalOffset;presenterOffset=$presenter.VerticalOffset;canScroll=$presenter.CanVerticallyScroll;ownerMatches=[object]::ReferenceEquals($presenter.ScrollOwner,$HistoryPanel);barValue=$bar.Value}|ConvertTo-Json))
+    Save-HistoryImage 'history-scroll-end.png'
     Check ($HistoryPanel.VerticalOffset -gt 0) 'History can scroll to the oldest retained event'
     $HistoryPanel.ScrollToHome();Settle-Layout
     Check ($HistoryPanel.VerticalOffset -eq 0) 'History can return to the newest retained event'

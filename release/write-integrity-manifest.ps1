@@ -13,10 +13,11 @@ $required = @(
     'Tailscale-Repair-UI.ps1',
     'TailscaleQuickRepairUpdater.exe',
     'TailscaleQuickRepairSetup.exe',
-    'TailscaleQuickRepair.Operations.dll'
+    'TailscaleQuickRepair.Operations.dll',
+    'Advanced-Diagnostics.ps1'
 )
 if ($Profile -eq 'setup') {
-    $required += 'TailscaleQuickRepair.exe','Advanced-Diagnostics.ps1'
+    $required += 'TailscaleQuickRepair.exe'
 }
 $files = @(Get-ChildItem -LiteralPath $app -File | Where-Object { $_.Name -ne 'integrity-manifest.json' })
 if ($files.Count -ne $required.Count -or @(Get-ChildItem -LiteralPath $app -Directory).Count -ne 0) {

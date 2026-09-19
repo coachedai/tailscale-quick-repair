@@ -246,6 +246,7 @@ try {
     $qualityTest=[scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'test-connection-quality.ps1'),[Text.Encoding]::UTF8))
     & $qualityTest -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -LibraryPath $dll -EvidenceDirectory $EvidenceDirectory
     & (Join-Path $PSScriptRoot 'test-smart-notifications.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -LibraryPath $dll -EvidenceDirectory $EvidenceDirectory
+    & (Join-Path $PSScriptRoot 'test-diagnostics-polish.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -LibraryPath $dll -WorkerPath (Join-Path $normal 'app\Advanced-Diagnostics.ps1') -EvidenceDirectory $EvidenceDirectory
     Json-Write (Join-Path $EvidenceDirectory 'native-results.json') @{passed=$true;runtime='Windows PowerShell 5.1 / WPF / .NET Framework';scope='Packaged Guardian event and real process ownership; OS integration probes are fixture stubs';cases=$script:results.ToArray()}
     Write-Host "Native package gates passed: $($script:results.Count) assertions."
 } catch {
