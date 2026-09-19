@@ -38,6 +38,8 @@ else
                     }
 '@
 $visualPath=Join-Path $PSScriptRoot 'test-diagnostics-polish.ps1';$visual=[IO.File]::ReadAllText($visualPath)
+$visual=Replace-Reviewed $visual '$window.ShowActivated=$false' '$window.ShowActivated=$true'
+$visual=Replace-Reviewed $visual '$window.Left=-2000;' '$window.Left=40;'
 $visual=Replace-Reviewed $visual @'
     function Settle-Layout {
         $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
@@ -45,12 +47,25 @@ $visual=Replace-Reviewed $visual @'
     }
 '@ @'
     function Settle-Layout {
-        for($pass=0;$pass -lt 8;$pass++){
+        # Give the same WPF dispatcher used by ShowDialog a bounded real frame.
+        # This changes only the disposable test harness, never the application.
+        $frame=New-Object Windows.Threading.DispatcherFrame
+        $timer=New-Object Windows.Threading.DispatcherTimer
+        $timer.Interval=[TimeSpan]::FromMilliseconds(120)
+        $finish=[EventHandler]({param($sender,$eventArgs) $frame.Continue=$false}.GetNewClosure())
+        $timer.Add_Tick($finish)
+        try{
+            $window.UpdateLayout();$timer.Start()
+            [Windows.Threading.Dispatcher]::PushFrame($frame)
             $window.UpdateLayout()
-            $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
-            [Threading.Thread]::Sleep(8)
-        }
+        }finally{$timer.Stop();$timer.Remove_Tick($finish)}
     }
+'@
+$visual=Replace-Reviewed $visual @'
+        $dc.DrawRectangle([Windows.Media.VisualBrush]::new($HistoryPanel),$null,[Windows.Rect]::new(0,0,$width,$height));$dc.Close()
+'@ @'
+        $brush=[Windows.Media.VisualBrush]::new($HistoryPanel);$brush.AutoLayoutContent=$false
+        $dc.DrawRectangle($brush,$null,[Windows.Rect]::new(0,0,$width,$height));$dc.Close()
 '@
 $visual=Replace-Reviewed $visual @'
     $track=$bar.Template.FindName('PART_Track',$bar)
