@@ -1,0 +1,74 @@
+name: Smart notifications development verification
+on:
+  push:
+    branches: [work/4.2-smart-notifications]
+    paths: [src/**, release/**, docs/**, version.json, .github/workflows/notifications-development.yml]
+concurrency:
+  group: tqr-notifications-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require isolated repository and exact source
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne 'coachedai/tailscale-quick-repair' -or $env:GITHUB_REF_NAME -ne 'work/4.2-smart-notifications') { throw 'Wrong project or branch.' }
+          if ((git remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?$') { throw 'Unexpected origin.' }
+          if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) { throw 'Unexpected checkout.' }
+      - name: Prepare reviewed integration
+        shell: powershell
+        run: |
+          if (Test-Path .\release\prepare-smart-notifications.ps1) { .\release\prepare-smart-notifications.ps1 }
+          if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Development cannot publish.' }
+      - name: Privacy and isolation preflight
+        shell: powershell
+        run: .\release\privacy-scan.ps1 -Root .
+      - name: Build both final delivery paths
+        shell: powershell
+        run: |
+          .\release\build.ps1 -OutputDirectory .\dist
+          .\release\finalize-package.ps1 -OutputDirectory .\dist
+          .\release\add-native-setup-routing.ps1 -OutputDirectory .\dist
+          .\release\build-public.ps1 -OutputDirectory .\dist-public
+          Copy-Item .\dist-public\* .\dist\ -Force
+      - name: Execute all native package regression suites
+        shell: powershell
+        run: .\release\test-packaged-runtime.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Recheck privacy before source commit
+        shell: powershell
+        run: .\release\privacy-scan.ps1 -Root .
+      - name: Commit only tested integration changes
+        shell: pwsh
+        run: |
+          if ((git branch --show-current).Trim() -ne 'work/4.2-smart-notifications') { throw 'Wrong branch.' }
+          git add -u -- release/add-native-setup-routing.ps1 release/test-packaged-runtime.ps1 release/test-connection-quality.ps1 release/publish.json version.json
+          $changes = @(git diff --cached --name-only)
+          if ($changes.Count -eq 0) { Write-Host 'Existing source passed.'; exit 0 }
+          foreach ($p in $changes) {
+            if ($p -notin @('release/add-native-setup-routing.ps1','release/test-packaged-runtime.ps1','release/test-connection-quality.ps1','release/publish.json','version.json')) { throw 'Unexpected staged path.' }
+          }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Wire and verify 4.2.1 opt-in notifications on native Windows'
+          if ($LASTEXITCODE -ne 0) { throw 'Source commit failed.' }
+          git push origin HEAD:refs/heads/work/4.2-smart-notifications
+          if ($LASTEXITCODE -ne 0) { throw 'Source push failed or branch moved; no force push attempted.' }
+      - name: Preserve native test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notifications-native-evidence
+          path: test-evidence/*.json
+          if-no-files-found: warn
+      - name: Preserve validated development packages
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notifications-validated-packages
+          path: dist/*
+          if-no-files-found: error
