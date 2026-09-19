@@ -40,13 +40,14 @@ Replace-One @'
                 </Setter.Value>
             </Setter>
         </Style>
-        <Style TargetType="{x:Type ScrollBar}">
+        <Style x:Key="HistoryScrollBar" TargetType="{x:Type ScrollBar}">
             <Setter Property="Width" Value="12"/>
             <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="{x:Type ScrollBar}">
-                        <Border Background="{TemplateBinding Background}" SnapsToDevicePixels="True">
+                        <Border Background="Transparent" SnapsToDevicePixels="True">
                             <Track x:Name="PART_Track" Orientation="Vertical" IsDirectionReversed="True"
                                    Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}"
                                    Value="{TemplateBinding Value}" ViewportSize="{TemplateBinding ViewportSize}">
@@ -60,6 +61,21 @@ Replace-One @'
             </Setter>
         </Style>
     </ScrollViewer.Resources>
+    <ScrollViewer.Template>
+        <ControlTemplate TargetType="{x:Type ScrollViewer}">
+            <Grid ClipToBounds="True" SnapsToDevicePixels="True">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" Grid.Column="0"
+                    Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
+                    CanContentScroll="{TemplateBinding CanContentScroll}" Margin="{TemplateBinding Padding}"/>
+                <ScrollBar x:Name="PART_VerticalScrollBar" Grid.Column="1" Orientation="Vertical"
+                    Style="{StaticResource HistoryScrollBar}" Minimum="0"
+                    Maximum="{TemplateBinding ScrollableHeight}" ViewportSize="{TemplateBinding ViewportHeight}"
+                    Value="{Binding VerticalOffset, RelativeSource={RelativeSource TemplatedParent}, Mode=OneWay}"
+                    Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"/>
+            </Grid>
+        </ControlTemplate>
+    </ScrollViewer.Template>
 '@
 Replace-One @'
                 $HistoryPanel.Visibility = [Windows.Visibility]::Visible
