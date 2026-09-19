@@ -45,7 +45,6 @@ $visual=Replace-Reviewed $visual @'
     }
 '@ @'
     function Settle-Layout {
-        # ScrollViewer applies queued commands over multiple layout passes.
         for($pass=0;$pass -lt 8;$pass++){
             $window.UpdateLayout()
             $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
@@ -53,6 +52,14 @@ $visual=Replace-Reviewed $visual @'
         }
     }
 '@
+$visual=Replace-Reviewed $visual @'
+    $track=$bar.Template.FindName('PART_Track',$bar)
+'@ @'
+    $track=$bar.Template.FindName('PART_Track',$bar)
+    $rail=$bar.Template.FindName('HistoryRail',$bar)
+'@
+$visual=Replace-Reviewed $visual 'railAlpha=$bar.Background.Color.A;' 'railAlpha=$rail.Background.Color.A;'
+$visual=Replace-Reviewed $visual 'Check ($bar.Background.Color.A -eq 0)' 'Check ($null -ne $rail -and $rail.Background.Color.A -eq 0)'
 $visual=Replace-Reviewed $visual @'
     $HistoryPanel.ScrollToEnd();Settle-Layout
     Check ($HistoryPanel.VerticalOffset -gt 0) 'History can scroll to the oldest retained event'
