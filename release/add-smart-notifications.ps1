@@ -1,6 +1,6 @@
 param([Parameter(Mandatory=$true)][string]$Path)
 $ErrorActionPreference='Stop'
-$text=[IO.File]::ReadAllText($Path,[Text.Encoding]::UTF8)
+$script:text=[IO.File]::ReadAllText($Path,[Text.Encoding]::UTF8)
 function Replace-One([string]$Old,[string]$New) {
     if ([regex]::Matches($script:text,[regex]::Escape($Old)).Count -ne 1) { throw ('Notification anchor missing or duplicated: ' + $Old.Substring(0,[Math]::Min($Old.Length,100))) }
     $script:text=$script:text.Replace($Old,$New)
@@ -147,7 +147,6 @@ Replace-One '    function Write-LocalHistoryEvent {' @'
 
     function Write-LocalHistoryEvent {
 '@
-# Only freshly accepted completed quality observations can supply peer alerts.
 Replace-One '            if (-not $view) { return }' @'
             if (-not $view) { return }
             Observe-SmartConnectionNotification $Data $view
@@ -157,7 +156,6 @@ Replace-One '        param([switch]$Stale)' @'
         $script:notificationLastPeer=''
         $script:notificationQualityWarning=$false
 '@
-# Add no timer/probe: reuse the existing local UI-state read tick.
 Replace-One @'
     $script:autoRepairUiTimer.Add_Tick({
         if ($DetailsPanel.Visibility
@@ -166,7 +164,6 @@ Replace-One @'
         Observe-SmartAutoNotification
         if ($DetailsPanel.Visibility
 '@
-# 'repaired' in this monitor means that the task started, not a final verdict.
 Replace-One '$AutoRepairStatusText.Text = "Enabled · repaired · $fresh"' '$AutoRepairStatusText.Text = "Enabled · recovery started · $fresh"'
 Replace-One @'
                         $script:updateManifest = $manifest
@@ -183,8 +180,6 @@ Replace-One "                Write-LocalHistoryEvent 'integrity_attention'" @'
                 Write-LocalHistoryEvent 'integrity_attention'
                 [void](Request-SmartNotification 'integrity_attention')
 '@
-# Success/failure already have inline + history feedback. Notify only if observed
-# in this running session and in the tray; do not replay old result files on launch.
 Replace-One "            `$result = Get-Content -LiteralPath `$UpdateResultPath -Raw | ConvertFrom-Json" @'
             $notificationResultStamp=(Get-Item -LiteralPath $UpdateResultPath -ErrorAction Stop).LastWriteTimeUtc.ToString('o')
             $result = Get-Content -LiteralPath $UpdateResultPath -Raw | ConvertFrom-Json
@@ -237,6 +232,6 @@ Replace-One @'
     })
     Update-TrayStatus $null
 '@
-[void][scriptblock]::Create($text)
-[IO.File]::WriteAllText($Path,$text,(New-Object Text.UTF8Encoding($true)))
+[void][scriptblock]::Create($script:text)
+[IO.File]::WriteAllText($Path,$script:text,(New-Object Text.UTF8Encoding($true)))
 Write-Host 'Opt-in Smart notifications wired after final UI transforms.'
