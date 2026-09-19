@@ -19,6 +19,9 @@ guardian-known-good*.json
 operation.lock
 operation-coordinator.gate
 operation-recovery.json
+notification-policy.json
+notification-policy.previous.json
+notification-policy.gate
 state.json
 auto-repair-state.json
 update-result.json
