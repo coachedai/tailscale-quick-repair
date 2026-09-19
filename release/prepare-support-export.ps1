@@ -32,9 +32,11 @@ $test=Replace-Reviewed $test @'
     & (Join-Path $PSScriptRoot 'test-progress-reset.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -EvidenceDirectory $EvidenceDirectory
     & (Join-Path $PSScriptRoot 'test-support-export.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -LibraryPath $dll -EvidenceDirectory $EvidenceDirectory
 '@
+$ep=Join-Path $PSScriptRoot 'test-support-export.ps1';$exportTest=[IO.File]::ReadAllText($ep)
+$exportTest=Replace-Reviewed $exportTest "-ReferencedAssemblies @('PresentationFramework','WindowsBase')" "-ReferencedAssemblies @('PresentationFramework','PresentationCore','WindowsBase','System.Xaml')"
 $v.version='3.0.0-phase5.2.1';$v.versionCode=[int64]30000621
 $pub=[ordered]@{publish=$false;channel='preview';version=$v.version;versionCode=$v.versionCode;requiresSetup=$false;publicInstaller=$true;notes='Privacy-safe support export. The existing diagnostic Copy report action becomes Share report: preview a frozen allowlisted snapshot, optionally include ten typed history events, then copy or save a new local .txt file. No addresses, device names, paths, raw logs, tokens or automatic upload. Pending/stale/missing observations are labelled rather than promoted to fresh results. Existing files are never overwritten by export. Five-file ordinary update, with no protected worker or network changes. Existing regression suites plus privacy-injection, native preview and save tests remain required.'}
 $utf8=New-Object Text.UTF8Encoding($false)
-[IO.File]::WriteAllText($rp,$route,$utf8);[IO.File]::WriteAllText($tp,$test,$utf8)
+[IO.File]::WriteAllText($rp,$route,$utf8);[IO.File]::WriteAllText($tp,$test,$utf8);[IO.File]::WriteAllText($ep,$exportTest,$utf8)
 [IO.File]::WriteAllText($vp,($v|ConvertTo-Json -Depth 6),$utf8)
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'publish.json'),($pub|ConvertTo-Json -Depth 6),$utf8)

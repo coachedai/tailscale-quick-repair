@@ -46,10 +46,10 @@ jobs:
         shell: pwsh
         run: |
           if ((git branch --show-current).Trim() -ne 'work/5.2-private-export') { throw 'Wrong branch.' }
-          git add -u -- release/add-native-setup-routing.ps1 release/test-packaged-runtime.ps1 release/publish.json version.json
+          git add -u -- release/add-native-setup-routing.ps1 release/test-packaged-runtime.ps1 release/test-support-export.ps1 release/publish.json version.json
           $changes = @(git diff --cached --name-only)
           foreach ($p in $changes) {
-            if ($p -notin @('release/add-native-setup-routing.ps1','release/test-packaged-runtime.ps1','release/publish.json','version.json')) { throw 'Unexpected staged change.' }
+            if ($p -notin @('release/add-native-setup-routing.ps1','release/test-packaged-runtime.ps1','release/test-support-export.ps1','release/publish.json','version.json')) { throw 'Unexpected staged change.' }
           }
           if ($changes.Count -eq 0) { exit 0 }
           git config user.name 'github-actions[bot]'
