@@ -24,6 +24,7 @@ namespace Tqr
     {
         private readonly string root;
         private DateTime notBefore;
+        private bool sessionDisabled;
         private readonly Dictionary<string, DateTime> seen = new Dictionary<string, DateTime>();
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false);
         private sealed class Attempt { public string code; public string eventUtc; public string requestedUtc; }
@@ -64,14 +65,13 @@ namespace Tqr
             RefuseReparse(root);
             string gate = Path.Combine(root, "notification-policy.gate");
             RefuseReparse(gate);
-            // Never delete a shared gate pathname, never wait on the UI thread.
             return new FileStream(gate, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         }
         private State Read()
         {
             string path = Path.Combine(root, "notification-policy.json");
             RefuseReparse(path);
-            if (!File.Exists(path)) return new State(); // Opt-in, not enabled by installing.
+            if (!File.Exists(path)) return new State();
             long length = new FileInfo(path).Length;
             if (length < 2 || length > 16384) throw new InvalidDataException("Invalid policy size.");
             var raw = Json().Deserialize<Dictionary<string, object>>(File.ReadAllText(path, Utf8));
@@ -117,17 +117,21 @@ namespace Tqr
         }
         public NotificationResult Settings()
         {
-            try { using (FileStream gate = Enter()) { State s = Read(); return new NotificationResult { Status = "ready", Enabled = s.enabled }; } }
+            try { using (FileStream gate = Enter()) { State s = Read(); return new NotificationResult { Status = "ready", Enabled = s.enabled && !sessionDisabled }; } }
             catch { return new NotificationResult { Status = "unavailable" }; }
         }
         public NotificationResult SetEnabled(bool enabled, DateTime nowUtc)
         {
+            // A user's OFF request takes effect in memory even if the file is locked.
+            // A failed ON request must not remove an existing session mute.
+            if (!enabled) sessionDisabled = true;
             try
             {
                 using (FileStream gate = Enter())
                 {
-                    State s = Read(); // Damaged settings are preserved, not silently reset.
+                    State s = Read();
                     s.enabled = enabled; Save(s);
+                    sessionDisabled = !enabled;
                     notBefore = nowUtc.ToUniversalTime(); seen.Clear();
                     return new NotificationResult { Status = "ready", Enabled = enabled };
                 }
@@ -145,13 +149,13 @@ namespace Tqr
                 return new NotificationResult { Status = "stale" };
             DateTime last;
             if (seen.TryGetValue(code, out last) && stamp <= last) return new NotificationResult { Status = "duplicate" };
-            seen[code] = stamp; // Dropped events are NOT queued for foreground/quiet-time replay.
+            seen[code] = stamp;
             try
             {
                 using (FileStream gate = Enter())
                 {
                     State s = Read();
-                    if (!s.enabled) return new NotificationResult { Status = "disabled" };
+                    if (!s.enabled || sessionDisabled) return new NotificationResult { Status = "disabled" };
                     if ((!inTray && !explicitTest) || !shellReady) return new NotificationResult { Status = "suppressed", Enabled = true };
                     int recent = 0;
                     foreach (Attempt a in s.attempts)
@@ -167,7 +171,7 @@ namespace Tqr
                     s.attempts.RemoveAll(delegate(Attempt a) { return Stamp(a.requestedUtc) < now.AddHours(-24); });
                     while (s.attempts.Count >= 64) s.attempts.RemoveAt(0);
                     s.attempts.Add(new Attempt { code = code, eventUtc = stamp.ToString("o"), requestedUtc = now.ToString("o") });
-                    Save(s); // Reserve before requesting a banner, including transport failure.
+                    Save(s);
                     prompt.Status = "prepared"; prompt.Enabled = true;
                     return prompt;
                 }
@@ -198,7 +202,7 @@ namespace Tqr
         public static bool ShellAllowsNotifications()
         {
             try { int state; return SHQueryUserNotificationState(out state) >= 0 && state == 5; }
-            catch { return false; } // Unknown availability must not override Windows.
+            catch { return false; }
         }
     }
 }
