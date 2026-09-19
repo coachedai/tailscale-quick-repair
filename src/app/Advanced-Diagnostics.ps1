@@ -24,7 +24,9 @@ function Publish {
         $bytes=[Text.Encoding]::UTF8.GetBytes(($script:Result|ConvertTo-Json -Depth 6 -Compress))
         $stream=[IO.File]::Open($temp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
         try {$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)} finally {$stream.Dispose()}
-        if(Test-Path -LiteralPath $OutputPath){[IO.File]::Replace($temp,$OutputPath,$null)}
+        # PowerShell 5.1 casts $null to an empty string for a String argument.
+        # NullString preserves .NET's no-backup contract without deleting the old result first.
+        if(Test-Path -LiteralPath $OutputPath){[IO.File]::Replace($temp,$OutputPath,[NullString]::Value)}
         else{[IO.File]::Move($temp,$OutputPath)}
     } catch {} finally {if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue}}
 }
