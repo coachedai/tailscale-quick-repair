@@ -3,34 +3,33 @@ if($env:GITHUB_REPOSITORY -ne 'coachedai/tailscale-quick-repair' -or $env:GITHUB
 $repo=Split-Path -Parent $PSScriptRoot;$vp=Join-Path $repo 'version.json';$v=Get-Content $vp -Raw | ConvertFrom-Json
 if($v.version -eq '3.0.0-phase5.1.1'){Write-Host 'Integration already committed; validate current source.';return}
 if($v.version -ne '3.0.0-phase4.2.1'){throw 'Unexpected baseline.'}
-function R([string]$Text,[string]$Old,[string]$New){if([regex]::Matches($Text,[regex]::Escape($Old)).Count -ne 1){throw ('Missing or duplicate preparation anchor: '+$Old)};return $Text.Replace($Old,$New)}
+function Replace-Reviewed([string]$Text,[string]$Old,[string]$New){if([regex]::Matches($Text,[regex]::Escape($Old)).Count -ne 1){throw ('Missing or duplicate preparation anchor: '+$Old)};return $Text.Replace($Old,$New)}
 $path=Join-Path $PSScriptRoot 'add-native-setup-routing.ps1';$route=[IO.File]::ReadAllText($path)
-$route=R $route @'
+$route=Replace-Reviewed $route @'
         ('"{0}"' -f (Join-Path $repo 'src\native\SmartNotifications.cs')))
 '@ @'
         ('"{0}"' -f (Join-Path $repo 'src\native\SmartNotifications.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\DiagnosticAnalysis.cs')))
 '@
-$route=R $route '    & $notificationTransform -Path $uiPath' @'
+$route=Replace-Reviewed $route '    & $notificationTransform -Path $uiPath' @'
     & $notificationTransform -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-diagnostics-polish.ps1') -Path $uiPath
     Copy-Item -LiteralPath (Join-Path $repo 'src\app\Advanced-Diagnostics.ps1') -Destination (Join-Path $appDir 'Advanced-Diagnostics.ps1') -Force
 '@
 $writerPath=Join-Path $PSScriptRoot 'write-integrity-manifest.ps1';$writer=[IO.File]::ReadAllText($writerPath)
-$writer=R $writer "    'TailscaleQuickRepair.Operations.dll'" "    'TailscaleQuickRepair.Operations.dll',`n    'Advanced-Diagnostics.ps1'"
-$writer=R $writer "    `$required += 'TailscaleQuickRepair.exe','Advanced-Diagnostics.ps1'" "    `$required += 'TailscaleQuickRepair.exe'"
+$writer=Replace-Reviewed $writer "    'TailscaleQuickRepair.Operations.dll'" "    'TailscaleQuickRepair.Operations.dll',`n    'Advanced-Diagnostics.ps1'"
+$writer=Replace-Reviewed $writer "    `$required += 'TailscaleQuickRepair.exe','Advanced-Diagnostics.ps1'" "    `$required += 'TailscaleQuickRepair.exe'"
 $testPath=Join-Path $PSScriptRoot 'test-packaged-runtime.ps1';$test=[IO.File]::ReadAllText($testPath)
-$test=R $test @'
+$test=Replace-Reviewed $test @'
     & (Join-Path $PSScriptRoot 'test-smart-notifications.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -LibraryPath $dll -EvidenceDirectory $EvidenceDirectory
 '@ @'
     & (Join-Path $PSScriptRoot 'test-smart-notifications.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -LibraryPath $dll -EvidenceDirectory $EvidenceDirectory
     & (Join-Path $PSScriptRoot 'test-diagnostics-polish.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -LibraryPath $dll -WorkerPath (Join-Path $normal 'app\Advanced-Diagnostics.ps1') -EvidenceDirectory $EvidenceDirectory
 '@
-# Bound the asynchronous reader drain too; an inherited pipe must not hold a worker forever.
 $analysisPath=Join-Path $repo 'src\native\DiagnosticAnalysis.cs';$analysis=[IO.File]::ReadAllText($analysisPath)
-$analysis=R $analysis 'object sync = new object(); StringBuilder captured = new StringBuilder(); bool clipped = false;' 'object sync = new object(); StringBuilder captured = new StringBuilder(); bool clipped = false; int completedReaders = 0;'
-$analysis=R $analysis 'if (e.Data == null) return;' 'if (e.Data == null) { Interlocked.Increment(ref completedReaders); return; }'
-$analysis=R $analysis 'else process.WaitForExit(); // The known CLI has exited; drain its async stdout/stderr.' @'
+$analysis=Replace-Reviewed $analysis 'object sync = new object(); StringBuilder captured = new StringBuilder(); bool clipped = false;' 'object sync = new object(); StringBuilder captured = new StringBuilder(); bool clipped = false; int completedReaders = 0;'
+$analysis=Replace-Reviewed $analysis 'if (e.Data == null) return;' 'if (e.Data == null) { Interlocked.Increment(ref completedReaders); return; }'
+$analysis=Replace-Reviewed $analysis 'else process.WaitForExit(); // The known CLI has exited; drain its async stdout/stderr.' @'
 else
                     {
                         Stopwatch drain = Stopwatch.StartNew();
