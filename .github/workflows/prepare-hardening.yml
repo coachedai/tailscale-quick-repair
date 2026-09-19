@@ -24,6 +24,13 @@ jobs:
           python -m py_compile release/prepare-3.4.2.py
           python release/prepare-3.4.2.py
           if ($LASTEXITCODE -ne 0) { throw 'Source preparation failed.' }
+          $testPath = Join-Path $pwd 'release/test-packaged-runtime.ps1'
+          $test = [IO.File]::ReadAllText($testPath)
+          $old = '$fixture=Join-Path $root $profile'
+          if (-not $test.Contains($old)) { throw 'Fixture path anchor missing.' }
+          $test = $test.Replace($old, '$fixture=Join-Path $root (''fixture-'' + $profile)')
+          $test = $test.Replace('if (-not $Value) { throw "FAILED: $Name" }', 'if (-not $Value) { throw "FAILED: $Name; Guardian detail: $($global:GuardianDetailText.Text)" }')
+          [IO.File]::WriteAllText($testPath,$test,(New-Object Text.UTF8Encoding($false)))
           New-Item -ItemType Directory -Path test-evidence -Force | Out-Null
           git diff -- src release .github/workflows/release.yml version.json > test-evidence/prepared-source.patch
       - name: Privacy and personal-data preflight
