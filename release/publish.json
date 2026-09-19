@@ -1,9 +1,9 @@
 {
-    "publish":  false,
-    "channel":  "preview",
-    "version":  "3.0.0-phase4.1.1",
-    "versionCode":  30000511,
-    "requiresSetup":  false,
-    "publicInstaller":  false,
-    "notes":  "Connection Intelligence 2.0 foundation. Passive session-only route-specific median baselines from completed checks, two-check latency confirmation, repeated observed fallback/switching explanations, reachability transitions and reset after target/network changes. Existing Remote insight and a distinct Baseline row replace duplicate session wording. No extra probes, notifications, repair actions or persistent peer samples. Existing Guardian, History, operation ownership and update paths retained; native package and quality regressions required before publication."
+  "publish": false,
+  "channel": "preview",
+  "version": "3.0.0-phase4.1.1",
+  "versionCode": 30000511,
+  "requiresSetup": false,
+  "publicInstaller": true,
+  "notes": "Connection Intelligence 2.0 foundation. Passive session-only route-specific median baselines from completed checks, two-check latency confirmation, repeated observed fallback/switching explanations, reachability transitions and reset after target/network changes. Existing Remote insight and a distinct Baseline row replace duplicate session wording. No extra probes, notifications, repair actions or persistent peer samples. Matching Setup assets remain available for fresh installs without forcing existing users through Setup. Existing Guardian, History, operation ownership and update paths retained; native package and quality regressions required before publication."
 }
