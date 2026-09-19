@@ -48,6 +48,8 @@ public class TqrRouteProbe {
             Start-Sleep -Milliseconds 150
             Check (-not(Test-Path $probe) -and $UpdateStatusText.Text -eq 'Update metadata is invalid') 'Invalid protection flag starts no installer or ordinary updater'
         } else {
+            $expectedStatus=if($kind -eq 'protected'){'Installing system update...'}else{'Installing update...'}
+            Check ($UpdateNowButton.Content -ceq 'Updating...' -and $UpdateStatusText.Text -ceq $expectedStatus) "$kind route displays clean progress labels"
             $end=[DateTime]::UtcNow.AddSeconds(8)
             while(-not(Test-Path $probe) -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 30}
             Check (Test-Path $probe) "$kind click starts the native fixture child"
