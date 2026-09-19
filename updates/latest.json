@@ -1,31 +1,31 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase3.4.1",
-  "versionCode": 30000441,
+  "version": "3.0.0-phase3.4.2",
+  "versionCode": 30000442,
   "published": true,
-  "publishedAt": "2026-09-18T16:14:34.2157462Z",
+  "publishedAt": "2026-09-19T13:28:10.0876755Z",
   "mandatory": false,
   "requiresSetup": true,
-  "notes": "Phase 3.3 Operation Coordinator + Phase 3.4 Recovery Foundation. Adds an atomic cross-process operation lock for Repair, Auto Repair, Advanced Diagnostics, Updater and Setup; pauses Auto Repair during other operations; clears stale crash markers safely; prevents overlapping work; and fixes the stage rail so blue only advances when that stage is actually reached. Existing repair, Guardian, updater, diagnostics, tray and connection-intelligence features are preserved.",
+  "notes": "Package parity and reliability hardening. Both delivery paths now include release-matched Guardian metadata and the same full UI. Baselines are replaced atomically with one local predecessor, and damaged records are preserved. A shared coordinator serializes ownership changes, never expires a live owner, preserves uncertain markers, and prevents rejected repair attempts from overwriting another result. Native Windows packaged-Guardian and cross-process regression gates are required before publishing. No Tailscale recovery algorithm or broad network reset changes.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.4.1/TailscaleQuickRepair-3.0.0-phase3.4.1.zip",
-    "sha256": "c3f79eb0b267f4b570e8917bc099d3eace4e0bbf53816bd1a86c32a776249a0f",
-    "size": 63903
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.4.2/TailscaleQuickRepair-3.0.0-phase3.4.2.zip",
+    "sha256": "939176d14e098771f2bf6e79dba6a17f8ff6ff5f88c4f71dc8b01f2b784156b8",
+    "size": 72796
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.4.1/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.4.1.exe",
-    "sha256": "83b7b53c14f6e845bbfb767863cdae01ba08d45b38b380c5301b9837b7183266",
-    "size": 25088
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.4.2/TailscaleQuickRepair-Bootstrap-3.0.0-phase3.4.2.exe",
+    "sha256": "91f970370c812ff316743484d2c34b5d2f0947481fd7e8ae97ca068f0740b056",
+    "size": 28672
   },
   "setup": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.4.1/TailscaleQuickRepair-SetupPackage-3.0.0-phase3.4.1.zip",
-    "sha256": "0ae4fd403e224e4b4185b3bfaaf937c648696d07659af6596ec1ba921343f013",
-    "size": 79383
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.4.2/TailscaleQuickRepair-SetupPackage-3.0.0-phase3.4.2.zip",
+    "sha256": "260fea08ddaf30e050f0c7937c44331545eb9d042914d950ee3dfd26a8899827",
+    "size": 91586
   },
   "installer": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.4.1/TailscaleQuickRepair-Setup-3.0.0-phase3.4.1.exe",
-    "sha256": "022c0c21e8b2145b784f022354a06c148be142be97c40297644afedc0f5fcb9c",
-    "size": 45568
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase3.4.2/TailscaleQuickRepair-Setup-3.0.0-phase3.4.2.exe",
+    "sha256": "6a8212cfc4a7f9d175dbafb4ccafa799a2fc4cdf37662674cba8c5efdff9d817",
+    "size": 49152
   }
 }
