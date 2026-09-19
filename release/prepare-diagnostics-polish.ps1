@@ -47,8 +47,6 @@ $visual=Replace-Reviewed $visual @'
     }
 '@ @'
     function Settle-Layout {
-        # Give the same WPF dispatcher used by ShowDialog a bounded real frame.
-        # This changes only the disposable test harness, never the application.
         $frame=New-Object Windows.Threading.DispatcherFrame
         $timer=New-Object Windows.Threading.DispatcherTimer
         $timer.Interval=[TimeSpan]::FromMilliseconds(120)
@@ -66,6 +64,13 @@ $visual=Replace-Reviewed $visual @'
 '@ @'
         $brush=[Windows.Media.VisualBrush]::new($HistoryPanel);$brush.AutoLayoutContent=$false
         $dc.DrawRectangle($brush,$null,[Windows.Rect]::new(0,0,$width,$height));$dc.Close()
+'@
+$visual=Replace-Reviewed $visual @'
+    $HistoryPanel.ApplyTemplate()|Out-Null;Settle-Layout
+'@ @'
+    $HistoryPanel.ApplyTemplate()|Out-Null;Settle-Layout
+    & (Join-Path $PSScriptRoot 'trace-history-scroll.ps1') -Window $window -Viewer $HistoryPanel -EvidenceDirectory $EvidenceDirectory
+    Settle-Layout
 '@
 $visual=Replace-Reviewed $visual @'
     $track=$bar.Template.FindName('PART_Track',$bar)
