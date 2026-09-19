@@ -34,7 +34,9 @@ $old=@'
 '@
 $new=@'
     & (Join-Path $PSScriptRoot 'test-update-routing.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -EvidenceDirectory $EvidenceDirectory
-    & (Join-Path $PSScriptRoot 'test-connection-quality.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -LibraryPath $dll -EvidenceDirectory $EvidenceDirectory
+    # Windows PowerShell's default source encoding is not UTF-8; retain exact Unicode route fixtures.
+    $qualityTest=[scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'test-connection-quality.ps1'),[Text.Encoding]::UTF8))
+    & $qualityTest -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -LibraryPath $dll -EvidenceDirectory $EvidenceDirectory
 '@
 $test=Replace-One $test $old $new
 $version.version='3.0.0-phase4.1.1';$version.versionCode=[int64]30000511
