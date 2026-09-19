@@ -1,9 +1,9 @@
 {
-  "publish": false,
-  "channel": "preview",
-  "version": "3.0.0-phase3.5.1",
-  "versionCode": 30000451,
-  "requiresSetup": true,
-  "publicInstaller": true,
-  "notes": "Local Health History: bounded privacy-safe typed events across restarts inside Activity, with atomic writes and visible non-critical failures. History retains 40 events up to 30 days without IPs, device names or raw logs. Protected update routing is exercised on native Windows; the ordinary updater now refuses a protected release rather than silently updating only app files. Existing Guardian and targeted repair behavior retained."
+    "publish":  false,
+    "channel":  "preview",
+    "version":  "3.0.0-phase4.1.1",
+    "versionCode":  30000511,
+    "requiresSetup":  false,
+    "publicInstaller":  false,
+    "notes":  "Connection Intelligence 2.0 foundation. Passive session-only route-specific median baselines from completed checks, two-check latency confirmation, repeated observed fallback/switching explanations, reachability transitions and reset after target/network changes. Existing Remote insight and a distinct Baseline row replace duplicate session wording. No extra probes, notifications, repair actions or persistent peer samples. Existing Guardian, History, operation ownership and update paths retained; native package and quality regressions required before publication."
 }
