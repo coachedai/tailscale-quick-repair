@@ -1,31 +1,31 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase5.1.1",
-  "versionCode": 30000611,
+  "version": "3.0.0-phase5.1.2",
+  "versionCode": 30000612,
   "published": true,
-  "publishedAt": "2026-09-19T22:25:57.6763496Z",
+  "publishedAt": "2026-09-19T22:57:26.4071251Z",
   "mandatory": false,
   "requiresSetup": false,
-  "notes": "Diagnostics 2.0 foundation and History polish. History has a slim rounded theme-aware scrollbar with standard scrolling retained, and opens at the newest events. Optional diagnostics now recognize direct endpoint replies, DERP and peer-relay paths, explain independent probe results without inventing a connection failure, and bound CLI execution/output. Raw command output and endpoints are not saved. The unprivileged diagnostics worker is delivered with ordinary updates: five app files are verified, six for Setup. No Tailscale recovery, protected worker, notification preference or network setting changes. Existing native suites plus diagnostic/scroll rendering gates are required.",
+  "notes": "Repeated-check progress fix. Previous completed results cannot repaint a new main check: embedded UTC timestamps, preserved watermarks and current-worker attachment boundaries exclude stale state before any rendering or History side effects. Diagnostics reset their measured fill before startup and retain prior result evidence behind a new run ID. The scoped diagnostic progress template has no completion animation. History scrollbar, Diagnostics 2.0, notifications and repair decisions are retained. Native repeated-click, state-file and rendered-progress tests join all existing release gates.",
   "package": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase5.1.1/TailscaleQuickRepair-3.0.0-phase5.1.1.zip",
-    "sha256": "c6f19be9af09a646319a05094a4d86f792ed93be963bc18e86f5d6b8e276300b",
-    "size": 92692
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase5.1.2/TailscaleQuickRepair-3.0.0-phase5.1.2.zip",
+    "sha256": "b8388f3fc6049943015977e37803e930cc9f978564126fe24ee2fa74c6747f1a",
+    "size": 93940
   },
   "bootstrap": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase5.1.1/TailscaleQuickRepair-Bootstrap-3.0.0-phase5.1.1.exe",
-    "sha256": "57f1d7278d10a1472b3848fa8836a63eab1af041965d48cbe0e80766f59f6b6d",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase5.1.2/TailscaleQuickRepair-Bootstrap-3.0.0-phase5.1.2.exe",
+    "sha256": "52714741b487ca6d31251be04eb35e38d8ef697f58ddf32cb8f1d81cb49a9fc2",
     "size": 29184
   },
   "setup": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase5.1.1/TailscaleQuickRepair-SetupPackage-3.0.0-phase5.1.1.zip",
-    "sha256": "f667d64b6fadeaca8970c86bdf1cf01dcccba24516c6585e94b2477da6f89b8c",
-    "size": 122295
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase5.1.2/TailscaleQuickRepair-SetupPackage-3.0.0-phase5.1.2.zip",
+    "sha256": "9ec97430e2b39f3ec1409bc13550ae7bb7cda3310e24a9121382c1b8b15a5474",
+    "size": 123539
   },
   "installer": {
-    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase5.1.1/TailscaleQuickRepair-Setup-3.0.0-phase5.1.1.exe",
-    "sha256": "4d4aae995151f7695345c630a83aac1c54a3166706a170682625e34f1c8a6d2c",
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase5.1.2/TailscaleQuickRepair-Setup-3.0.0-phase5.1.2.exe",
+    "sha256": "8e5a7e8c8dcd9ff7af63ec35c0baa62e177afbe404c622eb7ede525221a6dc74",
     "size": 49152
   }
 }
