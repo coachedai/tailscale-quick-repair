@@ -71,7 +71,7 @@ try {
     },$true))
     Assert-That ($handlerNodes.Count -eq 1) 'Exactly one delivered Guardian click handler'
     # History is a real packaged dependency of Guardian; do not stub it away.
-    foreach ($name in @('Initialize-LocalHistory','Write-LocalHistoryEvent')) {
+    foreach ($name in @('Initialize-LocalHistory','Write-LocalHistoryEvent','Request-SmartNotification')) {
         $functions=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true))
         Assert-That ($functions.Count -eq 1) "Packaged history dependency exists: $name"
         . ([scriptblock]::Create($functions[0].Extent.Text))
@@ -245,6 +245,7 @@ try {
     # Windows PowerShell's default source encoding is not UTF-8; retain exact Unicode route fixtures.
     $qualityTest=[scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'test-connection-quality.ps1'),[Text.Encoding]::UTF8))
     & $qualityTest -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -LibraryPath $dll -EvidenceDirectory $EvidenceDirectory
+    & (Join-Path $PSScriptRoot 'test-smart-notifications.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -LibraryPath $dll -EvidenceDirectory $EvidenceDirectory
     Json-Write (Join-Path $EvidenceDirectory 'native-results.json') @{passed=$true;runtime='Windows PowerShell 5.1 / WPF / .NET Framework';scope='Packaged Guardian event and real process ownership; OS integration probes are fixture stubs';cases=$script:results.ToArray()}
     Write-Host "Native package gates passed: $($script:results.Count) assertions."
 } catch {

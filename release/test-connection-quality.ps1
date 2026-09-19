@@ -90,7 +90,7 @@ try {
     $text=[IO.File]::ReadAllText($UiPath,[Text.Encoding]::UTF8)
     $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)
     Check ($errors.Count -eq 0) 'Quality-enabled final package parses on Windows PowerShell 5.1'
-    foreach($name in @('Set-ConnectionInsight','Add-ConnectionEvent','Update-ConnectionIntelligence','Reset-ConnectionQuality')) {
+    foreach($name in @('Set-ConnectionInsight','Add-ConnectionEvent','Update-ConnectionIntelligence','Reset-ConnectionQuality','Observe-SmartConnectionNotification','Request-SmartNotification')) {
         $nodes=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true))
         Check ($nodes.Count -eq 1) "Exactly one final $name function remains after transforms"
         . ([scriptblock]::Create($nodes[0].Extent.Text))

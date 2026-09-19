@@ -140,7 +140,8 @@ try {
         ('/reference:"{0}"' -f (Join-Path $frameworkDir 'System.Web.Extensions.dll')),
         ('"{0}"' -f (Join-Path $repo 'src\native\OperationGate.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\LocalHistory.cs')),
-        ('"{0}"' -f (Join-Path $repo 'src\native\ConnectionQuality.cs')))
+        ('"{0}"' -f (Join-Path $repo 'src\native\ConnectionQuality.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\SmartNotifications.cs')))
     $libraryBuild = Start-Process -FilePath $compiler -ArgumentList ($libraryArgs -join ' ') `
         -RedirectStandardOutput $compileOut -RedirectStandardError $compileErr -WindowStyle Hidden -Wait -PassThru
     if ($libraryBuild.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $operationsDll)) {
@@ -335,6 +336,8 @@ try {
     [IO.File]::WriteAllText($uiPath,$ui,$utf8Bom)
     & (Join-Path $PSScriptRoot 'add-local-history.ps1') -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-connection-quality.ps1') -Path $uiPath
+    $notificationTransform=[scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'add-smart-notifications.ps1'),[Text.Encoding]::UTF8))
+    & $notificationTransform -Path $uiPath
 
     $version = Get-Content -LiteralPath $versionPath -Raw | ConvertFrom-Json
 
