@@ -31,6 +31,7 @@ jobs:
     outputs:
       should_publish: ${{ steps.publish.outputs.should_publish }}
       requires_setup: ${{ steps.publish.outputs.requires_setup }}
+      protected_handoff: ${{ steps.publish.outputs.protected_handoff }}
       build_setup: ${{ steps.publish.outputs.build_setup }}
       version: ${{ steps.meta.outputs.version }}
       safe_version: ${{ steps.meta.outputs.safe_version }}
@@ -73,9 +74,21 @@ jobs:
             throw 'release/publish.json does not match version.json.'
           }
           $requiresSetup = $false
-          if ($publish.PSObject.Properties.Name -contains 'requiresSetup') { $requiresSetup = [bool]$publish.requiresSetup }
+          if ($publish.PSObject.Properties.Name -contains 'requiresSetup') {
+            if ($publish.requiresSetup -isnot [bool]) { throw 'requiresSetup must be a boolean.' }
+            $requiresSetup = [bool]$publish.requiresSetup
+          }
+          $protectedHandoff = $false
+          if ($publish.PSObject.Properties.Name -contains 'protectedHandoff') {
+            if ($publish.protectedHandoff -isnot [bool]) { throw 'protectedHandoff must be a boolean.' }
+            $protectedHandoff = [bool]$publish.protectedHandoff
+          }
+          if ($requiresSetup -and $protectedHandoff) {
+            throw 'A release cannot use direct Setup routing and the legacy-compatible protected handoff at the same time.'
+          }
           "should_publish=$(([bool]$publish.publish).ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "requires_setup=$($requiresSetup.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "protected_handoff=$($protectedHandoff.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "build_setup=true" >> $env:GITHUB_OUTPUT
       - name: Build and round-trip validate routed update package
         shell: powershell
@@ -174,6 +187,7 @@ jobs:
         shell: powershell
         env:
           REQUIRES_SETUP: ${{ needs.validate.outputs.requires_setup }}
+          PROTECTED_HANDOFF: ${{ needs.validate.outputs.protected_handoff }}
         run: |
           $zip = Get-ChildItem dist -Filter 'TailscaleQuickRepair-*.zip' -File | Where-Object { $_.Name -notlike '*SetupPackage*' } | Select-Object -First 1
           $scanRoot = Join-Path $env:RUNNER_TEMP ('tqr-package-scan-' + [Guid]::NewGuid().ToString('N'))
@@ -277,6 +291,7 @@ jobs:
             publishedAt = [DateTime]::UtcNow.ToString('o')
             mandatory = $false
             requiresSetup = ($env:REQUIRES_SETUP -eq 'true')
+            protectedHandoff = ($env:PROTECTED_HANDOFF -eq 'true')
             notes = [string]$publish.notes
             package = [ordered]@{
               url = "$assetBase/$($zip.Name)"
