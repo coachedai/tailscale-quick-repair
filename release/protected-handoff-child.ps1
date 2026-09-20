@@ -41,7 +41,9 @@ try{
         Check (Test-Path (Join-Path $program 'Repair-Backend.ps1')) 'Published protected backend exists before the bridge'
     }
     elseif($Phase -eq 'ApplyBridge'){
-        $type=[Reflection.Assembly]::LoadFile((Join-Path $LegacyPackage 'app\TailscaleQuickRepairUpdater.exe')).GetType('Program')
+        $installedUpdater=Join-Path $app 'TailscaleQuickRepairUpdater.exe'
+        Check ((Get-FileHash $installedUpdater).Hash -ceq (Get-FileHash (Join-Path $LegacyPackage 'app\TailscaleQuickRepairUpdater.exe')).Hash) 'Bridge executes the genuine installed 5.2.1 updater bytes'
+        $type=[Reflection.Assembly]::LoadFile($installedUpdater).GetType('Program')
         $synthetic='{"schema":1,"published":true,"version":"fixture","versionCode":2,"requiresSetup":false,"protectedHandoff":true,"package":{"url":"https://github.com/coachedai/tailscale-quick-repair/releases/download/vfixture/package.zip","sha256":"'+('a'*64)+'","size":1}}'
         $parsed=Invoke-Private $type 'DeserializeObject' @($synthetic)
         Check ($parsed.ContainsKey('protectedHandoff') -and -not [bool](Invoke-Private $type 'ReadBool' @($parsed,'requiresSetup'))) 'Published 5.2.1 updater parser accepts an extra protectedHandoff field while retaining requiresSetup false'
