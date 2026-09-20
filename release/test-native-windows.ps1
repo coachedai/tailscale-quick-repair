@@ -19,7 +19,7 @@ $lab=Join-Path $env:RUNNER_TEMP ('TqrNativeLab-'+[Guid]::NewGuid().ToString('N')
 New-Item -ItemType Directory -Path $lab|Out-Null
 $cases=New-Object 'Collections.Generic.List[object]'
 $observations=New-Object 'Collections.Generic.List[object]'
-$passed=$false;$cleanupOK=$true;$stage='preflight';$failureType='';$failureCode=0;$reflectionBoundary=''
+$passed=$false;$cleanupOK=$true;$stage='preflight';$failureType='';$failureCode=0;$reflectionBoundary='';$blockedStage='';$blockedBoundary=''
 $vendorInstalled=$false;$productOwned=$false;$vendorOwned=$false;$setupLease=$false
 $createdTasks=New-Object 'Collections.Generic.List[string]'
 $folderName='';$folder=$null;$scheduler=$null;$setupType=$null;$msi='';$vendorHash='';$repeatDelta=-1
@@ -41,7 +41,8 @@ function Setup([string]$Name,[object[]]$Arguments){
     # function boundary. Reflection needs the original CLR objects, not wrappers.
     $nativeArguments=New-Object object[] $Arguments.Count
     for($i=0;$i -lt $Arguments.Count;$i++){
-        $nativeArguments[$i]=if($null -eq $Arguments[$i]){$null}else{$Arguments[$i].PSObject.BaseObject}
+        if($null -eq $Arguments[$i]){$nativeArguments[$i]=$null}
+        else{$nativeArguments[$i]=$Arguments[$i].PSObject.BaseObject}
     }
     $script:reflectionBoundary=$Name+':'+(($nativeArguments|ForEach-Object {if($null -eq $_){'null'}else{$_.GetType().FullName}})-join ',')
     return ,($m.Invoke($null,$nativeArguments))
@@ -85,7 +86,7 @@ function Observe($Machine,[string]$Label){
 }
 function WaitTask($Task){
     $clock=[Diagnostics.Stopwatch]::StartNew()
-    while([int]$Task.State -eq 4){if($clock.Elapsed.TotalSeconds -gt 120){throw 'Lab task did not finish; no active job is rerun.'};Start-Sleep -Milliseconds 200}
+    while([int]$Task.State -in @(2,4)){if($clock.Elapsed.TotalSeconds -gt 120){throw 'Lab task did not finish; no active job is rerun.'};Start-Sleep -Milliseconds 200}
 }
 function MarkerTimes([string]$Path){
     if(-not(Test-Path -LiteralPath $Path)){return @()}
@@ -249,7 +250,7 @@ try{
         Start-Sleep -Milliseconds 250
     }while([DateTime]::UtcNow -lt $deadline)
     WaitTask $auto
-    Check ($observed -and $observed.phase -eq 'Complete' -and $observed.status -eq 'manual' -and $observed.actionsAttempted -eq 0) 'Actual highest-interactive task executes the unmodified installed monitor and publishes a fresh attention result'
+    Check ($observed -and [DateTime]::Parse($observed.lastCheckedUtc).ToUniversalTime() -ge $start -and $observed.phase -eq 'Complete' -and $observed.status -eq 'manual' -and $observed.actionsAttempted -eq 0) 'Actual highest-interactive task executes the unmodified installed monitor and publishes a fresh attention result'
     Check ([int64]$auto.LastTaskResult -eq 20) 'Task Scheduler receives the real monitor attention exit code without a repair success claim'
     Check ([Tqr.AutoRepairPolicyStore]::SetEnabled($app,$false,[DateTime]::UtcNow)) 'Lab opt-out is persisted before testing the actual disabled task'
     $recordHash=(Get-FileHash (Join-Path $app 'auto-repair-state.json')).Hash
@@ -265,6 +266,7 @@ try{
     Check (@(Get-Process -Name 'TailscaleQuickRepair' -ErrorAction SilentlyContinue).Count -eq 0) 'Native acceptance did not require a resident Quick Repair GUI'
     $passed=$true
 }catch{
+    $blockedStage=$stage;$blockedBoundary=$reflectionBoundary
     $failureType=$_.Exception.GetType().FullName;$failureCode=$_.Exception.HResult
     if($_.Exception.InnerException){$failureType=$_.Exception.InnerException.GetType().FullName;$failureCode=$_.Exception.InnerException.HResult}
     Write-Host ('Native Windows gate blocked at: '+$stage+'; type='+$failureType+'; code='+$failureCode)
@@ -287,8 +289,8 @@ try{
     [pscustomobject]@{
         passed=($passed -and $cleanupOK);source=$env:GITHUB_SHA;scope='Real empty GitHub-hosted Windows machine: unmodified Setup cores, installed worker and official unauthenticated vendor service; real scheduled dispatch and full recurrence';
         vendorVersion='1.102.3';vendorSha256=$vendorHash;recurrenceSeconds=$repeatDelta;cases=@($cases.ToArray());observations=@($observations.ToArray());
-        failureStage=$(if($passed){''}else{$stage});failureType=$failureType;failureCode=$failureCode;reflectionBoundary=$reflectionBoundary;
+        failureStage=$(if($passed){''}else{$blockedStage});failureType=$failureType;failureCode=$failureCode;reflectionBoundary=$blockedBoundary;
         limits=@('No tailnet login, authentication key or remote peer','Fresh stopped-service policy is an explicitly separate state fixture; observed-intent state is preserved','Real service event uses the exact Setup subscription with a harmless action; actual monitor task dispatch is a separate test','Setup verification/application/registration cores execute natively; interactive UAC, alternate-admin, restart/rollback and full entry are not certified','No actual sleep/resume, logon or VPN transition is induced','No raw vendor logs, host paths, usernames, addresses, private state or MSI is uploaded; transient files remain only on the disposable runner')
     }|ConvertTo-Json -Depth 10|Set-Content (Join-Path $evidence 'native-windows-results.json') -Encoding UTF8
 }
-if(-not $passed -or -not $cleanupOK){throw ('Native Windows acceptance remains blocked: '+$stage)}
+if(-not $passed -or -not $cleanupOK){throw ('Native Windows acceptance remains blocked: '+$blockedStage)}
