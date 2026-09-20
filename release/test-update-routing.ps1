@@ -32,6 +32,7 @@ public class TqrRouteProbe {
     function Get-Brush([string]$Name) { return [Windows.Media.Brushes]::Gray }
     $handlers=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Expression.Extent.Text -ceq '$UpdateNowButton' -and $n.Member.Value -eq 'Add_Click'},$true))
     Check ($handlers.Count -eq 1) 'Final package has one Update now event'
+    Check ([regex]::IsMatch($text,'if\s*\(Invoke-PendingProtectedUpdate\)\s*\{\s*return\s*\}',[Text.RegularExpressions.RegexOptions]::Singleline)) 'Successful protected handoff stops normal startup work before repair or health checks begin'
     $xamlMatch=[regex]::Match($text,'(?s)\[xml\]\$xaml\s*=\s*@"\r?\n(?<xaml>.*?)\r?\n"@')
     foreach($kind in @('protected','ordinary','handoff','invalid')) {
         [xml]$xaml=$xamlMatch.Groups['xaml'].Value
