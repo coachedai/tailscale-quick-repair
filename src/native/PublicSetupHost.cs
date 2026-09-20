@@ -65,16 +65,21 @@ internal static class PublicSetupHost
             }
 
             bool repairOnly = HasSwitch(args, "--repair");
+            bool upgradeOnly = HasSwitch(args, "--upgrade");
+
+            if (repairOnly && upgradeOnly)
+                throw new InvalidDataException("Setup mode is invalid.");
+
             string peer = ReadArg(args, "--peer");
             bool startup = !String.Equals(ReadArg(args, "--startup"), "false", StringComparison.OrdinalIgnoreCase);
 
-            if (repairOnly && String.IsNullOrWhiteSpace(peer))
+            if ((repairOnly || upgradeOnly) && String.IsNullOrWhiteSpace(peer))
             {
                 peer = ReadConfiguredPeer();
                 startup = IsStartupEnabled();
             }
 
-            if (!repairOnly && String.IsNullOrWhiteSpace(peer))
+            if (!repairOnly && !upgradeOnly && String.IsNullOrWhiteSpace(peer))
             {
                 SetupChoice choice = ShowSetupDialog();
                 if (choice == null) return 0;
@@ -86,7 +91,7 @@ internal static class PublicSetupHost
 
             if (!IsAdministrator())
             {
-                return RelaunchElevated(peer, startup, repairOnly);
+                return RelaunchElevated(peer, startup, repairOnly, upgradeOnly);
             }
 
             if (!TryAcquireOperationLock(repairOnly ? "maintenance" : "setup"))
@@ -220,6 +225,7 @@ internal static class PublicSetupHost
                 throw new InvalidDataException("Setup package metadata does not match the trusted channel.");
 
             List<InstallFile> files = VerifyPackage(extract, package);
+            ValidateProtectedUpdateMarker(package.VersionCode);
 
             StopQuickRepair();
             ApplyFiles(files, work);
@@ -228,6 +234,7 @@ internal static class PublicSetupHost
             RegisterAutoRepairTask();
             ConfigureStartup(startup);
             CreateStartMenuShortcut();
+            RemoveProtectedUpdateMarker();
             StartQuickRepair();
 
             MessageBox.Show(
@@ -702,6 +709,31 @@ internal static class PublicSetupHost
     [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle handle, out NativeFileInformation info);
 
+    private static string GetProtectedUpdateMarkerPath()
+    {
+        return Path.Combine(GetAppDir(), "protected-update.json");
+    }
+
+    private static void ValidateProtectedUpdateMarker(long versionCode)
+    {
+        string path = GetProtectedUpdateMarkerPath();
+        if (!File.Exists(path)) return;
+
+        FileInfo info = new FileInfo(path);
+        if (info.Length <= 0 || info.Length > 4096)
+            throw new InvalidDataException("Protected update marker is invalid.");
+
+        Dictionary<string, object> marker = Deserialize(File.ReadAllText(path, Encoding.UTF8));
+        if (marker.Count != 2 || ReadInt(marker, "schema") != 1 || ReadLong(marker, "versionCode") != versionCode)
+            throw new InvalidDataException("Protected update marker does not match this release.");
+    }
+
+    private static void RemoveProtectedUpdateMarker()
+    {
+        string path = GetProtectedUpdateMarkerPath();
+        if (File.Exists(path)) File.Delete(path);
+    }
+
     private static void WriteLocalConfig(string peer)
     {
         Directory.CreateDirectory(GetAppDir());
@@ -907,13 +939,14 @@ internal static class PublicSetupHost
         return candidate;
     }
 
-    private static int RelaunchElevated(string peer, bool startup, bool repairOnly)
+    private static int RelaunchElevated(string peer, bool startup, bool repairOnly, bool upgradeOnly)
     {
         try
         {
             ProcessStartInfo psi = new ProcessStartInfo();
             psi.FileName = Process.GetCurrentProcess().MainModule.FileName;
-            psi.Arguments = (repairOnly ? "--repair " : "") + "--peer " + Quote(peer) + " --startup " + (startup ? "true" : "false");
+            string mode = repairOnly ? "--repair " : upgradeOnly ? "--upgrade " : "";
+            psi.Arguments = mode + "--peer " + Quote(peer) + " --startup " + (startup ? "true" : "false");
             psi.Verb = "runas";
             psi.UseShellExecute = true;
             Process child = Process.Start(psi);
