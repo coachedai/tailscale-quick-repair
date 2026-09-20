@@ -364,8 +364,20 @@ try {
         throw 'Protected update metadata does not match version.json.'
     }
 
+    $protectedHandoff = $false
+    if ($publish.PSObject.Properties.Name -contains 'protectedHandoff') {
+        if ($publish.protectedHandoff -isnot [bool]) {
+            throw 'protectedHandoff must be a boolean.'
+        }
+        $protectedHandoff = [bool]$publish.protectedHandoff
+    }
+    $requiresSetup = [bool]$publish.requiresSetup
+    if ($protectedHandoff -and $requiresSetup) {
+        throw 'protectedHandoff and requiresSetup cannot both be enabled for the same release.'
+    }
+
     $protectedMarkerPath = Join-Path $appDir 'protected-update.json'
-    if ([bool]$publish.requiresSetup) {
+    if ($requiresSetup -or $protectedHandoff) {
         [ordered]@{ schema = 1; versionCode = [int64]$version.versionCode } |
             ConvertTo-Json -Compress |
             Set-Content -LiteralPath $protectedMarkerPath -Encoding UTF8
