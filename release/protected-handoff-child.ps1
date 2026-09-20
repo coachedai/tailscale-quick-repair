@@ -130,6 +130,13 @@ try{
         [void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @([int64]$marker.versionCode))
         Check $true 'Refreshed Setup accepts the exact staged release marker'
         Check (([string](Invoke-Private $type 'ReadConfiguredPeer')).Trim() -ceq 'handoff-fixture.invalid') 'Upgrade mode can reuse the existing configured target'
+        [void](Invoke-Private $type 'WriteRestartPending' @([int64]$marker.versionCode))
+        $restartKey=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\TailscaleQuickRepair',$false)
+        try{
+            $restartValue=$restartKey.GetValue('PendingRestartVersionCode',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $restartKind=$restartKey.GetValueKind('PendingRestartVersionCode')
+            Check ($restartKind -eq [Microsoft.Win32.RegistryValueKind]::QWord -and [int64]$restartValue -eq [int64]$marker.versionCode) 'Refreshed Setup persists the exact pending restart version as a QWORD'
+        }finally{if($restartKey){$restartKey.Dispose()}}
         [void](Invoke-Private $type 'RemoveProtectedUpdateMarker')
         Check (-not(Test-Path (Join-Path $app 'protected-update.json'))) 'Protected marker is removed only by the refreshed Setup completion boundary'
     }
