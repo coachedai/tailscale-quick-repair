@@ -129,7 +129,7 @@ internal static class PublicSetupHost
 
             return repairOnly
                 ? RepairIntegration(peer, startup)
-                : Install(peer, startup);
+                : Install(peer, startup, upgradeOnly);
         }
         catch (Exception ex)
         {
@@ -226,7 +226,7 @@ internal static class PublicSetupHost
             catch { }
         }
     }
-    private static int Install(string peer, bool startup)
+    private static int Install(string peer, bool startup, bool upgradeOnly)
     {
         string work = Path.Combine(Path.GetTempPath(), "TailscaleQuickRepair-Setup-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
@@ -262,6 +262,7 @@ internal static class PublicSetupHost
             RegisterAutoRepairTask();
             ConfigureStartup(startup);
             CreateStartMenuShortcut();
+            if (upgradeOnly) WriteRestartPending(package.VersionCode);
             RemoveProtectedUpdateMarker();
             StartQuickRepair();
 
@@ -736,6 +737,22 @@ internal static class PublicSetupHost
     }
     [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle handle, out NativeFileInformation info);
+
+    private const string RestartRegistryPath = @"Software\TailscaleQuickRepair";
+    private const string RestartRegistryName = "PendingRestartVersionCode";
+
+    private static void WriteRestartPending(long versionCode)
+    {
+        if (versionCode <= 0) throw new InvalidDataException("Restart acknowledgement version is invalid.");
+        using (RegistryKey key = Registry.CurrentUser.CreateSubKey(RestartRegistryPath))
+        {
+            if (key == null) throw new IOException("Restart acknowledgement could not be written.");
+            key.SetValue(RestartRegistryName, versionCode, RegistryValueKind.QWord);
+            object value = key.GetValue(RestartRegistryName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            if (value == null || Convert.ToInt64(value) != versionCode)
+                throw new IOException("Restart acknowledgement could not be verified.");
+        }
+    }
 
     private static string GetProtectedUpdateMarkerPath()
     {
