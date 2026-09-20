@@ -20,6 +20,8 @@ if($text -notmatch '(?m)^\$ProtectedUpdateMarkerPath\s*=') {
 
 $functionBlock = @'
     function Invoke-PendingProtectedUpdate {
+        param([scriptblock]$StartProcess)
+
         if ($script:pendingProtectedUpdateStarted -or -not (Test-Path -LiteralPath $ProtectedUpdateMarkerPath)) {
             return $false
         }
@@ -51,7 +53,12 @@ $functionBlock = @'
             $psi.Arguments = '--upgrade'
             $psi.Verb = 'runas'
             $psi.UseShellExecute = $true
-            $process = [System.Diagnostics.Process]::Start($psi)
+            if ($StartProcess) {
+                $process = & $StartProcess $psi
+            }
+            else {
+                $process = [System.Diagnostics.Process]::Start($psi)
+            }
 
             if (-not $process) {
                 throw 'The protected update could not start.'
