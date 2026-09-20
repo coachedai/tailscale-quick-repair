@@ -400,6 +400,7 @@ internal static class PublicSetupHost
 
     private static void ApplyFiles(List<InstallFile> files, string work)
     {
+        PrepareProtectedRoot();
         string backup = Path.Combine(work, "backup");
         Directory.CreateDirectory(backup);
         List<BackupEntry> backups = new List<BackupEntry>();
@@ -421,6 +422,7 @@ internal static class PublicSetupHost
                 File.Copy(file.Source, next, true);
                 if (File.Exists(file.Target)) File.Delete(file.Target);
                 File.Move(next, file.Target);
+                ProtectInstalledProgramFile(file.Target);
             }
 
             foreach (InstallFile file in files)
@@ -435,7 +437,7 @@ internal static class PublicSetupHost
             {
                 try
                 {
-                    if (entry.Existed) File.Copy(entry.Backup, entry.Target, true);
+                    if (entry.Existed) { File.Copy(entry.Backup, entry.Target, true); ProtectInstalledProgramFile(entry.Target); }
                     else if (File.Exists(entry.Target)) File.Delete(entry.Target);
                 }
                 catch { }
@@ -475,7 +477,7 @@ internal static class PublicSetupHost
         RequireInstalledFile(script);
 
         string directory = GetProgramDir();
-        Directory.CreateDirectory(directory);
+        PrepareProtectedRoot();
 
         string launcher = Path.Combine(directory, launcherName);
         string temp = launcher + ".setup.tmp";
@@ -497,11 +499,13 @@ internal static class PublicSetupHost
         }
 
         File.Move(temp, launcher);
+        ProtectInstalledProgramFile(launcher);
         return launcher;
     }
 
     private static void RegisterTask(string name, string launcher, bool recurring)
     {
+        PrepareProtectedRoot();
         RequireInstalledFile(launcher);
         string wscript = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.Windows),
@@ -547,7 +551,18 @@ internal static class PublicSetupHost
                 ConfigureAutoMonitorSchedule(task,DateTime.Now,WindowsIdentity.GetCurrent().User.Value);
             }
 
-            root.RegisterTaskDefinition(name, task, 6, null, null, 3, null);
+            // Give this user read/run, not task ownership or modification. Do not
+            // let registration silently append a broader principal ACE.
+            string sid = WindowsIdentity.GetCurrent().User.Value;
+            string security = "O:BAG:BAD:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGX;;;" + sid + ")";
+            object registeredObject = null;
+            try
+            {
+                dynamic registered = root.RegisterTaskDefinition(name, task, 6 | 16, null, null, 3, security);
+                registeredObject = registered;
+                VerifyTaskSecurity((string)registered.GetSecurityDescriptor(7), sid);
+            }
+            finally { ReleaseCom(registeredObject); }
         }
         finally
         {
@@ -585,6 +600,108 @@ internal static class PublicSetupHost
             trigger.Repetition.StopAtDurationEnd=false;
         }
     }
+    // Only the fixed protected install directory is hardened. Per-user app
+    // files, preferences, other software and Windows directory ACLs are untouched.
+    private static readonly string[] ProtectedNames = {
+        "Auto-Repair-Monitor.ps1", "Repair-Backend.ps1", "TailscaleQuickRepair.Operations.dll",
+        "Launch-Auto-Repair-Monitor.vbs", "Launch-Tailscale-Backend.vbs", "Advanced-Diagnostics.ps1"
+    };
+    private static void CheckInstallPath(string path)
+    {
+        for (string p = Path.GetFullPath(path); !String.IsNullOrEmpty(p); p = Path.GetDirectoryName(p))
+        {
+            try { if ((File.GetAttributes(p) & FileAttributes.ReparsePoint) != 0) throw new IOException("Protected install path is redirected."); }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+        }
+    }
+    private static System.Security.AccessControl.DirectorySecurity ProtectedDirectorySecurity()
+    {
+        var security = new System.Security.AccessControl.DirectorySecurity();
+        security.SetSecurityDescriptorSddlForm("O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)");
+        return security;
+    }
+    private static void PrepareProtectedRoot()
+    {
+        if (!IsAdministrator()) throw new UnauthorizedAccessException("Protected installation requires administrator approval.");
+        string root = GetProgramDir();
+        CheckInstallPath(root);
+        if (Directory.Exists(root))
+        {
+            // Reject unfamiliar/nested/redirected content rather than recursively
+            // taking ownership of it. Interrupted-install evidence is preserved.
+            foreach (string entry in Directory.GetFileSystemEntries(root))
+            {
+                if (Array.FindIndex(ProtectedNames, delegate(string n) { return String.Equals(n, Path.GetFileName(entry), StringComparison.OrdinalIgnoreCase); }) < 0 || Directory.Exists(entry))
+                    throw new IOException("Protected installation has unexpected content. Existing files were preserved.");
+                CheckInstallPath(entry);
+                using (FileStream probe = new FileStream(entry, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    RequireSingleLink(probe);
+            }
+        }
+        else Directory.CreateDirectory(root, ProtectedDirectorySecurity());
+        Directory.SetAccessControl(root, ProtectedDirectorySecurity());
+        var actual = Directory.GetAccessControl(root);
+        if (!actual.AreAccessRulesProtected || actual.GetOwner(typeof(SecurityIdentifier)).Value != "S-1-5-32-544")
+            throw new IOException("Protected directory ownership verification failed.");
+        foreach (string file in Directory.GetFiles(root)) ProtectInstalledProgramFile(file);
+    }
+    private static void ProtectInstalledProgramFile(string path)
+    {
+        string root = EnsureTrailingSeparator(Path.GetFullPath(GetProgramDir()));
+        string full = Path.GetFullPath(path);
+        if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return;
+        if (!String.Equals(Path.GetDirectoryName(full) + Path.DirectorySeparatorChar, root, StringComparison.OrdinalIgnoreCase) ||
+            Array.FindIndex(ProtectedNames, delegate(string n) { return String.Equals(n, Path.GetFileName(full), StringComparison.OrdinalIgnoreCase); }) < 0)
+            throw new IOException("Unexpected protected installation target.");
+        CheckInstallPath(full);
+        using (FileStream probe = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            RequireSingleLink(probe); // Keep the file pinned against replacement.
+            var security = new System.Security.AccessControl.FileSecurity();
+            security.SetSecurityDescriptorSddlForm("O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;BU)");
+            File.SetAccessControl(full, security);
+            var actual = File.GetAccessControl(full);
+            if (!actual.AreAccessRulesProtected || actual.GetOwner(typeof(SecurityIdentifier)).Value != "S-1-5-32-544")
+                throw new IOException("Protected file ownership verification failed.");
+        }
+    }
+    private static void RequireSingleLink(FileStream file)
+    {
+        NativeFileInformation info;
+        if (!GetFileInformationByHandle(file.SafeFileHandle, out info) || info.links != 1 || (info.attributes & 0x400) != 0)
+            throw new IOException("Protected installation file has an unsupported link layout.");
+    }
+    private static void VerifyTaskSecurity(string sddl, string user)
+    {
+        var security = new System.Security.AccessControl.RawSecurityDescriptor(sddl);
+        if (security.Owner == null || security.Owner.Value != "S-1-5-32-544" || security.DiscretionaryAcl == null)
+            throw new IOException("Protected task ownership verification failed.");
+        bool foundUser = false;
+        foreach (System.Security.AccessControl.GenericAce raw in security.DiscretionaryAcl)
+        {
+            var ace = raw as System.Security.AccessControl.CommonAce;
+            if (ace == null || ace.AceQualifier != System.Security.AccessControl.AceQualifier.AccessAllowed)
+                throw new IOException("Unexpected protected task permissions.");
+            string sid = ace.SecurityIdentifier.Value;
+            if (sid == "S-1-5-18" || sid == "S-1-5-32-544") continue;
+            // Read/execute may be expressed as generic or mapped file rights.
+            if (sid != user || ((uint)ace.AccessMask & ~0xA01200A9u) != 0)
+                throw new IOException("Protected task grants excess permissions.");
+            foundUser = true;
+        }
+        if (!foundUser) throw new IOException("Protected task has no ordinary read/run grant.");
+    }
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct NativeFileInformation
+    {
+        public uint attributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME creation, access, write;
+        public uint volume, sizeHigh, sizeLow, links, indexHigh, indexLow;
+    }
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle handle, out NativeFileInformation info);
+
     private static void WriteLocalConfig(string peer)
     {
         Directory.CreateDirectory(GetAppDir());

@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase6.2.0-dev",
-  "versionCode": 30000720,
+  "version": "3.0.0-phase6.3.0-dev",
+  "versionCode": 30000730,
   "requiresSetup": true,
   "publicInstaller": true,
-  "notes": "Development only: integrated local automatic recovery worker. Protected Setup is required. Do not distribute before remaining integration and failure acceptance gates."
+  "notes": "Development only: explicit protected-directory/file ownership and task read/run permissions. Native Setup required; unpublished until permission and all earlier native acceptance gates pass."
 }
