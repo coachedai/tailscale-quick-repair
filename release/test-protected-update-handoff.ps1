@@ -54,6 +54,9 @@ try{
     Check ($markerEntry.Count -eq 1) 'Bridge package carries one protected-update marker'
     $marker=Get-Content (Join-Path $bridge 'app\protected-update.json') -Raw|ConvertFrom-Json
     Check ($marker.schema -eq 1 -and $marker.versionCode -eq $bridgeManifest.versionCode) 'Bridge marker targets exactly the package version'
+    $integrity=Get-Content (Join-Path $bridge 'app\integrity-manifest.json') -Raw|ConvertFrom-Json
+    Check (@($integrity.files|Where-Object {[string]$_.path -ceq 'protected-update.json'}).Count -eq 0) 'Transient handoff marker is not required by the permanent app integrity manifest'
+    Check ($markerEntry[0].sha256 -ceq (Get-FileHash (Join-Path $bridge 'app\protected-update.json')).Hash.ToLowerInvariant()) 'Outer package manifest protects the exact transient marker bytes'
     Run-Child 'InstallLegacy' $legacy $bridge
     $protectedBefore=@{};foreach($name in @('Repair-Backend.ps1','Auto-Repair-Monitor.ps1')){$protectedBefore[$name]=(Get-FileHash (Join-Path $program $name)).Hash}
     Run-Child 'ApplyBridge' $legacy $bridge
