@@ -42,17 +42,39 @@ try{
     }
     elseif($Phase -eq 'ApplyBridge'){
         $installedUpdater=Join-Path $app 'TailscaleQuickRepairUpdater.exe'
-        Check ((Get-FileHash $installedUpdater).Hash -ceq (Get-FileHash (Join-Path $LegacyPackage 'app\TailscaleQuickRepairUpdater.exe')).Hash) 'Bridge executes the genuine installed 5.2.1 updater bytes'
-        $type=[Reflection.Assembly]::LoadFile($installedUpdater).GetType('Program')
+        $releasedUpdater=Join-Path $LegacyPackage 'app\TailscaleQuickRepairUpdater.exe'
+        Check ((Get-FileHash $installedUpdater).Hash -ceq (Get-FileHash $releasedUpdater).Hash) 'Installed updater matches the genuine published 5.2.1 bytes'
+
+        $installedUi=Join-Path $app 'Tailscale-Repair-UI.ps1'
+        $uiText=[IO.File]::ReadAllText($installedUi,[Text.Encoding]::UTF8)
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseInput($uiText,[ref]$tokens,[ref]$errors)
+        $updateFunctions=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Start-UpdateInstall'},$true))
+        Check ($errors.Count -eq 0 -and $updateFunctions.Count -eq 1) 'Published 5.2.1 installed UI has one parsed Update now action'
+        $route=[string]$updateFunctions[0].Extent.Text
+        Check ($route.Contains("Copy-Item -LiteralPath $UpdaterHostPath -Destination $tempUpdater -Force") -and
+            $route.Contains('$psi.FileName = $tempUpdater') -and
+            $route.Contains("'--silent'") -and $route.Contains("'--current-pid'") -and $route.Contains("'--current-code'")) 'Published Update now route copies the updater to TEMP before replacement'
+
+        $tempUpdater=Join-Path $env:TEMP ('TailscaleQuickRepairUpdater-5.2.1-'+[Guid]::NewGuid().ToString('N')+'.exe')
+        Copy-Item -LiteralPath $installedUpdater -Destination $tempUpdater -Force
+        Check ((Get-FileHash $tempUpdater).Hash -ceq (Get-FileHash $installedUpdater).Hash) 'TEMP updater copy is byte-for-byte identical to the installed 5.2.1 updater'
+        $type=[Reflection.Assembly]::LoadFile($tempUpdater).GetType('Program')
+
         $synthetic='{"schema":1,"published":true,"version":"fixture","versionCode":2,"requiresSetup":false,"protectedHandoff":true,"package":{"url":"https://github.com/coachedai/tailscale-quick-repair/releases/download/vfixture/package.zip","sha256":"'+('a'*64)+'","size":1}}'
         $parsed=Invoke-Private $type 'DeserializeObject' @($synthetic)
         Check ($parsed.ContainsKey('protectedHandoff') -and -not [bool](Invoke-Private $type 'ReadBool' @($parsed,'requiresSetup'))) 'Published 5.2.1 updater parser accepts an extra protectedHandoff field while retaining requiresSetup false'
         $manifest=Invoke-Private $type 'ReadPackageManifest' @($CurrentPackage)
         $files=Invoke-Private $type 'VerifyPackageFiles' @($CurrentPackage,$manifest)
         Check (@($files).Count -gt 0) 'Published updater accepts the staged ordinary package'
+        $lease=[bool](Invoke-Private $type 'TryAcquireOperationLock' @('update'))
+        Check $lease 'TEMP 5.2.1 updater acquires the real update operation lease'
         [void](Invoke-Private $type 'ApplyTransaction' @($files,[string]$manifest.Version,[int64]$manifest.VersionCode))
         Check ((Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json).versionCode -eq [int64]$manifest.VersionCode) 'Published updater advances the user-level package to the staged version'
         Check (Test-Path (Join-Path $app 'protected-update.json') -PathType Leaf) 'Published updater installs the protected-update handoff marker'
+        Check ((Get-FileHash $installedUpdater).Hash -ceq (Get-FileHash (Join-Path $CurrentPackage 'app\TailscaleQuickRepairUpdater.exe')).Hash) 'TEMP updater safely replaces the installed updater with the staged bytes'
+        [void](Invoke-Private $type 'ReleaseOperationLock');$lease=$false
+        Remove-Item -LiteralPath $tempUpdater -Force -ErrorAction SilentlyContinue
     }
     else{
         $type=[Reflection.Assembly]::LoadFile((Join-Path $app 'TailscaleQuickRepairSetup.exe')).GetType('PublicSetupHost')
