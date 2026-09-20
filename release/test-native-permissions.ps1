@@ -1,4 +1,4 @@
-param([string]$EvidenceDirectory='.\test-evidence',[switch]$Child,[string]$Helper='', [string]$ExpectedSid='', [string]$Report='')
+param([string]$EvidenceDirectory='.\test-evidence',[switch]$Child,[string]$Helper='', [string]$ExpectedSid='', [string]$Report='', [string]$FreshPackage='')
 $ErrorActionPreference='Stop'
 $stage='guard';$failure=$null
 function Stage([string]$Name){$script:stage=$Name}
@@ -11,7 +11,8 @@ function Failure($Record){
     return [pscustomobject]@{stage=$script:stage;line=$Record.InvocationInfo.ScriptLineNumber;exceptions=@($chain.ToArray())}
 }
 # This suite follows real Windows installation acceptance in the SAME disposable
-# job. It must never repair, install onto or probe a user's working PC.
+# job, or prepares a separate empty permission-development fixture. The latter
+# does not substitute for the complete required real-service/recurrence suite.
 if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
    $env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-quick-repair' -or
    $env:GITHUB_REF_NAME -cne 'work/6.1-auto-repair-safety' -or $env:RUNNER_OS -cne 'Windows' -or
@@ -102,10 +103,13 @@ if($Child){
     }
     exit 0 # Parent inspects every recorded assertion and fails the workflow.
 }
+New-Item -ItemType Directory -Path $EvidenceDirectory -Force|Out-Null
 $evidence=(Resolve-Path $EvidenceDirectory).Path
-$prior=Get-Content (Join-Path $evidence 'native-windows-results.json') -Raw|ConvertFrom-Json
-if(-not $prior.passed -or $prior.source -cne $env:GITHUB_SHA){throw 'Same-run real installation acceptance is required first.'}
-if(Get-Service 'Tailscale' -ErrorAction SilentlyContinue){throw 'The preceding lab must have removed its vendor installation.'}
+if(-not $FreshPackage){
+    $prior=Get-Content (Join-Path $evidence 'native-windows-results.json') -Raw|ConvertFrom-Json
+    if(-not $prior.passed -or $prior.source -cne $env:GITHUB_SHA){throw 'Same-run real installation acceptance is required first.'}
+}
+if(Get-Service 'Tailscale' -ErrorAction SilentlyContinue){throw 'Permission fixture requires no vendor installation.'}
 $work=Join-Path $env:RUNNER_TEMP ('TqrPermissions-'+[Guid]::NewGuid().ToString('N'));New-Item -ItemType Directory $work|Out-Null
 $reportPath=Join-Path $work 'restricted-results.json';$helperPath=Join-Path $work 'PermissionProbe.dll'
 $created=New-Object 'Collections.Generic.List[string]';$cases=New-Object 'Collections.Generic.List[object]';$childProcess=$null;$all=$false;$errorCode=0;$cleanup=$true
@@ -113,14 +117,46 @@ try{
     Stage 'parent_task_preflight'
     $scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();$folder=$scheduler.GetFolder('\')
     foreach($name in $taskNames){$exists=$false;try{[void]$folder.GetTask($name);$exists=$true}catch{};if($exists){throw 'Existing task was not created by this permission fixture.'}}
-    Stage 'parent_file_hashes'
-    $hashes=@{};foreach($file in Get-ChildItem -LiteralPath $program -File){$hashes[$file.Name]=(Get-FileHash $file.FullName).Hash}
     Stage 'parent_load_setup'
-    $setup=[Reflection.Assembly]::LoadFile((Join-Path $app 'TailscaleQuickRepairSetup.exe')).GetType('PublicSetupHost')
+    if($FreshPackage){
+        # Fast isolated permission development fixture; never substitutes for
+        # the separately required complete real-service/recurrence workflow.
+        foreach($path in @($app,$program)){
+            if(Test-Path -LiteralPath $path){throw 'Fresh permission lab requires empty product roots.'}
+        }
+        $repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+        if((git -C $repo rev-parse HEAD).Trim() -cne $env:GITHUB_SHA -or
+           (git -C $repo remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?$' -or
+           (Get-Content (Join-Path $repo 'release/publish.json') -Raw|ConvertFrom-Json).publish){throw 'Exact isolated unpublished source required.'}
+        $packages=@(Get-ChildItem -LiteralPath $FreshPackage -Filter '*SetupPackage-*.zip')
+        if($packages.Count -ne 1){throw 'One exact protected test package required.'}
+        $package=Join-Path $work 'package';Expand-Archive -LiteralPath $packages[0].FullName -DestinationPath $package
+        $setup=[Reflection.Assembly]::LoadFile((Join-Path $package 'app/TailscaleQuickRepairSetup.exe')).GetType('PublicSetupHost')
+        function Invoke-SetupMethod([string]$Name,[object[]]$Arguments){
+            Stage ('prepare_'+$Name)
+            $native=New-Object object[] $Arguments.Count
+            for($i=0;$i -lt $Arguments.Count;$i++){
+                if($null -eq $Arguments[$i]){$native[$i]=$null}else{$native[$i]=$Arguments[$i].PSObject.BaseObject}
+            }
+            return ,($setup.GetMethod($Name,[Reflection.BindingFlags]'NonPublic,Static').Invoke($null,$native))
+        }
+        $lease=[bool](Invoke-SetupMethod 'TryAcquireOperationLock' @('setup'))
+        if(-not $lease){throw 'Fresh fixture failed to acquire real Setup ownership.'}
+        try{
+            $manifest=Invoke-SetupMethod 'ReadPackageManifest' @($package)
+            $verified=Invoke-SetupMethod 'VerifyPackage' @($package,$manifest)
+            [void](Invoke-SetupMethod 'ApplyFiles' @($verified,$work))
+        }finally{[void](Invoke-SetupMethod 'ReleaseOperationLock' @())}
+    }else{
+        $setup=[Reflection.Assembly]::LoadFile((Join-Path $app 'TailscaleQuickRepairSetup.exe')).GetType('PublicSetupHost')
+    }
+    if(-not $setup){throw 'Expected packaged Setup type unavailable.'}
     foreach($pair in @(@('RegisterRepairTask',$taskNames[0]),@('RegisterAutoRepairTask',$taskNames[1]))){
         Stage ('parent_'+$pair[0])
         [void]$setup.GetMethod($pair[0],[Reflection.BindingFlags]'NonPublic,Static').Invoke($null,@());$created.Add($pair[1])
     }
+    Stage 'parent_file_hashes'
+    $hashes=@{};foreach($file in Get-ChildItem -LiteralPath $program -File){$hashes[$file.Name]=(Get-FileHash $file.FullName).Hash}
     Stage 'parent_compile_token_helper'
     $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
     & $compiler /nologo /target:library ('/out:'+$helperPath) (Join-Path $PSScriptRoot 'NativePermissionProbe.cs')
