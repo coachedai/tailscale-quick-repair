@@ -160,10 +160,23 @@ namespace Tqr
                 string path = Path.Combine(root, "auto-repair.json"); SafePath(path);
                 string text;
                 try { text = ReadBounded(path); } catch (FileNotFoundException) { return false; }
+                // Our settings contain only a boolean and an optional UTC timestamp.
+                // Escaped property names cannot alias a duplicate literal name.
+                if (text.IndexOf('\\') >= 0) return null;
                 Dictionary<string, object> data = Json().DeserializeObject(text) as Dictionary<string, object>;
                 object value;
-                if (data == null || !data.TryGetValue("enabled", out value) || !(value is bool) ||
+                if (data == null || data.Count < 1 || data.Count > 2 ||
+                    !data.TryGetValue("enabled", out value) || !(value is bool) ||
                     Regex.Matches(text, "\"enabled\"\\s*:").Count != 1) return null;
+                foreach (string key in data.Keys)
+                    if (key != "enabled" && key != "updatedUtc") return null;
+                object updated;
+                if (data.TryGetValue("updatedUtc", out updated))
+                {
+                    if (!(updated is string) || String.IsNullOrEmpty((string)updated) ||
+                        Regex.Matches(text, "\"updatedUtc\"\\s*:").Count != 1) return null;
+                    AutoRepairPolicy.Time((string)updated);
+                }
                 return (bool)value;
             }
             catch { return null; }
@@ -171,6 +184,9 @@ namespace Tqr
         private static AutoPolicyState Load(string path)
         {
             string text = ReadBounded(path);
+            // Every permitted string is a fixed code or a round-trip UTC stamp;
+            // neither requires JSON escapes. Reject aliases before deserialization.
+            if (text.IndexOf('\\') >= 0) throw new InvalidDataException("Noncanonical policy strings.");
             Dictionary<string, object> data = Json().DeserializeObject(text) as Dictionary<string, object>;
             if (data == null || data.Count != Keys.Length) throw new InvalidDataException("Unexpected policy fields.");
             foreach (string key in Keys)
