@@ -66,7 +66,7 @@ namespace TqrPermissionLab
         public static RestrictedProcess StartRestricted(string executable,string arguments,string directory)
         {
             IntPtr parent=IntPtr.Zero,child=IntPtr.Zero,admin=IntPtr.Zero,medium=IntPtr.Zero;
-            IntPtr security=IntPtr.Zero,station=IntPtr.Zero,desktop=IntPtr.Zero;
+            IntPtr security=IntPtr.Zero,station=IntPtr.Zero,desktop=IntPtr.Zero,userSid=IntPtr.Zero;
             IntPtr original=GetProcessWindowStation();bool transferred=false;
             ProcessInfo pi=new ProcessInfo();
             try
@@ -84,6 +84,13 @@ namespace TqrPermissionLab
                 string sddl="D:P(A;;GA;;;SY)(A;;GA;;;"+sid+")S:(ML;;NW;;;ME)";
                 uint bytes;
                 if(!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl,1,out security,out bytes)) throw new Win32Exception();
+                // A restricted child must own/read its own new kernel objects.
+                // This changes only defaults on the newly created test token; it
+                // grants no access to any existing product file or scheduled task.
+                bool present,defaulted;IntPtr dacl;
+                if(!GetSecurityDescriptorDacl(security,out present,out dacl,out defaulted) || !present || dacl==IntPtr.Zero) throw new Win32Exception();
+                if(!SetTokenPointer(child,6,ref dacl,IntPtr.Size) || !ConvertStringSidToSid(sid,out userSid) ||
+                    !SetTokenPointer(child,4,ref userSid,IntPtr.Size)) throw new Win32Exception();
                 SecurityAttributes sa=new SecurityAttributes {Length=Marshal.SizeOf(typeof(SecurityAttributes)),Descriptor=security,Inherit=false};
                 string name="TqrPermissionStation"+Guid.NewGuid().ToString("N");
                 station=CreateWindowStation(name,0,0x10000000,ref sa);
@@ -96,7 +103,7 @@ namespace TqrPermissionLab
                 }
                 finally {if(!SetProcessWindowStation(original)) throw new Win32Exception();}
                 StartupInfo si=new StartupInfo();si.cb=Marshal.SizeOf(typeof(StartupInfo));si.desktop=name+"\\Default";
-                if(!CreateProcessAsUser(child,executable,new StringBuilder("\""+executable+"\" "+arguments),IntPtr.Zero,IntPtr.Zero,false,0x08000000,IntPtr.Zero,directory,ref si,out pi)) throw new Win32Exception();
+                if(!CreateProcessAsUser(child,executable,new StringBuilder("\""+executable+"\" "+arguments),ref sa,ref sa,false,0x08000000,IntPtr.Zero,directory,ref si,out pi)) throw new Win32Exception();
                 Process process=Process.GetProcessById((int)pi.pid);
                 IntPtr retained=process.Handle; // Retain even a fast startup-failure exit status.
                 RestrictedProcess result=new RestrictedProcess(process,desktop,station);transferred=true;
@@ -106,7 +113,7 @@ namespace TqrPermissionLab
             {
                 if(pi.thread!=IntPtr.Zero) CloseHandle(pi.thread);if(pi.process!=IntPtr.Zero) CloseHandle(pi.process);
                 if(child!=IntPtr.Zero) CloseHandle(child);if(parent!=IntPtr.Zero) CloseHandle(parent);
-                if(admin!=IntPtr.Zero) LocalFree(admin);if(medium!=IntPtr.Zero) LocalFree(medium);if(security!=IntPtr.Zero) LocalFree(security);
+                if(admin!=IntPtr.Zero) LocalFree(admin);if(medium!=IntPtr.Zero) LocalFree(medium);if(security!=IntPtr.Zero) LocalFree(security);if(userSid!=IntPtr.Zero) LocalFree(userSid);
                 if(!transferred){if(desktop!=IntPtr.Zero) CloseDesktop(desktop);if(station!=IntPtr.Zero) CloseWindowStation(station);}
             }
         }
@@ -125,8 +132,10 @@ namespace TqrPermissionLab
         [DllImport("advapi32.dll",SetLastError=true)] private static extern bool SetTokenInformation(IntPtr token,int info,ref SidAttributes data,int length);
         [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true,EntryPoint="ConvertStringSidToSidW")] private static extern bool ConvertStringSidToSid(string text,out IntPtr sid);
         [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true,EntryPoint="ConvertStringSecurityDescriptorToSecurityDescriptorW")] private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string text,uint revision,out IntPtr sd,out uint size);
+        [DllImport("advapi32.dll",SetLastError=true)] private static extern bool GetSecurityDescriptorDacl(IntPtr descriptor,out bool present,out IntPtr dacl,out bool defaulted);
+        [DllImport("advapi32.dll",SetLastError=true,EntryPoint="SetTokenInformation")] private static extern bool SetTokenPointer(IntPtr token,int info,ref IntPtr data,int length);
         [DllImport("advapi32.dll")] private static extern uint GetLengthSid(IntPtr sid);
-        [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true,EntryPoint="CreateProcessAsUserW")] private static extern bool CreateProcessAsUser(IntPtr token,string app,StringBuilder command,IntPtr pa,IntPtr ta,bool inherit,uint flags,IntPtr env,string directory,ref StartupInfo startup,out ProcessInfo info);
+        [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true,EntryPoint="CreateProcessAsUserW")] private static extern bool CreateProcessAsUser(IntPtr token,string app,StringBuilder command,ref SecurityAttributes pa,ref SecurityAttributes ta,bool inherit,uint flags,IntPtr env,string directory,ref StartupInfo startup,out ProcessInfo info);
         [DllImport("user32.dll",SetLastError=true)] private static extern IntPtr GetProcessWindowStation();
         [DllImport("user32.dll",SetLastError=true)] private static extern bool SetProcessWindowStation(IntPtr station);
         [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true,EntryPoint="CreateWindowStationW")] private static extern IntPtr CreateWindowStation(string name,uint flags,uint access,ref SecurityAttributes security);
