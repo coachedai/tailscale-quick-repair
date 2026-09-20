@@ -78,6 +78,18 @@ try{
     }
     else{
         $type=[Reflection.Assembly]::LoadFile((Join-Path $app 'TailscaleQuickRepairSetup.exe')).GetType('PublicSetupHost')
+        $currentSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        [void](Invoke-Private $type 'RequireRequesterIdentity' @($currentSid))
+        Check $true 'Refreshed Setup accepts the initiating Windows SID'
+        $configHash=(Get-FileHash (Join-Path $app 'config.json')).Hash
+        $markerHash=(Get-FileHash (Join-Path $app 'protected-update.json')).Hash
+        $differentSid=if($currentSid -cne 'S-1-5-18'){'S-1-5-18'}else{'S-1-5-32-544'}
+        $identityRefused=$false
+        try{[void](Invoke-Private $type 'RequireRequesterIdentity' @($differentSid))}catch{$identityRefused=$true}
+        Check $identityRefused 'Refreshed Setup refuses a different valid Windows SID before migration'
+        Check ((Get-FileHash (Join-Path $app 'config.json')).Hash -ceq $configHash -and
+            (Get-FileHash (Join-Path $app 'protected-update.json')).Hash -ceq $markerHash) 'Identity refusal leaves target and handoff evidence unchanged'
+
         $holderScript=Join-Path $env:TEMP ('TqrHandoffLease-'+[Guid]::NewGuid().ToString('N')+'.ps1')
         $ready=$holderScript+'.ready'
         [IO.File]::WriteAllText($holderScript,@'
