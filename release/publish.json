@@ -1,9 +1,9 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase5.2.1",
-  "versionCode": 30000621,
-  "requiresSetup": false,
+  "version": "3.0.0-phase6.1.0-dev",
+  "versionCode": 30000710,
+  "requiresSetup": true,
   "publicInstaller": true,
-  "notes": "Privacy-safe support export. The existing diagnostic Copy report action becomes Share report: preview a frozen allowlisted snapshot, optionally include ten typed history events, then copy or save a new local .txt file. No addresses, device names, paths, raw logs, tokens or automatic upload. Pending/stale/missing observations are labelled rather than promoted to fresh results. Existing files are never overwritten by export. Five-file ordinary update, with no protected worker or network changes. Existing regression suites plus privacy-injection, native preview and save tests remain required."
+  "notes": "Development only: integrated local automatic recovery worker. Protected Setup is required. Do not distribute before remaining integration and failure acceptance gates."
 }
