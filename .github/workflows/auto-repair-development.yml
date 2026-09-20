@@ -2,7 +2,7 @@ name: Auto Repair 2.0 development verification
 on:
   push:
     branches: [work/6.1-auto-repair-safety]
-    paths: [src/**, release/**, docs/**, version.json, .github/workflows/auto-repair-development.yml]
+    paths: [src/**, release/**, docs/**, version.json, .github/workflows/auto-repair-development.yml, .github/workflows/release.yml]
 permissions:
   contents: read
 concurrency:
@@ -26,6 +26,9 @@ jobs:
       - name: Privacy and repository preflight
         shell: powershell
         run: .\release\privacy-scan.ps1 -Root .
+      - name: Release publication pipeline contract
+        shell: powershell
+        run: .\release\test-release-pipeline.ps1 -EvidenceDirectory .\test-evidence
       - name: Build both existing delivery paths
         shell: powershell
         run: |
