@@ -48,7 +48,15 @@ try{
     $monitor=Join-Path $setup 'program\Auto-Repair-Monitor.ps1'
     Assert-Worker ((Get-FileHash $monitor).Hash -eq (Get-FileHash (Join-Path $repo 'src\program\Auto-Repair-Monitor.ps1')).Hash) 'Protected package delivers the exact reviewed monitor entry'
     Assert-Worker (-not(Test-Path (Join-Path $ordinary 'program\Auto-Repair-Monitor.ps1'))) 'Ordinary package cannot silently replace the protected monitor'
-    Assert-Worker ((Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json).requiresSetup -eq $true) 'Worker-changing development release requires native Setup'
+    $publish=Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json
+    $directSetup=($publish.requiresSetup -is [bool] -and [bool]$publish.requiresSetup)
+    $protectedHandoff=($publish.PSObject.Properties.Name -contains 'protectedHandoff' -and $publish.protectedHandoff -is [bool] -and [bool]$publish.protectedHandoff)
+    Assert-Worker ($directSetup -xor $protectedHandoff) 'Worker-changing release has exactly one protected delivery route'
+    if($protectedHandoff){
+        Assert-Worker (-not $directSetup -and (Test-Path (Join-Path $ordinary 'app\protected-update.json')) -and
+            (Test-Path (Join-Path $ordinary 'app\TailscaleQuickRepairSetup.exe')) -and
+            -not(Test-Path (Join-Path $ordinary 'program\Auto-Repair-Monitor.ps1'))) 'Staged handoff carries Setup and marker but no protected worker'
+    }
     $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
     $web=Join-Path (Split-Path $compiler) 'System.Web.Extensions.dll'
     $fixtureSource=Join-Path $root 'fixture.cs';$fixtureDll=Join-Path $root 'WorkerFixture.dll'
