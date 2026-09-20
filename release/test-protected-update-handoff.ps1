@@ -67,19 +67,59 @@ try{
     $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($ui,[ref]$tokens,[ref]$errors)
     Check ($errors.Count -eq 0) 'Bridged UI parses on native Windows PowerShell'
     $fn=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Invoke-PendingProtectedUpdate'},$true))
-    Check ($fn.Count -eq 1) 'Bridged UI contains one pending protected-update handoff'
+    $ackFn=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Acknowledge-ProtectedRestart'},$true))
+    $resultFn=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Show-UpdateResult'},$true))
+    Check ($fn.Count -eq 1 -and $ackFn.Count -eq 1 -and $resultFn.Count -eq 1) 'Bridged UI contains one handoff, restart acknowledgement and update-result function'
     $source=$fn[0].Extent.Text
     Check ($source.Contains('$psi.FileName = $SetupHostPath') -and $source.Contains("$psi.Arguments = '--upgrade'") -and $source.Contains("$psi.Verb = 'runas'")) 'Handoff launches only the installed Setup host in elevated upgrade mode'
     Check ($source.Contains('$ProtectedUpdateMarkerPath') -and -not $source.Contains('Repair-Backend.ps1')) 'Handoff uses the version marker and never runs a protected script directly'
+    Check ($resultFn[0].Extent.Text.Contains('Update downloaded · finishing setup') -and
+        $resultFn[0].Extent.Text.Contains('Windows approval is needed to finish the protected part of this update.')) 'Bridge success remains provisional until protected Setup completes'
+
     Run-Child 'CheckSetupMarker' $legacy $bridge
     Check (-not(Test-Path (Join-Path $app 'protected-update.json'))) 'Refreshed Setup owns marker completion after strict validation'
     Check ((Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json).versionCode -eq $bridgeManifest.versionCode) 'Bridge leaves the user-level app on the intended release code'
+
+    . ([scriptblock]::Create($ackFn[0].Extent.Text))
+    function Get-Brush([string]$Name){return [Windows.Media.Brushes]::Gray}
+    $script:ackHistory=New-Object 'Collections.Generic.List[string]'
+    $script:ackNotifications=New-Object 'Collections.Generic.List[string]'
+    function Write-LocalHistoryEvent { param([string]$Code,[int]$Before=-1,[int]$After=-1) $script:ackHistory.Add($Code) }
+    function Request-SmartNotification { param([string]$Code,[string]$Stamp) $script:ackNotifications.Add($Code); return 'requested' }
+    $RestartRegistryPath='HKCU:\Software\TailscaleQuickRepair'
+    $RestartRegistryName='PendingRestartVersionCode'
+    $ProductVersionCode=[int64]$bridgeManifest.versionCode
+    $ProductVersion=[string]$bridgeManifest.version
+    $UpdateStatusText=New-Object Windows.Controls.TextBlock
+    $UpdateDetailText=New-Object Windows.Controls.TextBlock
+
+    $acknowledged=Acknowledge-ProtectedRestart
+    Check $acknowledged 'The refreshed app acknowledges the exact Setup restart version'
+    $afterAck=Get-ItemProperty -LiteralPath $RestartRegistryPath -Name $RestartRegistryName -ErrorAction SilentlyContinue
+    Check (-not $afterAck -or $null -eq $afterAck.$RestartRegistryName) 'Successful app restart clears the pending restart value'
+    Check ($script:ackHistory.Count -eq 1 -and $script:ackHistory[0] -ceq 'update_installed') 'Installed History is recorded only after the refreshed app acknowledgement'
+    Check ($script:ackNotifications.Count -eq 1 -and $script:ackNotifications[0] -ceq 'update_installed') 'Installed notification is requested only after restart acknowledgement'
+    Check ($UpdateStatusText.Text -like 'Updated successfully*' -and $UpdateDetailText.Text -ceq 'The protected update finished and Quick Repair restarted normally.') 'Acknowledged restart shows the final successful update state'
+
+    New-Item -ItemType Directory -Path $RestartRegistryPath -Force|Out-Null
+    Set-ItemProperty -LiteralPath $RestartRegistryPath -Name $RestartRegistryName -Type QWord -Value ([int64]$ProductVersionCode+1)
+    $historyBefore=$script:ackHistory.Count
+    Check (-not (Acknowledge-ProtectedRestart)) 'Wrong-version restart acknowledgement is refused'
+    $wrongVersion=(Get-ItemProperty -LiteralPath $RestartRegistryPath -Name $RestartRegistryName).$RestartRegistryName
+    Check ([int64]$wrongVersion -eq ([int64]$ProductVersionCode+1) -and $script:ackHistory.Count -eq $historyBefore) 'Wrong-version acknowledgement is preserved and cannot manufacture installed History'
+
+    Set-ItemProperty -LiteralPath $RestartRegistryPath -Name $RestartRegistryName -Type String -Value ([string]$ProductVersionCode)
+    Check (-not (Acknowledge-ProtectedRestart)) 'Wrong-type restart acknowledgement is refused'
+    $wrongType=(Get-ItemProperty -LiteralPath $RestartRegistryPath -Name $RestartRegistryName).$RestartRegistryName
+    Check ($wrongType -is [string] -and $script:ackHistory.Count -eq $historyBefore) 'Wrong-type acknowledgement remains preserved without a false success event'
+    Remove-ItemProperty -LiteralPath $RestartRegistryPath -Name $RestartRegistryName -ErrorAction SilentlyContinue
     $passed=$true
 }catch{
     $chain=New-Object 'Collections.Generic.List[object]';for($ex=$_.Exception;$ex;$ex=$ex.InnerException){$chain.Add([pscustomobject]@{type=$ex.GetType().FullName;code=$ex.HResult})}
     $failure=[pscustomobject]@{stage=$stage;line=$_.InvocationInfo.ScriptLineNumber;exceptions=@($chain.ToArray())}
 }finally{
     if($child){try{if(-not $child.HasExited){$child.Kill();[void]$child.WaitForExit(5000)}}catch{$cleanup=$false};$child.Dispose()}
+    Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name 'PendingRestartVersionCode' -ErrorAction SilentlyContinue
     $scheduler=$null
     try{$scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();$folder=$scheduler.GetFolder('\');foreach($name in @('Tailscale Quick Repair','Tailscale Quick Repair Auto Monitor')){try{$t=$folder.GetTask($name);$t.Enabled=$false;$folder.DeleteTask($name,0)}catch{}}}catch{$cleanup=$false}
     $cases.Add([pscustomobject]@{name='Only fixture-owned scheduled tasks are removed after the handoff test';passed=$cleanup})
