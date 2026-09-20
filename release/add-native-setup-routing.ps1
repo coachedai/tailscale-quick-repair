@@ -217,9 +217,224 @@ try {
             }
 
             try {
+                $requesterSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+                if ([string]::IsNullOrWhiteSpace($requesterSid) -or $requesterSid -notmatch '^S-1-[0-9-]+                $setupProcess = [System.Diagnostics.Process]::Start($psi)
+
+                if (-not $setupProcess) {
+                    throw 'The native Setup host could not start.'
+                }
+
+                $CheckForUpdatesButton.IsEnabled = $false
+                $UpdateNowButton.IsEnabled = $false
+                $UpdateNowButton.Content = 'Updating…'
+                $UpdateStatusText.Text = 'Installing system update…'
+                $UpdateStatusText.Foreground = Get-Brush 'Blue'
+                $UpdateDetailText.Text = 'Approve the Windows prompt. The verified Setup host will update Quick Repair and restart it.'
+                $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
+                $script:allowFullExit = $true
+
+                $window.Dispatcher.BeginInvoke(
+                    [System.Windows.Threading.DispatcherPriority]::Background,
+                    [Action]{ $window.Close() }
+                ) | Out-Null
+                return
+            }
+            catch {
+                $CheckForUpdatesButton.IsEnabled = $true
+                $UpdateNowButton.IsEnabled = $true
+                $UpdateNowButton.Content = 'Update now'
+                $UpdateStatusText.Text = 'Could not start system update'
+                $UpdateStatusText.Foreground = Get-Brush 'Amber'
+                $UpdateDetailText.Text = 'Nothing was changed.'
+                $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
+                return
+            }
+        }
+'@
+
+    $repairPattern = '(?s)    function Invoke-InstallationRepair \{.*?\r?\n    function Update-DetailsToggleText \{'
+    $repairReplacement = @'
+    function Invoke-InstallationRepair {
+        if (-not (Test-Path -LiteralPath $SetupHostPath)) {
+            Set-Badge $HeroBadge $HeroBadgeText 'SETUP ISSUE' 'failure'
+            $HeroTitle.Text = 'Installation repair is unavailable'
+            $HeroDetail.Text = 'Run the latest Tailscale Quick Repair Setup to restore the maintenance component.'
+            return
+        }
+
+        try {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $SetupHostPath
+            $psi.Arguments = '--repair'
+            $psi.UseShellExecute = $true
+            $process = [System.Diagnostics.Process]::Start($psi)
+            if (-not $process) { throw 'The maintenance helper could not start.' }
+
+            Set-Badge $HeroBadge $HeroBadgeText 'MAINTENANCE' 'repairing'
+            $HeroTitle.Text = 'Repairing Quick Repair'
+            $HeroDetail.Text = 'Approve the Windows prompt. Quick Repair will rebuild its protected integration and reopen automatically.'
+            $RepairInstallationButton.IsEnabled = $false
+            $script:allowFullExit = $true
+            $global:TqrUiShutdownRequested = $true
+
+            $window.Dispatcher.BeginInvoke(
+                [System.Windows.Threading.DispatcherPriority]::Background,
+                [Action]{
+                    try { $window.Close() } catch {}
+                }
+            ) | Out-Null
+        }
+        catch {
+            $RepairInstallationButton.IsEnabled = $true
+            Set-Badge $HeroBadge $HeroBadgeText 'SETUP ISSUE' 'failure'
+            $HeroTitle.Text = 'Could not start installation repair'
+            $HeroDetail.Text = $_.Exception.Message
+        }
+    }
+
+    function Update-DetailsToggleText {
+'@
+
+    if ($ui -notmatch [regex]::Escape("$psi.Arguments = '--repair'")) {
+        $ui = Replace-LiteralRegexOnce `
+            -Text $ui `
+            -Pattern $repairPattern `
+            -Replacement $repairReplacement `
+            -Description 'native installation repair function'
+    }
+    if ($ui -notmatch [regex]::Escape('$requiresSetup = $false')) {
+        if (-not $ui.Contains($installHeader)) {
+            throw 'Could not locate native Start-UpdateInstall header.'
+        }
+        $ui = $ui.Replace($installHeader,$protectedRoute)
+    }
+
+    foreach ($required in @(
+        '$SetupHostPath',
+        '$requiresSetup = $false',
+        "$psi.Arguments = '--upgrade'",
+        "$psi.Arguments = '--repair'"
+    )) {
+        if ($ui -notmatch [regex]::Escape($required)) {
+            throw "Native setup routing verification failed: $required"
+        }
+    }
+
+    $headerCount = [regex]::Matches($ui,'(?m)^param\(\r?\n\s*\[switch\]\$StartInTray\r?\n\)').Count
+    $xamlCount = [regex]::Matches($ui,'(?m)^\s*\[xml\]\$xaml\s*=\s*@"').Count
+    if ($headerCount -ne 1 -or $xamlCount -ne 1) {
+        throw "Routed UI must remain one script. Headers=$headerCount Xaml=$xamlCount"
+    }
+
+    [void][scriptblock]::Create($ui)
+    $xamlMatch = [regex]::Match($ui,'(?s)\[xml\]\$xaml\s*=\s*@"\r?\n(?<xaml>.*?)\r?\n"@')
+    if (-not $xamlMatch.Success) { throw 'Routed UI XAML was not found.' }
+    [xml]$xamlDoc = $xamlMatch.Groups['xaml'].Value
+    Add-Type -AssemblyName PresentationFramework -ErrorAction Stop
+    $reader = New-Object System.Xml.XmlNodeReader $xamlDoc
+    $testWindow = $null
+    try {
+        $testWindow = [Windows.Markup.XamlReader]::Load($reader)
+        if (-not $testWindow) { throw 'Routed UI WPF validation returned no window.' }
+    }
+    finally {
+        try { $reader.Close() } catch {}
+        try { if ($testWindow -is [System.Windows.Window]) { $testWindow.Close() } } catch {}
+    }
+
+    $utf8Bom = New-Object System.Text.UTF8Encoding($true)
+    [IO.File]::WriteAllText($uiPath,$ui,$utf8Bom)
+    & (Join-Path $PSScriptRoot 'add-local-history.ps1') -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-connection-quality.ps1') -Path $uiPath
+    $notificationTransform=[scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'add-smart-notifications.ps1'),[Text.Encoding]::UTF8))
+    & $notificationTransform -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-diagnostics-polish.ps1') -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-progress-reset.ps1') -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-support-export.ps1') -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-auto-repair-worker.ps1') -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-protected-update-handoff.ps1') -Path $uiPath
+    Copy-Item -LiteralPath (Join-Path $repo 'src\app\Advanced-Diagnostics.ps1') -Destination (Join-Path $appDir 'Advanced-Diagnostics.ps1') -Force
+
+    $version = Get-Content -LiteralPath $versionPath -Raw | ConvertFrom-Json
+    $publish = Get-Content -LiteralPath (Join-Path $repo 'release\publish.json') -Raw | ConvertFrom-Json
+    if ([string]$publish.version -cne [string]$version.version -or [int64]$publish.versionCode -ne [int64]$version.versionCode) {
+        throw 'Protected update metadata does not match version.json.'
+    }
+
+    $protectedHandoff = $false
+    if ($publish.PSObject.Properties.Name -contains 'protectedHandoff') {
+        if ($publish.protectedHandoff -isnot [bool]) {
+            throw 'protectedHandoff must be a boolean.'
+        }
+        $protectedHandoff = [bool]$publish.protectedHandoff
+    }
+    $requiresSetup = [bool]$publish.requiresSetup
+    if ($protectedHandoff -and $requiresSetup) {
+        throw 'protectedHandoff and requiresSetup cannot both be enabled for the same release.'
+    }
+
+    $protectedMarkerPath = Join-Path $appDir 'protected-update.json'
+    if (Test-Path -LiteralPath $protectedMarkerPath) {
+        Remove-Item -LiteralPath $protectedMarkerPath -Force
+    }
+
+    # The handoff marker is transient. Generate the permanent app integrity
+    # manifest first, then add the marker so the outer package manifest protects
+    # its exact bytes without requiring it to remain after Setup completes.
+    & (Join-Path $PSScriptRoot 'write-integrity-manifest.ps1') -AppDirectory $appDir -VersionPath $versionPath -Profile 'update'
+
+    if ($requiresSetup -or $protectedHandoff) {
+        [ordered]@{ schema = 1; versionCode = [int64]$version.versionCode } |
+            ConvertTo-Json -Compress |
+            Set-Content -LiteralPath $protectedMarkerPath -Encoding UTF8
+    }
+
+    $entries = @(
+        Get-ChildItem -LiteralPath $root -File -Recurse |
+            Where-Object { $_.Name -ne 'package-manifest.json' } |
+            ForEach-Object {
+                [ordered]@{
+                    path = Get-TrustedRelativePath -Root $root -FullName $_.FullName
+                    sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                    size = [int64]$_.Length
+                }
+            } |
+            Sort-Object { $_.path }
+    )
+
+    if ('app/TailscaleQuickRepairSetup.exe' -notin @($entries | ForEach-Object { $_.path })) {
+        throw 'Native Setup host did not enter the update package.'
+    }
+
+    $manifest = [ordered]@{
+        schema = 1
+        product = 'Tailscale Quick Repair'
+        version = [string]$version.version
+        versionCode = [int64]$version.versionCode
+        files = $entries
+    }
+    $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $root 'package-manifest.json') -Encoding UTF8
+
+    & (Join-Path $PSScriptRoot 'privacy-scan.ps1') -Root $root -SkipRepositoryIdentity
+
+    Remove-Item -LiteralPath $zip.FullName -Force
+    Compress-Archive -Path (Join-Path $root '*') -DestinationPath $zip.FullName -CompressionLevel Optimal
+
+    $sha = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sha | Set-Content -LiteralPath ($zip.FullName + '.sha256') -Encoding ASCII
+
+    Write-Host "Native setup routing passed: $($version.version) ($($version.versionCode))"
+}
+finally {
+    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+}
+) {
+                    throw 'The Windows account could not be verified.'
+                }
+
                 $psi = New-Object System.Diagnostics.ProcessStartInfo
                 $psi.FileName = $SetupHostPath
-                $psi.Arguments = '--upgrade'
+                $psi.Arguments = '--upgrade --requester-sid "' + $requesterSid + '"'
                 $psi.UseShellExecute = $true
                 $setupProcess = [System.Diagnostics.Process]::Start($psi)
 
