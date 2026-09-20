@@ -49,6 +49,7 @@ try{
     $bridge=Join-Path $lab 'bridge';$bridgeManifest=Expand-Zip $ordinary[0].FullName $bridge
     $protected=Join-Path $lab 'protected';$protectedManifest=Expand-Zip $setup[0].FullName $protected
     Check ($bridgeManifest.versionCode -eq $protectedManifest.versionCode) 'Bridge and protected package target the same release code'
+    Check (-not(Test-Path (Join-Path $protected 'app\protected-update.json'))) 'Full Setup package contains no bridge-only handoff marker'
     Check (@($bridgeManifest.files|Where-Object {[string]$_.path -like 'program/*'}).Count -eq 0) 'Bridge package contains no protected program file'
     $markerEntry=@($bridgeManifest.files|Where-Object {[string]$_.path -ceq 'app/protected-update.json'})
     Check ($markerEntry.Count -eq 1) 'Bridge package carries one protected-update marker'
