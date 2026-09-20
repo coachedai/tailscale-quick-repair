@@ -81,18 +81,18 @@ try{
         $holderScript=Join-Path $env:TEMP ('TqrHandoffLease-'+[Guid]::NewGuid().ToString('N')+'.ps1')
         $ready=$holderScript+'.ready'
         [IO.File]::WriteAllText($holderScript,@'
-param([string]$Dll,[string]$Root,[string]$Ready)
+param([string]$Dll,[string]$Root,[string]$Ready,[string]$Kind,[int]$HoldMilliseconds)
 Add-Type -Path $Dll
-$lease=[Tqr.OperationGate]::TryAcquire($Root,'update')
+$lease=[Tqr.OperationGate]::TryAcquire($Root,$Kind)
 if(-not $lease){exit 31}
 try{
     [IO.File]::WriteAllText($Ready,'ready')
-    Start-Sleep -Milliseconds 1500
+    Start-Sleep -Milliseconds $HoldMilliseconds
 }finally{$lease.Dispose()}
 '@)
         $psi=New-Object Diagnostics.ProcessStartInfo
         $psi.FileName=Join-Path $PSHOME 'powershell.exe';$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
-        $psi.Arguments='-NoProfile -NonInteractive -File "'+$holderScript+'" -Dll "'+(Join-Path $app 'TailscaleQuickRepair.Operations.dll')+'" -Root "'+$app+'" -Ready "'+$ready+'"'
+        $psi.Arguments='-NoProfile -NonInteractive -File "'+$holderScript+'" -Dll "'+(Join-Path $app 'TailscaleQuickRepair.Operations.dll')+'" -Root "'+$app+'" -Ready "'+$ready+'" -Kind update -HoldMilliseconds 1500'
         $holder=[Diagnostics.Process]::Start($psi)
         $deadline=[DateTime]::UtcNow.AddSeconds(10)
         while(-not(Test-Path $ready) -and [DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 25}
@@ -102,7 +102,27 @@ try{
         Check ($acquired -and $wait.ElapsedMilliseconds -ge 1000 -and $wait.ElapsedMilliseconds -lt 10000) 'Refreshed Setup waits only for the finishing update owner and then acquires safely'
         [void](Invoke-Private $type 'ReleaseOperationLock');$lease=$false
         Check ($holder.WaitForExit(10000) -and $holder.ExitCode -eq 0) 'Previous updater owner exits normally without its lock being stolen'
-        $holder.Dispose();Remove-Item $holderScript,$ready -Force -ErrorAction SilentlyContinue
+        $holder.Dispose();Remove-Item $ready -Force -ErrorAction SilentlyContinue
+
+        # An unrelated live operation is different from the updater handoff.
+        # Setup must refuse immediately rather than waiting, deleting or taking
+        # ownership of that operation.
+        $repairReady=$holderScript+'.repair.ready'
+        $repairPsi=New-Object Diagnostics.ProcessStartInfo
+        $repairPsi.FileName=Join-Path $PSHOME 'powershell.exe';$repairPsi.UseShellExecute=$false;$repairPsi.CreateNoWindow=$true
+        $repairPsi.Arguments='-NoProfile -NonInteractive -File "'+$holderScript+'" -Dll "'+(Join-Path $app 'TailscaleQuickRepair.Operations.dll')+'" -Root "'+$app+'" -Ready "'+$repairReady+'" -Kind repair -HoldMilliseconds 2500'
+        $repairHolder=[Diagnostics.Process]::Start($repairPsi)
+        $repairDeadline=[DateTime]::UtcNow.AddSeconds(10)
+        while(-not(Test-Path $repairReady) -and [DateTime]::UtcNow -lt $repairDeadline){Start-Sleep -Milliseconds 25}
+        Check (Test-Path $repairReady) 'A separate repair owner holds the real operation lease'
+        $refusalWatch=[Diagnostics.Stopwatch]::StartNew()
+        $refused=-not [bool](Invoke-Private $type 'TryAcquireUpgradeOperationLock')
+        Check ($refused -and $refusalWatch.ElapsedMilliseconds -lt 1500) 'Refreshed Setup refuses an unrelated live operation without waiting through it'
+        $owner=[Tqr.OperationGate]::Inspect($app)
+        Check ($owner -and $owner.kind -ceq 'repair' -and $owner.ownerPid -eq $repairHolder.Id) 'Unrelated operation ownership remains unchanged after Setup refusal'
+        Check ($repairHolder.WaitForExit(10000) -and $repairHolder.ExitCode -eq 0) 'Unrelated repair owner exits normally after refusal'
+        $repairHolder.Dispose();Remove-Item $holderScript,$repairReady -Force -ErrorAction SilentlyContinue
+
         $marker=Get-Content (Join-Path $app 'protected-update.json') -Raw|ConvertFrom-Json
         $wrong=$false
         try{[void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @([int64]$marker.versionCode+1))}catch{$wrong=$true}
