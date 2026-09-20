@@ -3,7 +3,8 @@
   "channel": "preview",
   "version": "3.0.0-phase6.3.0-dev",
   "versionCode": 30000730,
-  "requiresSetup": true,
+  "requiresSetup": false,
   "publicInstaller": true,
-  "notes": "Development only: explicit protected-directory/file ownership and task read/run permissions. Native Setup required; unpublished until permission and all earlier native acceptance gates pass."
+  "notes": "Development only: protected files and scheduled tasks use the verified Setup handoff. Existing installations first receive the user-level update, then the refreshed Setup completes protected changes.",
+  "protectedHandoff": true
 }
