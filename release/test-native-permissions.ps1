@@ -11,8 +11,7 @@ function Failure($Record){
     return [pscustomobject]@{stage=$script:stage;line=$Record.InvocationInfo.ScriptLineNumber;exceptions=@($chain.ToArray())}
 }
 # This suite follows real Windows installation acceptance in the SAME disposable
-# job, or prepares a separate empty permission-development fixture. The latter
-# does not substitute for the complete required real-service/recurrence suite.
+# job, or prepares an empty isolated development fixture without vendor software.
 if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
    $env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-quick-repair' -or
    $env:GITHUB_REF_NAME -cne 'work/6.1-auto-repair-safety' -or $env:RUNNER_OS -cne 'Windows' -or
@@ -92,7 +91,7 @@ if($Child){
             if($observed -and [DateTime]::Parse($observed.lastCheckedUtc).ToUniversalTime() -ge $start){break}
             Start-Sleep -Milliseconds 200
         }while([DateTime]::UtcNow -lt $end)
-        Record ($observed -and [DateTime]::Parse($observed.lastCheckedUtc).ToUniversalTime() -ge $start -and $observed.phase -eq 'Complete' -and $observed.actionsAttempted -eq 0) 'Ordinary request produces a fresh protected local-only observation, not a forged success'
+        Record ($observed -and [DateTime]::Parse($observed.lastCheckedUtc).ToUniversalTime() -ge $start -and $observed.phase -eq 'Complete' -and $observed.status -eq 'manual' -and $observed.actionsAttempted -eq 0) 'Ordinary request produces a fresh protected local-only observation, not a forged success'
         Stage 'child_ui_disable'
         Record (Set-AutoRepairEnabled $false) 'Ordinary UI can persist opt-out without protected-file write permission'
         Record (-not (Invoke-AutoRepairMonitorNow)) 'Ordinary opt-out prevents another monitor dispatch'
@@ -111,8 +110,14 @@ if(-not $FreshPackage){
 }
 if(Get-Service 'Tailscale' -ErrorAction SilentlyContinue){throw 'Permission fixture requires no vendor installation.'}
 $work=Join-Path $env:RUNNER_TEMP ('TqrPermissions-'+[Guid]::NewGuid().ToString('N'));New-Item -ItemType Directory $work|Out-Null
+# The restricted child must be able to write its own test report. Give only the
+# same user access to this new scratch directory; never alter product/tested ACLs.
+$fixtureAcl=Get-Acl -LiteralPath $work
+$fixtureUser=[Security.Principal.WindowsIdentity]::GetCurrent().User
+$fixtureAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($fixtureUser,[Security.AccessControl.FileSystemRights]::Modify,[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow))
+Set-Acl -LiteralPath $work -AclObject $fixtureAcl
 $reportPath=Join-Path $work 'restricted-results.json';$helperPath=Join-Path $work 'PermissionProbe.dll'
-$created=New-Object 'Collections.Generic.List[string]';$cases=New-Object 'Collections.Generic.List[object]';$childProcess=$null;$all=$false;$errorCode=0;$cleanup=$true
+$created=New-Object 'Collections.Generic.List[string]';$cases=New-Object 'Collections.Generic.List[object]';$childProcess=$null;$childExitCode=$null;$all=$false;$errorCode=0;$cleanup=$true
 try{
     Stage 'parent_task_preflight'
     $scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();$folder=$scheduler.GetFolder('\')
@@ -164,11 +169,12 @@ try{
     Stage 'parent_load_token_helper'
     Add-Type -Path $helperPath
     $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $arguments='-NoProfile -NonInteractive -STA -File "'+$PSCommandPath+'" -Child -Helper "'+$helperPath+'" -ExpectedSid "'+$sid+'" -Report "'+$reportPath+'"'
+    $arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -STA -File "'+$PSCommandPath+'" -Child -Helper "'+$helperPath+'" -ExpectedSid "'+$sid+'" -Report "'+$reportPath+'"'
     Stage 'parent_create_restricted_process'
     $childProcess=[TqrPermissionLab.Probe]::StartRestricted((Join-Path $PSHOME 'powershell.exe'),$arguments,$work)
     Stage 'parent_wait_restricted_process'
     if(-not $childProcess.WaitForExit(120000)){throw 'Restricted child exceeded its time bound; no test rerun.'}
+    $childExitCode=$childProcess.ExitCode
     Stage 'parent_read_child_evidence'
     $report=Get-Content -LiteralPath $reportPath -Raw|ConvertFrom-Json
     $failure=$report.failure
@@ -188,6 +194,6 @@ finally{
         }catch{$cleanup=$false}
     }
     $cases.Add([pscustomobject]@{name='Only this permission fixture tasks and child are cleaned up';passed=$cleanup})
-    [pscustomobject]@{passed=($all -and $cleanup);source=$env:GITHUB_SHA;scope='Same-user medium-integrity restricted process, real file access opens, COM task protection and exact installed UI dispatch';cases=@($cases.ToArray());errorCode=$errorCode;failure=$failure;limits=@('Restricted token is not a claim of every Windows standard-user or split-token configuration','No file content is written or deleted by permission probes; task writes submit only unchanged values','No live Tailscale or tailnet; protected task observes the missing installation','Unrelated-user, alternate-admin, hostile pre-existing paths and signed provenance remain separate acceptance')}|ConvertTo-Json -Depth 9|Set-Content (Join-Path $evidence 'native-permission-results.json') -Encoding UTF8
+    [pscustomobject]@{passed=($all -and $cleanup);source=$env:GITHUB_SHA;scope='Same-user medium-integrity restricted process, real file access opens, COM task protection and exact installed UI dispatch';cases=@($cases.ToArray());errorCode=$errorCode;childExitCode=$childExitCode;failure=$failure;limits=@('Restricted token is not a claim of every Windows standard-user or split-token configuration','No file content is written or deleted by permission probes; task writes submit only unchanged values','No live Tailscale or tailnet; protected task observes the missing installation','Unrelated-user, alternate-admin, hostile pre-existing paths and signed provenance remain separate acceptance')}|ConvertTo-Json -Depth 9|Set-Content (Join-Path $evidence 'native-permission-results.json') -Encoding UTF8
 }
 if(-not $all -or -not $cleanup){throw 'Native permission acceptance did not pass; preserve and inspect the typed report.'}
