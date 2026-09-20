@@ -40,6 +40,9 @@ jobs:
       - name: Native Auto Repair policy and state gates
         shell: powershell
         run: .\release\test-auto-repair-policy.ps1 -EvidenceDirectory .\test-evidence
+      - name: Native bounded local status gates
+        shell: powershell
+        run: .\release\test-auto-repair-local-status.ps1 -EvidenceDirectory .\test-evidence
       - name: Final source privacy and no-publication check
         shell: powershell
         run: |
