@@ -1,5 +1,15 @@
 param([string]$EvidenceDirectory='.\test-evidence',[switch]$Child,[string]$Helper='', [string]$ExpectedSid='', [string]$Report='')
 $ErrorActionPreference='Stop'
+$stage='guard';$failure=$null
+function Stage([string]$Name){$script:stage=$Name}
+function Failure($Record){
+    $chain=New-Object 'Collections.Generic.List[object]'
+    for($ex=$Record.Exception;$null -ne $ex;$ex=$ex.InnerException){
+        $native=if($ex -is [ComponentModel.Win32Exception]){$ex.NativeErrorCode}else{0}
+        $chain.Add([pscustomobject]@{type=$ex.GetType().FullName;code=$ex.HResult;native=$native})
+    }
+    return [pscustomobject]@{stage=$script:stage;line=$Record.InvocationInfo.ScriptLineNumber;exceptions=@($chain.ToArray())}
+}
 # This suite follows real Windows installation acceptance in the SAME disposable
 # job. It must never repair, install onto or probe a user's working PC.
 if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
@@ -14,7 +24,9 @@ if($Child){
     $cases=New-Object 'Collections.Generic.List[object]';$complete=$false;$errorCode=0
     function Record([bool]$Value,[string]$Name){$cases.Add([pscustomobject]@{name=$Name;passed=$Value})}
     try{
+        Stage 'child_load_helper'
         Add-Type -Path $Helper
+        Stage 'child_token_validation'
         $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
         $principal=New-Object Security.Principal.WindowsPrincipal($identity)
         $low=-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -22,6 +34,7 @@ if($Child){
         Record ([TqrPermissionLab.Probe]::Integrity() -eq 8192) 'Child runs at medium integrity rather than elevated integrity'
         Record ([TqrPermissionLab.Probe]::PrivilegeCount() -le 1) 'Privileged token capabilities are removed, not merely unused'
         if(-not $low -or [TqrPermissionLab.Probe]::Integrity() -ne 8192){throw 'Invalid test token.'}
+        Stage 'child_file_access'
         $files=@('Auto-Repair-Monitor.ps1','Repair-Backend.ps1','TailscaleQuickRepair.Operations.dll','Launch-Auto-Repair-Monitor.vbs','Launch-Tailscale-Backend.vbs')
         foreach($name in $files){
             $path=Join-Path $program $name
@@ -35,6 +48,7 @@ if($Child){
             $r=[TqrPermissionLab.Probe]::Open($program,[uint32]$right[1],$true)
             Record (-not $r.Allowed -and $r.Error -eq 5) ('Ordinary user cannot '+$right[0]+' in protected root')
         }
+        Stage 'child_task_access'
         $scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();$folder=$scheduler.GetFolder('\')
         foreach($name in $taskNames){
             $task=$folder.GetTask($name);$sddl=[string]$task.GetSecurityDescriptor(7)
@@ -50,6 +64,7 @@ if($Child){
         }
         # Execute the actual installed UI's settings and task-dispatch functions,
         # with real COM discovery. No substituted scheduler or UAC is involved.
+        Stage 'child_ui_functions'
         $ui=[IO.File]::ReadAllText((Join-Path $app 'Tailscale-Repair-UI.ps1'))
         $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($ui,[ref]$tokens,[ref]$errors)
         if($errors.Count){throw 'Installed UI parse failed.'}
@@ -59,6 +74,7 @@ if($Child){
             . ([scriptblock]::Create($nodes[0].Extent.Text))
         }
         $StateDir=$app;$OperationsLibraryPath=Join-Path $app 'TailscaleQuickRepair.Operations.dll';$AutoRepairTaskName=$taskNames[1]
+        Stage 'child_ui_enable'
         Record (Set-AutoRepairEnabled $true) 'Ordinary UI can persist explicit automatic-repair opt-in'
         $auto=$folder.GetTask($AutoRepairTaskName)
         $last=[Tqr.AutoRepairRecords]::Current($app)
@@ -67,6 +83,7 @@ if($Child){
             if($remaining -gt 0 -and $remaining -le 36){Start-Sleep -Milliseconds ([int][Math]::Ceiling($remaining*1000))}
         }
         $start=[DateTime]::UtcNow
+        Stage 'child_ui_dispatch'
         Record (Invoke-AutoRepairMonitorNow) 'Actual ordinary UI function requests the protected monitor without elevation'
         $end=[DateTime]::UtcNow.AddSeconds(35);$observed=$null
         do{
@@ -75,12 +92,13 @@ if($Child){
             Start-Sleep -Milliseconds 200
         }while([DateTime]::UtcNow -lt $end)
         Record ($observed -and [DateTime]::Parse($observed.lastCheckedUtc).ToUniversalTime() -ge $start -and $observed.phase -eq 'Complete' -and $observed.actionsAttempted -eq 0) 'Ordinary request produces a fresh protected local-only observation, not a forged success'
+        Stage 'child_ui_disable'
         Record (Set-AutoRepairEnabled $false) 'Ordinary UI can persist opt-out without protected-file write permission'
         Record (-not (Invoke-AutoRepairMonitorNow)) 'Ordinary opt-out prevents another monitor dispatch'
         $complete=$true
-    }catch{$errorCode=$_.Exception.HResult}
+    }catch{$errorCode=$_.Exception.HResult;$failure=Failure $_}
     finally{
-        [pscustomobject]@{complete=$complete;errorCode=$errorCode;cases=@($cases.ToArray())}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $Report -Encoding UTF8
+        [pscustomobject]@{complete=$complete;errorCode=$errorCode;failure=$failure;cases=@($cases.ToArray())}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $Report -Encoding UTF8
     }
     exit 0 # Parent inspects every recorded assertion and fails the workflow.
 }
@@ -92,27 +110,37 @@ $work=Join-Path $env:RUNNER_TEMP ('TqrPermissions-'+[Guid]::NewGuid().ToString('
 $reportPath=Join-Path $work 'restricted-results.json';$helperPath=Join-Path $work 'PermissionProbe.dll'
 $created=New-Object 'Collections.Generic.List[string]';$cases=New-Object 'Collections.Generic.List[object]';$childProcess=$null;$all=$false;$errorCode=0;$cleanup=$true
 try{
+    Stage 'parent_task_preflight'
     $scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();$folder=$scheduler.GetFolder('\')
     foreach($name in $taskNames){$exists=$false;try{[void]$folder.GetTask($name);$exists=$true}catch{};if($exists){throw 'Existing task was not created by this permission fixture.'}}
+    Stage 'parent_file_hashes'
     $hashes=@{};foreach($file in Get-ChildItem -LiteralPath $program -File){$hashes[$file.Name]=(Get-FileHash $file.FullName).Hash}
+    Stage 'parent_load_setup'
     $setup=[Reflection.Assembly]::LoadFile((Join-Path $app 'TailscaleQuickRepairSetup.exe')).GetType('PublicSetupHost')
     foreach($pair in @(@('RegisterRepairTask',$taskNames[0]),@('RegisterAutoRepairTask',$taskNames[1]))){
+        Stage ('parent_'+$pair[0])
         [void]$setup.GetMethod($pair[0],[Reflection.BindingFlags]'NonPublic,Static').Invoke($null,@());$created.Add($pair[1])
     }
+    Stage 'parent_compile_token_helper'
     $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
     & $compiler /nologo /target:library ('/out:'+$helperPath) (Join-Path $PSScriptRoot 'NativePermissionProbe.cs')
     if($LASTEXITCODE -ne 0){throw 'Native token test helper did not compile.'}
+    Stage 'parent_load_token_helper'
     Add-Type -Path $helperPath
     $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $arguments='-NoProfile -NonInteractive -STA -File "'+$PSCommandPath+'" -Child -Helper "'+$helperPath+'" -ExpectedSid "'+$sid+'" -Report "'+$reportPath+'"'
+    Stage 'parent_create_restricted_process'
     $childProcess=[TqrPermissionLab.Probe]::StartRestricted((Join-Path $PSHOME 'powershell.exe'),$arguments,$work)
+    Stage 'parent_wait_restricted_process'
     if(-not $childProcess.WaitForExit(120000)){throw 'Restricted child exceeded its time bound; no test rerun.'}
+    Stage 'parent_read_child_evidence'
     $report=Get-Content -LiteralPath $reportPath -Raw|ConvertFrom-Json
+    $failure=$report.failure
     foreach($case in $report.cases){$cases.Add($case)}
     $cases.Add([pscustomobject]@{name='Restricted native child completes all probes';passed=($report.complete -and $childProcess.ExitCode -eq 0)})
     foreach($name in $hashes.Keys){$cases.Add([pscustomobject]@{name=('Non-destructive probes preserve protected bytes: '+$name);passed=((Get-FileHash (Join-Path $program $name)).Hash -ceq $hashes[$name])})}
     $all=(@($cases|Where-Object {-not $_.passed}).Count -eq 0)
-}catch{$errorCode=$_.Exception.HResult}
+}catch{$errorCode=$_.Exception.HResult;$failure=Failure $_}
 finally{
     if($childProcess){try{if(-not $childProcess.HasExited){$childProcess.Kill();[void]$childProcess.WaitForExit(5000)}}catch{$cleanup=$false};$childProcess.Dispose()}
     foreach($name in $created){
@@ -124,6 +152,6 @@ finally{
         }catch{$cleanup=$false}
     }
     $cases.Add([pscustomobject]@{name='Only this permission fixture tasks and child are cleaned up';passed=$cleanup})
-    [pscustomobject]@{passed=($all -and $cleanup);source=$env:GITHUB_SHA;scope='Same-user medium-integrity restricted process, real file access opens, COM task protection and exact installed UI dispatch';cases=@($cases.ToArray());errorCode=$errorCode;limits=@('Restricted token is not a claim of every Windows standard-user or split-token configuration','No file content is written or deleted by permission probes; task writes submit only unchanged values','No live Tailscale or tailnet; protected task observes the missing installation','Unrelated-user, alternate-admin, hostile pre-existing paths and signed provenance remain separate acceptance')}|ConvertTo-Json -Depth 9|Set-Content (Join-Path $evidence 'native-permission-results.json') -Encoding UTF8
+    [pscustomobject]@{passed=($all -and $cleanup);source=$env:GITHUB_SHA;scope='Same-user medium-integrity restricted process, real file access opens, COM task protection and exact installed UI dispatch';cases=@($cases.ToArray());errorCode=$errorCode;failure=$failure;limits=@('Restricted token is not a claim of every Windows standard-user or split-token configuration','No file content is written or deleted by permission probes; task writes submit only unchanged values','No live Tailscale or tailnet; protected task observes the missing installation','Unrelated-user, alternate-admin, hostile pre-existing paths and signed provenance remain separate acceptance')}|ConvertTo-Json -Depth 9|Set-Content (Join-Path $evidence 'native-permission-results.json') -Encoding UTF8
 }
 if(-not $all -or -not $cleanup){throw 'Native permission acceptance did not pass; preserve and inspect the typed report.'}
