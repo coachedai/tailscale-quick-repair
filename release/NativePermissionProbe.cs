@@ -61,8 +61,15 @@ namespace TqrPermissionLab
                 SidAttributes label=new SidAttributes {Sid=medium,Attributes=0x20};
                 if(!SetTokenInformation(child,25,ref label,Marshal.SizeOf(typeof(SidAttributes))+(int)GetLengthSid(medium))) throw new Win32Exception();
                 StartupInfo si=new StartupInfo();si.cb=Marshal.SizeOf(typeof(StartupInfo));
+                // Same logged-on user/session. No window-station or desktop ACL is
+                // changed to make this work; the child must already have access.
+                si.desktop=@"winsta0\default";
                 if(!CreateProcessAsUser(child,executable,new StringBuilder("\""+executable+"\" "+arguments),IntPtr.Zero,IntPtr.Zero,false,0x08000000,IntPtr.Zero,directory,ref si,out pi)) throw new Win32Exception();
-                return Process.GetProcessById((int)pi.pid);
+                Process process=Process.GetProcessById((int)pi.pid);
+                // Cache a real handle before releasing the creation handle. An
+                // attached Process otherwise loses a fast startup-failure status.
+                IntPtr retained=process.Handle;
+                return process;
             }
             finally
             {
