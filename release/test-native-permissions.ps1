@@ -176,12 +176,13 @@ try{
     if(-not $childProcess.WaitForExit(120000)){throw 'Restricted child exceeded its time bound; no test rerun.'}
     $childExitCode=$childProcess.ExitCode
     Stage 'parent_read_child_evidence'
-    $report=Get-Content -LiteralPath $reportPath -Raw|ConvertFrom-Json
-    $failure=$report.failure
-    foreach($case in $report.cases){$cases.Add($case)}
-    $cases.Add([pscustomobject]@{name='Restricted native child completes all probes';passed=($report.complete -and $childProcess.ExitCode -eq 0)})
+    $childReport=Get-Content -LiteralPath $reportPath -Raw|ConvertFrom-Json
+    Copy-Item -LiteralPath $reportPath -Destination (Join-Path $evidence 'native-permission-child.json')
+    $failure=$childReport.failure
+    foreach($case in $childReport.cases){$cases.Add($case)}
+    $cases.Add([pscustomobject]@{name='Restricted native child completes all probes';passed=($childReport.complete -and $childProcess.ExitCode -eq 0)})
     foreach($name in $hashes.Keys){$cases.Add([pscustomobject]@{name=('Non-destructive probes preserve protected bytes: '+$name);passed=((Get-FileHash (Join-Path $program $name)).Hash -ceq $hashes[$name])})}
-    $all=(@($cases|Where-Object {-not $_.passed}).Count -eq 0)
+    $all=($childReport.complete -is [bool] -and $childReport.complete -and @($childReport.cases).Count -ge 52 -and @($cases|Where-Object {-not $_.passed}).Count -eq 0)
 }catch{$errorCode=$_.Exception.HResult;$failure=Failure $_}
 finally{
     if($childProcess){try{if(-not $childProcess.HasExited){$childProcess.Kill();[void]$childProcess.WaitForExit(5000)}}catch{$cleanup=$false};$childProcess.Dispose()}
