@@ -43,6 +43,11 @@ jobs:
       - name: Native bounded local status gates
         shell: powershell
         run: .\release\test-auto-repair-local-status.ps1 -EvidenceDirectory .\test-evidence
+      - name: Real installed Windows service and full recurrence gates
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-native-windows.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
       - name: Final source privacy and no-publication check
         shell: powershell
         run: |
@@ -65,7 +70,7 @@ jobs:
           name: auto-repair-native-evidence
           path: test-evidence/*
           if-no-files-found: error
-      - name: Preserve validated baseline packages
+      - name: Preserve validated development packages
         if: success()
         uses: actions/upload-artifact@v4
         with:
