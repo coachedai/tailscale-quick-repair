@@ -1,13 +1,15 @@
 param([Parameter(Mandatory=$true)][string]$OutputDirectory,[Parameter(Mandatory=$true)][string]$UpstreamEvidence,[string]$EvidenceDirectory='.\upgrade-evidence')
 $ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
+$releaseValidation=($env:GITHUB_REF_NAME -ceq 'main' -and $env:TQR_RELEASE_VALIDATION -ceq $env:GITHUB_RUN_ID -and -not [string]::IsNullOrEmpty($env:GITHUB_RUN_ID))
+$developmentValidation=($env:GITHUB_REF_NAME -ceq 'work/6.1-auto-repair-safety')
 if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or
    $env:RUNNER_ARCH -cne 'X64' -or $env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-quick-repair' -or
-   $env:GITHUB_REF_NAME -cne 'work/6.1-auto-repair-safety' -or $env:TQR_NATIVE_LAB_RUN -cne $env:GITHUB_RUN_ID -or
+   -not ($developmentValidation -or $releaseValidation) -or $env:TQR_NATIVE_LAB_RUN -cne $env:GITHUB_RUN_ID -or
    -not $env:GITHUB_RUN_ID -or $PSVersionTable.PSVersion.Major -ne 5){throw 'Released-upgrade lab requires a disposable native Windows runner.'}
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if((git -C $repo rev-parse HEAD).Trim() -cne $env:GITHUB_SHA -or
    (git -C $repo remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?$' -or
-   (Get-Content (Join-Path $repo 'release/publish.json') -Raw|ConvertFrom-Json).publish){throw 'Exact isolated unpublished development source required.'}
+   ((Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json).publish -and -not $releaseValidation)){throw 'Exact isolated unpublished development source required.'}
 if((Get-Content (Join-Path $UpstreamEvidence 'source-commit.txt') -Raw).Trim() -cne $env:GITHUB_SHA){throw 'Upstream source does not match.'}
 foreach($name in @('native-windows-results.json','native-permission-results.json','protected-migration-results.json')){
     $prior=Get-Content (Join-Path $UpstreamEvidence $name) -Raw|ConvertFrom-Json
