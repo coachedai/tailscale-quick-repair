@@ -88,6 +88,9 @@ internal static class PublicSetupHost
                 return RunInstallerSelfTest();
             }
 
+            string requesterSid = ReadArg(args, "--requester-sid");
+            RequireRequesterIdentity(requesterSid);
+
             bool repairOnly = HasSwitch(args, "--repair");
             bool upgradeOnly = HasSwitch(args, "--upgrade");
 
@@ -115,7 +118,7 @@ internal static class PublicSetupHost
 
             if (!IsAdministrator())
             {
-                return RelaunchElevated(peer, startup, repairOnly, upgradeOnly);
+                return RelaunchElevated(peer, startup, repairOnly, upgradeOnly, CurrentUserSid());
             }
 
             bool acquired = upgradeOnly
@@ -984,20 +987,57 @@ internal static class PublicSetupHost
         return candidate;
     }
 
-    private static int RelaunchElevated(string peer, bool startup, bool repairOnly, bool upgradeOnly)
+    private static int RelaunchElevated(string peer, bool startup, bool repairOnly, bool upgradeOnly, string requesterSid)
     {
         try
         {
             ProcessStartInfo psi = new ProcessStartInfo();
             psi.FileName = Process.GetCurrentProcess().MainModule.FileName;
             string mode = repairOnly ? "--repair " : upgradeOnly ? "--upgrade " : "";
-            psi.Arguments = mode + "--peer " + Quote(peer) + " --startup " + (startup ? "true" : "false");
+            psi.Arguments = mode + "--peer " + Quote(peer) +
+                " --startup " + (startup ? "true" : "false") +
+                " --requester-sid " + Quote(NormalizeSid(requesterSid));
             psi.Verb = "runas";
             psi.UseShellExecute = true;
             Process child = Process.Start(psi);
             return child == null ? 5 : 0;
         }
         catch { return 5; }
+    }
+
+    private static string CurrentUserSid()
+    {
+        using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
+        {
+            if (identity == null || identity.User == null)
+                throw new UnauthorizedAccessException("The Windows account could not be verified.");
+            return identity.User.Value;
+        }
+    }
+
+    private static string NormalizeSid(string value)
+    {
+        if (String.IsNullOrWhiteSpace(value))
+            throw new UnauthorizedAccessException("The Windows account could not be verified.");
+        try
+        {
+            SecurityIdentifier sid = new SecurityIdentifier(value.Trim());
+            return sid.Value;
+        }
+        catch
+        {
+            throw new UnauthorizedAccessException("The Windows account could not be verified.");
+        }
+    }
+
+    private static void RequireRequesterIdentity(string requesterSid)
+    {
+        if (String.IsNullOrWhiteSpace(requesterSid)) return;
+        string expected = NormalizeSid(requesterSid);
+        if (!String.Equals(CurrentUserSid(), expected, StringComparison.Ordinal))
+            throw new UnauthorizedAccessException(
+                "Setup must be approved by the same Windows account that started Quick Repair."
+            );
     }
 
     private static bool IsAdministrator()
