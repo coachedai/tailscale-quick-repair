@@ -12,6 +12,30 @@ function Replace-ExactOnce {
     $script:text = $script:text.Remove($first,$Find.Length).Insert($first,$Replace)
 }
 
+function Replace-FunctionOnce {
+    param([string]$Name,[string]$Replacement)
+
+    $tokens=$null
+    $errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseInput($script:text,[ref]$tokens,[ref]$errors)
+    if ($errors.Count) {
+        throw "Packaged UI does not parse before replacing $Name."
+    }
+
+    $functions=@($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $Name
+    },$true))
+
+    if ($functions.Count -ne 1) {
+        throw "Expected one packaged $Name function; found $($functions.Count)."
+    }
+
+    $node=$functions[0]
+    $length=$node.Extent.EndOffset-$node.Extent.StartOffset
+    $script:text=$script:text.Remove($node.Extent.StartOffset,$length).Insert($node.Extent.StartOffset,$Replacement)
+}
+
 if ($text -notmatch '(?m)^\$ProtectedUpdateMarkerPath\s*=') {
     $setupLine = '$SetupHostPath = Join-Path $StateDir ''TailscaleQuickRepairSetup.exe'''
     Replace-ExactOnce $setupLine ($setupLine + [Environment]::NewLine +
@@ -151,17 +175,17 @@ if ($text -notmatch [regex]::Escape('function Invoke-PendingProtectedUpdate')) {
     Replace-ExactOnce '    function Start-UpdateInstall {' ($functionBlock + '    function Start-UpdateInstall {') 'update install function'
 }
 
-$bridgeSuccess = @'
-            if ([bool]$result.success) {
-                Write-LocalHistoryEvent 'update_installed'
-                [void](Request-SmartNotification 'update_installed' $notificationResultStamp)
-                $UpdateStatusText.Text = "Updated successfully · $([string]$result.version)"
-                $UpdateStatusText.Foreground = Get-Brush 'Green'
-                $UpdateDetailText.Text = 'The verified update was installed and Quick Repair restarted normally.'
-                $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
-            }
-'@
-$bridgePending = @'
+$showUpdateResult = @'
+    function Show-UpdateResult {
+        if (-not (Test-Path -LiteralPath $UpdateResultPath)) {
+            return
+        }
+
+        try {
+            $notificationResultStamp=(Get-Item -LiteralPath $UpdateResultPath -ErrorAction Stop).LastWriteTimeUtc.ToString('o')
+            $result = Get-Content -LiteralPath $UpdateResultPath -Raw | ConvertFrom-Json
+            Remove-Item -LiteralPath $UpdateResultPath -Force -ErrorAction SilentlyContinue
+
             if ([bool]$result.success) {
                 if (Test-Path -LiteralPath $ProtectedUpdateMarkerPath) {
                     $UpdateStatusText.Text = 'Update downloaded · finishing setup'
@@ -178,8 +202,19 @@ $bridgePending = @'
                     $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
                 }
             }
+            else {
+                Write-LocalHistoryEvent 'update_failed'
+                [void](Request-SmartNotification 'update_attention' $notificationResultStamp)
+                $UpdateStatusText.Text = 'Update needs attention'
+                $UpdateStatusText.Foreground = Get-Brush 'Amber'
+                $UpdateDetailText.Text = [string]$result.message
+                $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
+            }
+        }
+        catch {}
+    }
 '@
-Replace-ExactOnce $bridgeSuccess $bridgePending 'protected handoff update-result presentation'
+Replace-FunctionOnce 'Show-UpdateResult' $showUpdateResult
 
 $startup = @'
                 Show-UpdateResult
