@@ -377,16 +377,20 @@ try {
     }
 
     $protectedMarkerPath = Join-Path $appDir 'protected-update.json'
+    if (Test-Path -LiteralPath $protectedMarkerPath) {
+        Remove-Item -LiteralPath $protectedMarkerPath -Force
+    }
+
+    # The handoff marker is transient. Generate the permanent app integrity
+    # manifest first, then add the marker so the outer package manifest protects
+    # its exact bytes without requiring it to remain after Setup completes.
+    & (Join-Path $PSScriptRoot 'write-integrity-manifest.ps1') -AppDirectory $appDir -VersionPath $versionPath -Profile 'update'
+
     if ($requiresSetup -or $protectedHandoff) {
         [ordered]@{ schema = 1; versionCode = [int64]$version.versionCode } |
             ConvertTo-Json -Compress |
             Set-Content -LiteralPath $protectedMarkerPath -Encoding UTF8
     }
-    elseif (Test-Path -LiteralPath $protectedMarkerPath) {
-        Remove-Item -LiteralPath $protectedMarkerPath -Force
-    }
-
-    & (Join-Path $PSScriptRoot 'write-integrity-manifest.ps1') -AppDirectory $appDir -VersionPath $versionPath -Profile 'update'
 
     $entries = @(
         Get-ChildItem -LiteralPath $root -File -Recurse |
