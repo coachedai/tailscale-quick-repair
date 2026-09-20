@@ -68,7 +68,7 @@ try{
     $fn=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Invoke-PendingProtectedUpdate'},$true))
     Check ($fn.Count -eq 1) 'Bridged UI contains one pending protected-update handoff'
     $source=$fn[0].Extent.Text
-    Check ($source.Contains('$psi.FileName = $SetupHostPath') -and $source.Contains("$psi.Arguments = '--upgrade'")) 'Handoff launches only the installed Setup host in upgrade mode'
+    Check ($source.Contains('$psi.FileName = $SetupHostPath') -and $source.Contains("$psi.Arguments = '--upgrade'") -and $source.Contains("$psi.Verb = 'runas'")) 'Handoff launches only the installed Setup host in elevated upgrade mode'
     Check ($source.Contains('$ProtectedUpdateMarkerPath') -and -not $source.Contains('Repair-Backend.ps1')) 'Handoff uses the version marker and never runs a protected script directly'
     Run-Child 'CheckSetupMarker' $legacy $bridge
     Check (-not(Test-Path (Join-Path $app 'protected-update.json'))) 'Refreshed Setup owns marker completion after strict validation'
