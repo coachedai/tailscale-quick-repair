@@ -22,7 +22,7 @@ $observations=New-Object 'Collections.Generic.List[object]'
 $passed=$false;$cleanupOK=$true;$stage='preflight';$failureType='';$failureCode=0;$reflectionBoundary='';$blockedStage='';$blockedBoundary=''
 $vendorInstalled=$false;$productOwned=$false;$vendorOwned=$false;$setupLease=$false
 $createdTasks=New-Object 'Collections.Generic.List[string]'
-$folderName='';$folder=$null;$scheduler=$null;$setupType=$null;$msi='';$vendorHash='';$repeatDelta=-1
+$folderName='';$folder=$null;$scheduler=$null;$setupType=$null;$msi='';$vendorHash='';$repeatDelta=-1;$fallbackScheduledUtc='';$fallbackFirings=@();$firstDelaySeconds=-1
 $app=Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair'
 $program=Join-Path $env:ProgramData 'TailscaleQuickRepair'
 $vendorData=Join-Path $env:ProgramData 'Tailscale'
@@ -98,7 +98,7 @@ function MarkerTimes([string]$Path){
 function HarmlessTask([string]$Name,[string]$TriggerId){
     $definition=$scheduler.NewTask(0);$definition.Principal.UserId=$sid;$definition.Principal.LogonType=3;$definition.Principal.RunLevel=0
     $definition.Settings.Enabled=$true;$definition.Settings.MultipleInstances=2;$definition.Settings.ExecutionTimeLimit='PT1M'
-    [void](Setup 'ConfigureAutoMonitorSchedule' @($definition,[DateTime]::Now.AddSeconds(-45),$sid))
+    [void](Setup 'ConfigureAutoMonitorSchedule' @($definition,[DateTime]::Now,$sid))
     for($i=1;$i -le $definition.Triggers.Count;$i++){$t=$definition.Triggers.Item($i);$t.Enabled=([string]$t.Id -ceq $TriggerId)}
     $marker=Join-Path $lab ($Name+'.timestamps')
     $scriptPath=Join-Path $lab ($Name+'.ps1');$launcher=Join-Path $lab ($Name+'.vbs')
@@ -174,8 +174,6 @@ try{
     Check ($actualSid -ceq $sid -and $d.Principal.LogonType -eq 3 -and $d.Principal.RunLevel -eq 1) 'Actual Setup registers the protected task for the same interactive user at highest run level'
     Check ($d.Actions.Count -eq 1 -and $d.Actions.Item(1).Arguments -ceq ('"'+(Join-Path $program 'Launch-Auto-Repair-Monitor.vbs')+'"')) 'Actual protected task targets the reviewed fixed hidden launcher'
     $folderName='TqrNativeAcceptance-'+[Guid]::NewGuid().ToString('N');$folder=$rootFolder.CreateFolder($folderName,$null)
-    $repeat=HarmlessTask 'FullFallback' 'LocalFallback'
-    Check ($repeat.Task.Definition.Triggers.Item(1).Repetition.Interval -eq 'PT5M') 'Real fallback task retains the full five-minute repetition interval'
     Stage 'download and validate fixed official vendor MSI'
     [Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $vendorUrl='https://pkgs.tailscale.com/stable/tailscale-setup-1.102.3-amd64.msi'
@@ -256,9 +254,16 @@ try{
     $recordHash=(Get-FileHash (Join-Path $app 'auto-repair-state.json')).Hash
     WaitTask $auto;[void]$auto.Run($null);Start-Sleep -Seconds 2;WaitTask $auto
     Check ([int64]$auto.LastTaskResult -eq 0 -and (Get-FileHash (Join-Path $app 'auto-repair-state.json')).Hash -eq $recordHash) 'Actual disabled protected task exits quietly without overwriting prior evidence'
+    # Measure recurrence after installation activity, not while MSI/first-run
+    # process setup can delay the first marker. Keep the full interval assertion.
+    $repeat=HarmlessTask 'FullFallback' 'LocalFallback'
+    Check ($repeat.Task.Definition.Triggers.Item(1).Repetition.Interval -eq 'PT5M') 'Real fallback task retains the full five-minute repetition interval'
+    $fallbackScheduledUtc=[DateTime]::Parse([string]$repeat.Task.Definition.Triggers.Item(1).StartBoundary).ToUniversalTime().ToString('o')
     Stage 'observe second real fallback firing after a full five minutes'
-    $deadline=[DateTime]::UtcNow.AddMinutes(6)
+    $deadline=[DateTime]::UtcNow.AddMinutes(7)
     do{$times=@(MarkerTimes $repeat.Marker);if($times.Count -ge 2){break};Start-Sleep -Milliseconds 500}while([DateTime]::UtcNow -lt $deadline)
+    $fallbackFirings=@($times|ForEach-Object {$_.ToString('o')})
+    if($times.Count){$firstDelaySeconds=($times[0]-[DateTime]::Parse($fallbackScheduledUtc)).TotalSeconds}
     Check ($times.Count -ge 2) 'Real native fallback fires twice without a resident UI or any manual task Run request'
     $repeatDelta=($times[1]-$times[0]).TotalSeconds
     Check ($repeatDelta -ge 290 -and $repeatDelta -le 345) 'Measured recurrence spans the full five-minute interval without an accelerated clock'
@@ -288,7 +293,7 @@ try{
     $cases.Add([pscustomobject]@{name='Only owned native lab tasks and vendor installation are cleaned up';passed=$cleanupOK})
     [pscustomobject]@{
         passed=($passed -and $cleanupOK);source=$env:GITHUB_SHA;scope='Real empty GitHub-hosted Windows machine: unmodified Setup cores, installed worker and official unauthenticated vendor service; real scheduled dispatch and full recurrence';
-        vendorVersion='1.102.3';vendorSha256=$vendorHash;recurrenceSeconds=$repeatDelta;cases=@($cases.ToArray());observations=@($observations.ToArray());
+        vendorVersion='1.102.3';vendorSha256=$vendorHash;recurrenceSeconds=$repeatDelta;fallbackScheduledUtc=$fallbackScheduledUtc;fallbackFirings=$fallbackFirings;firstDelaySeconds=$firstDelaySeconds;cases=@($cases.ToArray());observations=@($observations.ToArray());
         failureStage=$(if($passed){''}else{$blockedStage});failureType=$failureType;failureCode=$failureCode;reflectionBoundary=$blockedBoundary;
         limits=@('No tailnet login, authentication key or remote peer','Fresh stopped-service policy is an explicitly separate state fixture; observed-intent state is preserved','Real service event uses the exact Setup subscription with a harmless action; actual monitor task dispatch is a separate test','Setup verification/application/registration cores execute natively; interactive UAC, alternate-admin, restart/rollback and full entry are not certified','No actual sleep/resume, logon or VPN transition is induced','No raw vendor logs, host paths, usernames, addresses, private state or MSI is uploaded; transient files remain only on the disposable runner')
     }|ConvertTo-Json -Depth 10|Set-Content (Join-Path $evidence 'native-windows-results.json') -Encoding UTF8
