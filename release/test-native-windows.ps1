@@ -17,6 +17,8 @@ New-Item -ItemType Directory -Path $EvidenceDirectory -Force|Out-Null
 $evidence=(Resolve-Path $EvidenceDirectory).Path
 $lab=Join-Path $env:RUNNER_TEMP ('TqrNativeLab-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $lab|Out-Null
+. (Join-Path $PSScriptRoot 'trace-native-recurrence.ps1')
+$timingContext=$null;$timingReport=$null;$timingError=0
 $cases=New-Object 'Collections.Generic.List[object]'
 $observations=New-Object 'Collections.Generic.List[object]'
 $passed=$false;$cleanupOK=$true;$stage='preflight';$failureType='';$failureCode=0;$reflectionBoundary='';$blockedStage='';$blockedBoundary=''
@@ -103,12 +105,17 @@ function HarmlessTask([string]$Name,[string]$TriggerId){
     $marker=Join-Path $lab ($Name+'.timestamps')
     $scriptPath=Join-Path $lab ($Name+'.ps1');$launcher=Join-Path $lab ($Name+'.vbs')
     [IO.File]::WriteAllText($scriptPath,('[IO.File]::AppendAllText('''+$marker.Replace("'","''")+''',[DateTime]::UtcNow.ToString(''o'')+[Environment]::NewLine)'))
+    $trace=$null
+    if($Name -ceq 'FullFallback'){
+        $trace=New-NativeRecurrenceTrace -Marker $marker -ScriptPath $scriptPath -TaskPath ('\'+$folderName+'\'+$Name)
+        $script:timingContext=$trace
+    }
     $ps=Join-Path $PSHOME 'powershell.exe'
     $command='"'+$ps+'" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+$scriptPath+'"'
     [IO.File]::WriteAllText($launcher,[string](Setup 'BuildHiddenLauncherBody' @($command)))
     $action=$definition.Actions.Create(0);$action.Path=Join-Path $env:WINDIR 'System32\wscript.exe';$action.Arguments='"'+$launcher+'"';$action.WorkingDirectory=$lab
     $task=$folder.RegisterTaskDefinition($Name,$definition,2,$null,$null,3,$null)
-    return [pscustomobject]@{Task=$task;Marker=$marker;Name=$Name}
+    return [pscustomobject]@{Task=$task;Marker=$marker;Name=$Name;Trace=$trace}
 }
 try{
     Add-Type -AssemblyName System.IO.Compression.FileSystem,System.ServiceProcess
@@ -260,13 +267,20 @@ try{
     Check ($repeat.Task.Definition.Triggers.Item(1).Repetition.Interval -eq 'PT5M') 'Real fallback task retains the full five-minute repetition interval'
     $fallbackScheduledUtc=[DateTime]::Parse([string]$repeat.Task.Definition.Triggers.Item(1).StartBoundary).ToUniversalTime().ToString('o')
     Stage 'observe second real fallback firing after a full five minutes'
-    $deadline=[DateTime]::UtcNow.AddMinutes(7)
-    do{$times=@(MarkerTimes $repeat.Marker);if($times.Count -ge 2){break};Start-Sleep -Milliseconds 500}while([DateTime]::UtcNow -lt $deadline)
+    $recurrenceWait=[Diagnostics.Stopwatch]::StartNew()
+    do{
+        Add-NativeRecurrenceClockSample $repeat.Trace $repeat.Task
+        $times=@(MarkerTimes $repeat.Marker);if($times.Count -ge 2){break}
+        Start-Sleep -Milliseconds 500
+    }while($recurrenceWait.Elapsed.TotalSeconds -lt 420)
+    $timingReport=Read-NativeRecurrenceTrace $repeat.Trace $repeat.Task
     $fallbackFirings=@($times|ForEach-Object {$_.ToString('o')})
     if($times.Count){$firstDelaySeconds=($times[0]-[DateTime]::Parse($fallbackScheduledUtc)).TotalSeconds}
     Check ($times.Count -ge 2) 'Real native fallback fires twice without a resident UI or any manual task Run request'
     $repeatDelta=($times[1]-$times[0]).TotalSeconds
     Check ($repeatDelta -ge 290 -and $repeatDelta -le 345) 'Measured recurrence spans the full five-minute interval without an accelerated clock'
+    Check ($timingReport.qpcSeconds -ge 290 -and $timingReport.qpcSeconds -le 345) 'Independent monotonic clock confirms the same full five-minute interval'
+    Check ($timingReport.observations.Count -ge 2 -and $timingReport.eventReadError -eq 0 -and @($timingReport.events).Count -gt 0) 'Recurrence retains actual task-instance and trigger evidence'
     $repeat.Task.Enabled=$false;WaitTask $repeat.Task
     Check (@(Get-Process -Name 'TailscaleQuickRepair' -ErrorAction SilentlyContinue).Count -eq 0) 'Native acceptance did not require a resident Quick Repair GUI'
     $passed=$true
@@ -278,6 +292,11 @@ try{
 }finally{
     # Only this empty-runner suite's own installation and tasks are cleaned up.
     # Never reset a policy/ownership marker to make an assertion pass.
+    if($timingContext){
+        try{$timingReport=Read-NativeRecurrenceTrace $timingContext $repeat.Task}catch{$timingError=$_.Exception.HResult;$cleanupOK=$false}
+        try{Close-NativeRecurrenceTrace $timingContext}catch{$timingError=$_.Exception.HResult;$cleanupOK=$false}
+        if($timingReport){$timingReport.channelRestored=$timingContext.Restored;JsonWrite (Join-Path $evidence 'native-recurrence-trace.json') $timingReport}
+    }
     if($setupLease){try{[void](Setup 'ReleaseOperationLock' @())}catch{$cleanupOK=$false}}
     if($scheduler){
         foreach($name in $createdTasks){try{$task=$scheduler.GetFolder('\').GetTask($name);$task.Enabled=$false;WaitTask $task;$scheduler.GetFolder('\').DeleteTask($name,0)}catch{$cleanupOK=$false}}
@@ -294,7 +313,7 @@ try{
     [pscustomobject]@{
         passed=($passed -and $cleanupOK);source=$env:GITHUB_SHA;scope='Real empty GitHub-hosted Windows machine: unmodified Setup cores, installed worker and official unauthenticated vendor service; real scheduled dispatch and full recurrence';
         vendorVersion='1.102.3';vendorSha256=$vendorHash;recurrenceSeconds=$repeatDelta;fallbackScheduledUtc=$fallbackScheduledUtc;fallbackFirings=$fallbackFirings;firstDelaySeconds=$firstDelaySeconds;cases=@($cases.ToArray());observations=@($observations.ToArray());
-        failureStage=$(if($passed){''}else{$blockedStage});failureType=$failureType;failureCode=$failureCode;reflectionBoundary=$blockedBoundary;
+        failureStage=$(if($passed){''}else{$blockedStage});failureType=$failureType;failureCode=$failureCode;reflectionBoundary=$blockedBoundary;timingTraceError=$timingError;
         limits=@('No tailnet login, authentication key or remote peer','Fresh stopped-service policy is an explicitly separate state fixture; observed-intent state is preserved','Real service event uses the exact Setup subscription with a harmless action; actual monitor task dispatch is a separate test','Setup verification/application/registration cores execute natively; interactive UAC, alternate-admin, restart/rollback and full entry are not certified','No actual sleep/resume, logon or VPN transition is induced','No raw vendor logs, host paths, usernames, addresses, private state or MSI is uploaded; transient files remain only on the disposable runner')
     }|ConvertTo-Json -Depth 10|Set-Content (Join-Path $evidence 'native-windows-results.json') -Encoding UTF8
 }
