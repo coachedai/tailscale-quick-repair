@@ -127,7 +127,7 @@ function Update-AutoRepairStatus {
     }
 }
 '@
-# Preserve the established legacy adapter tests while requiring typed schema-2
+# Preserve the established legacy adapter tests while requiring typed worker
 # recovery evidence for the integrated worker. Unknown schemas never alert.
 $needle='            $status=[string]$state.status'
 if(([regex]::Matches($text,[regex]::Escape($needle))).Count -ne 1){throw 'Expected one automatic notification adapter.'}
@@ -202,8 +202,13 @@ function Invoke-AutoRepairEventTick {
 $historyAnchor='            $view = [Tqr.LocalHistory]::Read($StateDir)'
 if(([regex]::Matches($text,[regex]::Escape($historyAnchor))).Count -ne 1){throw 'Expected one History view.'}
 $text=$text.Replace($historyAnchor,@'
-            if(-not [Tqr.AutoRepairBackground]::Reconcile($StateDir,$false)){$script:historyWriteUnavailable=$true}
+            $script:autoHistoryReconcileUnavailable = -not [Tqr.AutoRepairBackground]::Reconcile($StateDir,$false)
             $view = [Tqr.LocalHistory]::Read($StateDir)
+'@)
+$historyWarning="            if (`$script:historyWriteUnavailable) { `$HistoryText.Text += [Environment]::NewLine + 'The latest event could not be saved.' }"
+if(([regex]::Matches($text,[regex]::Escape($historyWarning))).Count -ne 1){throw 'Expected one History write warning.'}
+$text=$text.Replace($historyWarning,$historyWarning+[Environment]::NewLine+@'
+            elseif ($script:autoHistoryReconcileUnavailable) { $HistoryText.Text += [Environment]::NewLine + 'Background activity could not be reconciled. Existing history was preserved.' }
 '@)
 [void][scriptblock]::Create($text)
 [IO.File]::WriteAllText($Path,$text,(New-Object Text.UTF8Encoding($true)))

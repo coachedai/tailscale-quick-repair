@@ -21,7 +21,10 @@ try {
     $package=Join-Path $root 'package';Expand-Archive $zip[0].FullName $package
     $dll=Join-Path $package 'program\TailscaleQuickRepair.Operations.dll'
     Add-Type -Path $dll
-    Check ([Tqr.AutoRepairBackground].Assembly.Location -ieq $dll) 'Background tests load the actual protected package assembly'
+    $loaded=[IO.Path]::GetFullPath([Tqr.AutoRepairBackground].Assembly.Location)
+    $expectedDll=[IO.Path]::GetFullPath($dll)
+    Check ($loaded -ieq $expectedDll) 'Background tests load the actual protected package assembly'
+    Check ((Get-FileHash $loaded).Hash -eq (Get-FileHash $expectedDll).Hash) 'Loaded assembly bytes match the exact protected package'
     # A native machine fixture executes every real worker/policy/history boundary.
     $code=@'
 using System;
@@ -46,6 +49,8 @@ public class Machine : IAutoRepairMachine {
     public void Pause(){Now=Now.AddMilliseconds(500);}
 }
 public class Clock {public long ElapsedMilliseconds;}
+public class NotificationSettings {public string Status="ready";public bool Enabled=true;}
+public class NotificationCenter {public NotificationSettings State=new NotificationSettings();public NotificationSettings Settings(){return State;}}
 }
 '@
     $source=Join-Path $root 'fixture.cs';[IO.File]::WriteAllText($source,$code)
@@ -163,7 +168,7 @@ public class Clock {public long ElapsedMilliseconds;}
     $ui=[IO.File]::ReadAllText((Join-Path $package 'app\Tailscale-Repair-UI.ps1'))
     $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($ui,[ref]$tokens,[ref]$errors)
     Check ($errors.Count -eq 0) 'Final background-enabled UI parses on native PowerShell'
-    foreach($name in @('Test-AutoRepairSmartEnabled','Queue-AutoRepairSmartCheck','Invoke-AutoRepairEventTick','Update-LocalHistoryView','Initialize-LocalHistory')){
+    foreach($name in @('Test-AutoRepairSmartEnabled','Queue-AutoRepairSmartCheck','Invoke-AutoRepairEventTick','Update-LocalHistoryView','Initialize-LocalHistory','Observe-SmartAutoNotification','Get-AutoRepairEnabled')){
         $nodes=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true))
         Check ($nodes.Count -eq 1) "One actual packaged $name function after all transforms"
         . ([scriptblock]::Create($nodes[0].Extent.Text))
@@ -186,6 +191,43 @@ public class Clock {public long ElapsedMilliseconds;}
     Check (-not $script:autoRepairTriggerTimer.IsEnabled -and -not $script:autoEventQueue.Pending -and $script:dispatches -eq 1) 'Disabling during a queued follow-up stops the real timer without another dispatch'
     Update-LocalHistoryView
     Check ($HistoryText.Text.Contains('Automatic repair started the Tailscale service') -and $HistoryText.Text.Contains('Automatic local recovery confirmed')) 'Next UI session renders the background actions in the existing History column'
+    $originalResult=[IO.File]::ReadAllBytes((Join-Path $StateDir 'auto-repair-state.json'))
+    [IO.File]::WriteAllText((Join-Path $StateDir 'auto-repair-state.json'),'{unreadable')
+    Update-LocalHistoryView
+    Check ($HistoryText.Text.Contains('Background activity could not be reconciled.')) 'Unavailable background evidence is distinguished from a failed History write'
+    [IO.File]::WriteAllBytes((Join-Path $StateDir 'auto-repair-state.json'),$originalResult)
+    Update-LocalHistoryView
+    Check (-not $HistoryText.Text.Contains('Background activity could not be reconciled.')) 'Reconciliation warning clears after evidence becomes readable without a new repair'
+    # Exercise the actual packaged notification adapter with new-schema snapshots.
+    # Its sink is harmless; global rate/shell gates remain in the unchanged suite.
+    function Request-SmartNotification {param([string]$Code,[string]$Stamp) $script:notificationCalls.Add($Code);return $true}
+    $script:notificationCalls=New-Object 'Collections.Generic.List[string]'
+    $script:notificationCenter=New-Object BackgroundFixture.NotificationCenter
+    $AutoRepairStatePath=Join-Path $StateDir 'auto-repair-state.json'
+    JsonWrite (Join-Path $StateDir 'auto-repair.json') @{enabled=$true}
+    $script:notificationStartedUtc=[DateTime]::UtcNow
+    Observe-SmartAutoNotification
+    Check ($script:notificationCalls.Count -eq 0) 'A new UI session does not replay notifications from already completed background recovery'
+    $script:notificationStartedUtc=[DateTime]::UtcNow.AddMinutes(-5)
+    Observe-SmartAutoNotification
+    Check ($script:notificationCalls.Count -eq 1 -and $script:notificationCalls[0] -eq 'auto_recovered') 'A fresh observed schema-3 recovery requests one generic recovery notification'
+    Observe-SmartAutoNotification
+    Check ($script:notificationCalls.Count -eq 1) 'Repeated local-state ticks cannot announce the same recovery twice'
+    $r=[Tqr.AutoRepairRecords]::Current($StateDir)
+    $r.recoveryConfirmed=$false;$r.lastRepairUtc='';$r.lastRepairReason='';$r.status='healthy';$r.reason='local_running'
+    [Tqr.AutoRepairRecords]::Save($StateDir,$r)
+    Observe-SmartAutoNotification
+    Check ($script:notificationCalls.Count -eq 1) 'Healthy observation without recovery confirmation does not announce repair success'
+    [IO.File]::WriteAllBytes($AutoRepairStatePath,$originalResult)
+    $script:notificationLastRecovery='';$script:notificationCenter.State.Enabled=$false
+    Observe-SmartAutoNotification
+    Check ($script:notificationCalls.Count -eq 1) 'Opt-out suppresses new-schema recovery notifications'
+    $script:notificationCenter.State.Enabled=$true
+    $invalid=Get-Content $AutoRepairStatePath -Raw|ConvertFrom-Json;$invalid.recoveryConfirmed='true'
+    JsonWrite $AutoRepairStatePath $invalid
+    Observe-SmartAutoNotification
+    Check ($script:notificationCalls.Count -eq 1) 'A string recovery flag cannot bypass the typed result reader into notifications'
+    [IO.File]::WriteAllBytes($AutoRepairStatePath,$originalResult)
     # Invoke the actual packaged Setup schedule builder on a real COM task.
     $setupAssembly=[Reflection.Assembly]::LoadFile((Join-Path $package 'app\TailscaleQuickRepairSetup.exe'))
     $method=$setupAssembly.GetType('PublicSetupHost').GetMethod('ConfigureAutoMonitorSchedule',[Reflection.BindingFlags]'NonPublic,Static')
