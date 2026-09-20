@@ -79,6 +79,29 @@ public class TqrRouteProbe {
 
     # The handoff starts only after the ordinary bridge package has restarted
     # the app. Exercise the actual final function with a harmless Setup fixture.
+    # Simulate a real Windows UAC cancellation at the one process-start
+    # boundary. No protected process may start, the marker must remain and the
+    # existing window must stay usable so reopening/retrying is safe.
+    [xml]$cancelXaml=$xamlMatch.Groups['xaml'].Value
+    $cancelReader=New-Object Xml.XmlNodeReader $cancelXaml
+    $cancelWindow=[Windows.Markup.XamlReader]::Load($cancelReader);$cancelReader.Close()
+    $window=$cancelWindow
+    $UpdateStatusText=$window.FindName('UpdateStatusText');$UpdateDetailText=$window.FindName('UpdateDetailText')
+    $SetupHostPath=$stub;$ProductVersionCode=[int64]2
+    $ProtectedUpdateMarkerPath=Join-Path $root 'cancel-protected-update.json'
+    [IO.File]::WriteAllText($ProtectedUpdateMarkerPath,(@{schema=1;versionCode=2}|ConvertTo-Json -Compress))
+    $script:pendingProtectedUpdateStarted=$false;$script:allowFullExit=$false;$global:TqrUiShutdownRequested=$false
+    $cancelled=Invoke-PendingProtectedUpdate -StartProcess {
+        param($info)
+        throw (New-Object ComponentModel.Win32Exception 1223)
+    }
+    Check (-not $cancelled) 'Cancelling Windows approval starts no protected handoff'
+    Check (Test-Path $ProtectedUpdateMarkerPath) 'Cancelling Windows approval preserves the pending protected update'
+    Check (-not $script:pendingProtectedUpdateStarted -and -not $script:allowFullExit -and -not $global:TqrUiShutdownRequested) 'Cancelling Windows approval does not arm shutdown or mark the handoff started'
+    Check ($cancelWindow.IsVisible -or -not $cancelWindow.IsLoaded) 'Cancellation does not request the application window to close'
+    Check ($UpdateStatusText.Text -ceq 'Protected update needs attention') 'Cancellation leaves a clear retryable update state'
+    $cancelWindow.Close()
+
     foreach($markerKind in @('valid','wrong')) {
         [xml]$xaml=$xamlMatch.Groups['xaml'].Value
         $reader=New-Object Xml.XmlNodeReader $xaml;$window=[Windows.Markup.XamlReader]::Load($reader);$reader.Close()
