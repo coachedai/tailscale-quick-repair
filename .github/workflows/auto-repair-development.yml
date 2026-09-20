@@ -1,0 +1,71 @@
+name: Auto Repair 2.0 development verification
+on:
+  push:
+    branches: [work/6.1-auto-repair-safety]
+    paths: [src/**, release/**, docs/**, version.json, .github/workflows/auto-repair-development.yml]
+permissions:
+  contents: read
+concurrency:
+  group: tqr-auto-repair-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require exact isolated development source
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne 'coachedai/tailscale-quick-repair' -or $env:GITHUB_REF_NAME -ne 'work/6.1-auto-repair-safety') { throw 'Wrong repository or branch.' }
+          if ((git remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?$') { throw 'Wrong origin.' }
+          if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) { throw 'Checkout mismatch.' }
+          if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Development cannot publish.' }
+      - name: Privacy and repository preflight
+        shell: powershell
+        run: .\release\privacy-scan.ps1 -Root .
+      - name: Build both existing delivery paths
+        shell: powershell
+        run: |
+          .\release\build.ps1 -OutputDirectory .\dist
+          .\release\finalize-package.ps1 -OutputDirectory .\dist
+          .\release\add-native-setup-routing.ps1 -OutputDirectory .\dist
+          .\release\build-public.ps1 -OutputDirectory .\dist-public
+          Copy-Item .\dist-public\* .\dist\ -Force
+      - name: Preserve every existing native packaged gate
+        shell: powershell
+        run: .\release\test-packaged-runtime.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Native Auto Repair policy and state gates
+        shell: powershell
+        run: .\release\test-auto-repair-policy.ps1 -EvidenceDirectory .\test-evidence
+      - name: Final source privacy and no-publication check
+        shell: powershell
+        run: |
+          .\release\privacy-scan.ps1 -Root .
+          if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Publication forbidden.' }
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw 'Validation unexpectedly changed source.' }
+      - name: Preserve exact source snapshot
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path test-evidence -Force | Out-Null
+          git archive --format=zip --output=test-evidence/reviewed-source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Source archive failed.' }
+          $env:GITHUB_SHA | Set-Content test-evidence/source-commit.txt
+      - name: Preserve native evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-repair-native-evidence
+          path: test-evidence/*
+          if-no-files-found: error
+      - name: Preserve validated baseline packages
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-repair-regression-packages
+          path: dist/*
+          if-no-files-found: error
