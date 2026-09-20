@@ -96,6 +96,7 @@ public class TqrRouteProbe {
             Check (Test-Path $probe) 'Exact handoff marker starts the native Setup fixture'
             $probeArgs=@(Get-Content $probe)
             Check ($probeArgs.Count -eq 1 -and $probeArgs[0] -eq '--upgrade') 'Pending handoff passes only the fixed --upgrade argument'
+            Check ($handoffFunctions[0].Extent.Text.Contains("$psi.Verb = 'runas'")) 'Pending handoff requests Windows administrator approval directly'
             Check (Test-Path $ProtectedUpdateMarkerPath) 'UI handoff never deletes the marker before Setup completion'
             $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
         }else{
