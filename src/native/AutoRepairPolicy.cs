@@ -155,9 +155,14 @@ namespace Tqr
         }
         public static bool? ReadEnabled(string root)
         {
+            try { return ReadSettingsPath(Path.Combine(root,"auto-repair.json")); }
+            catch { return null; }
+        }
+        private static bool? ReadSettingsPath(string path)
+        {
             try
             {
-                string path = Path.Combine(root, "auto-repair.json"); SafePath(path);
+                SafePath(path);
                 string text;
                 try { text = ReadBounded(path); } catch (FileNotFoundException) { return false; }
                 // Our settings contain only a boolean and an optional UTC timestamp.
@@ -217,6 +222,57 @@ namespace Tqr
             }
             finally { if (File.Exists(temp)) File.Delete(temp); }
         }
+        // Migration preserves the previous monitor's most recent reservation;
+        // its legacy "repaired" label is not promoted to a confirmed recovery.
+        public static void ImportLegacyAttempt(string root, string stamp, DateTime now)
+        {
+            if (String.IsNullOrEmpty(stamp)) return;
+            DateTime attempted=AutoRepairPolicy.Time(stamp);
+            if(now.Kind!=DateTimeKind.Utc || attempted>now) throw new InvalidDataException("clock_changed");
+            string path=Path.Combine(root,"auto-repair-policy.json"),lockPath=Path.Combine(root,"auto-repair-policy.lock");
+            SafePath(root);SafePath(path);SafePath(lockPath);
+            using(FileStream lease=new FileStream(lockPath,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None))
+            {
+                if(lease.Length!=0 || ReadEnabled(root)!=true) throw new InvalidDataException("settings_unavailable");
+                try { Load(path);return; } catch(FileNotFoundException) { }
+                SafePath(path+".previous");
+                if(File.Exists(path+".previous") || Directory.Exists(path+".previous")) throw new InvalidDataException("state_unavailable");
+                AutoPolicyState state=new AutoPolicyState();
+                state.Observed=now.ToString("o",CultureInfo.InvariantCulture);
+                state.Attempts=1;state.LastAttempt=stamp;state.NextAllowed=attempted.AddMinutes(15).ToString("o",CultureInfo.InvariantCulture);
+                Save(path,state);
+            }
+        }
+
+        public static bool SetEnabled(string root, bool enabled, DateTime now)
+        {
+            try
+            {
+                SafePath(root);
+                if(now.Kind!=DateTimeKind.Utc || !Directory.Exists(root) || !ReadEnabled(root).HasValue) return false;
+                string path=Path.Combine(root,"auto-repair.json"),lockPath=Path.Combine(root,"auto-repair-settings.lock");
+                SafePath(path);SafePath(lockPath);
+                using(FileStream lease=new FileStream(lockPath,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None))
+                {
+                    if(lease.Length!=0 || !ReadEnabled(root).HasValue) return false;
+                    string previous=path+".previous";SafePath(previous);
+                    // Settings writes preserve existing malformed predecessor evidence.
+                    if(!ReadSettingsPath(previous).HasValue) return false;
+                    byte[] bytes=new UTF8Encoding(false).GetBytes(Json().Serialize(new Dictionary<string,object> {
+                        {"enabled",enabled},{"updatedUtc",now.ToString("o",CultureInfo.InvariantCulture)} }));
+                    string scratch=path+"."+Guid.NewGuid().ToString("N")+".tmp";
+                    try
+                    {
+                        using(FileStream f=new FileStream(scratch,FileMode.CreateNew,FileAccess.Write,FileShare.None)) { f.Write(bytes,0,bytes.Length);f.Flush(true); }
+                        if(File.Exists(path)) File.Replace(scratch,path,previous);else File.Move(scratch,path);
+                    }
+                    finally { if(File.Exists(scratch)) File.Delete(scratch); }
+                    return true;
+                }
+            }
+            catch { return false; }
+        }
+
         public static AutoDecision Observe(string root, AutoHealth health, DateTime now, bool busy)
         {
             bool? enabled = ReadEnabled(root);

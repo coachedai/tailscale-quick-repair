@@ -12,12 +12,11 @@ using Microsoft.Win32;
 
 namespace Tqr
 {
-    // Production boundary. No configurable service name, arbitrary executable,
-    // user-writable PATH fallback, shell, peer probe, adapter reset or login/up.
+    // Production boundary: no arbitrary service/executable, PATH fallback, shell,
+    // peer probe, adapter reset, sign-in command, or implicit elevation.
     public sealed class WindowsAutoRepairMachine : IAutoRepairMachine
     {
-        private readonly string directory;
-        private readonly string environment;
+        private readonly string directory, environment;
         private readonly int session;
         public WindowsAutoRepairMachine()
         {
@@ -51,14 +50,14 @@ namespace Tqr
                 List<string> parts=new List<string>();
                 foreach(NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
                 {
-                    // Own Tailscale stop/start is not an unrelated environment change.
                     if(nic.Description.IndexOf("Tailscale",StringComparison.OrdinalIgnoreCase)>=0) continue;
-                    string part=nic.Id+":"+nic.OperationalStatus;
-                    foreach(UnicastIPAddressInformation ip in nic.GetIPProperties().UnicastAddresses) part+=";"+ip.Address.ToString();
-                    parts.Add(part);
+                    List<string> ips=new List<string>();
+                    foreach(UnicastIPAddressInformation ip in nic.GetIPProperties().UnicastAddresses) ips.Add(ip.Address.ToString());
+                    ips.Sort(StringComparer.Ordinal);
+                    parts.Add(nic.Id+":"+nic.OperationalStatus+":"+String.Join(";",ips.ToArray()));
                 }
                 parts.Sort(StringComparer.Ordinal);
-                return String.Join("|",parts.ToArray()); // In memory only; never logged.
+                return String.Join("|",parts.ToArray()); // Comparison only in memory.
             }
             catch { return null; }
         }
@@ -95,7 +94,7 @@ namespace Tqr
         }
         private string ClientState()
         {
-            bool uncertain=false;
+            bool uncertain=false,found=false;
             foreach(Process process in Process.GetProcessesByName("tailscale-ipn"))
             {
                 using(process)
@@ -104,13 +103,13 @@ namespace Tqr
                     {
                         if(process.SessionId!=session) continue;
                         if(directory==null) { uncertain=true;continue; }
-                        if(String.Equals(process.MainModule.FileName,Path.Combine(directory,"tailscale-ipn.exe"),StringComparison.OrdinalIgnoreCase)) return "Running";
-                        uncertain=true;
+                        if(String.Equals(process.MainModule.FileName,Path.Combine(directory,"tailscale-ipn.exe"),StringComparison.OrdinalIgnoreCase)) found=true;
+                        else uncertain=true;
                     }
                     catch { uncertain=true; }
                 }
             }
-            return uncertain?"Unknown":"Closed";
+            return found?"Running":uncertain?"Unknown":"Closed";
         }
         public AutoHealth Observe()
         {
@@ -132,25 +131,26 @@ namespace Tqr
             catch { }
             return h;
         }
-        public bool OpenClient()
+        public bool OpenClient(Action authorize)
         {
             if(!CanMutate || ClientState()!="Closed") return false;
             string path=Path.Combine(directory,"tailscale-ipn.exe");
             if(!SafeFile(path)) return false;
+            authorize(); // Latest preference, lease and intent immediately before launch.
             using(Process p=Process.Start(new ProcessStartInfo(path) { UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=directory }))
             { if(p==null) return false; }
             for(int i=0;i<20 && CanContinue;i++) { if(ClientState()=="Running") return true;Thread.Sleep(250); }
             return false;
         }
-        public bool StartService()
+        public bool StartService(Action authorize)
         {
             if(!CanMutate) return false;
             AutoHealth h=Observe();
             if(!CanMutate || h.Service!="Stopped" || (h.Startup!="Automatic" && h.Startup!="Manual")) return false;
             using(ServiceController service=new ServiceController("Tailscale"))
-            { service.Start();service.WaitForStatus(ServiceControllerStatus.Running,TimeSpan.FromSeconds(10));return true; }
+            { authorize();service.Start();service.WaitForStatus(ServiceControllerStatus.Running,TimeSpan.FromSeconds(10));return true; }
         }
-        public bool StopService()
+        public bool StopService(Action authorize)
         {
             if(!CanMutate || !NetworkInterface.GetIsNetworkAvailable()) return false;
             AutoHealth h=Observe();
@@ -162,8 +162,8 @@ namespace Tqr
                 service=OpenService(scm,"Tailscale",0x20);
                 if(service==IntPtr.Zero) return false;
                 ServiceStatus status;
-                // Unlike ServiceController.Stop(), this does NOT cascade to
-                // dependent services. SCM refuses if running dependents exist.
+                authorize();
+                // SCM refuses running dependencies; never stop another service.
                 if(!ControlService(service,1,out status)) return false;
                 using(ServiceController controller=new ServiceController("Tailscale"))
                 { controller.WaitForStatus(ServiceControllerStatus.Stopped,TimeSpan.FromSeconds(10));return true; }

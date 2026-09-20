@@ -138,6 +138,11 @@ try {
     $libraryArgs = @('/nologo','/target:library','/platform:anycpu','/optimize+',
         ('/out:"{0}"' -f $operationsDll),
         ('/reference:"{0}"' -f (Join-Path $frameworkDir 'System.Web.Extensions.dll')),
+        ('/reference:"{0}"' -f (Join-Path $frameworkDir 'System.ServiceProcess.dll')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\AutoRepairPolicy.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\AutoRepairLocalStatus.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\AutoRepairWorker.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\WindowsAutoRepairMachine.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\OperationGate.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\LocalHistory.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\ConnectionQuality.cs')),
@@ -152,7 +157,7 @@ try {
     $libraryBuild = Start-Process -FilePath $compiler -ArgumentList ($libraryArgs -join ' ') `
         -RedirectStandardOutput $compileOut -RedirectStandardError $compileErr -WindowStyle Hidden -Wait -PassThru
     if ($libraryBuild.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $operationsDll)) {
-        throw 'Operations library compilation failed.'
+        throw ('Operations library compilation failed. ' + [IO.File]::ReadAllText($compileOut))
     }
 
     # Normal and protected delivery must start from the SAME fully featured UI.
@@ -348,6 +353,7 @@ try {
     & (Join-Path $PSScriptRoot 'add-diagnostics-polish.ps1') -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-progress-reset.ps1') -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-support-export.ps1') -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-auto-repair-worker.ps1') -Path $uiPath
     Copy-Item -LiteralPath (Join-Path $repo 'src\app\Advanced-Diagnostics.ps1') -Destination (Join-Path $appDir 'Advanced-Diagnostics.ps1') -Force
 
     $version = Get-Content -LiteralPath $versionPath -Raw | ConvertFrom-Json

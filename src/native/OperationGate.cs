@@ -22,6 +22,7 @@ namespace Tqr
         internal string Id;
         public string Kind { get; internal set; }
         private bool disposed;
+        public bool IsCurrent { get { return !disposed && OperationGate.Owns(this); } }
 
         public void Dispose()
         {
@@ -188,6 +189,27 @@ namespace Tqr
                 WriteAtomic(Path.Combine(root, Marker), info);
                 return new OperationLease { DirectoryPath = root, Id = id, Kind = kind };
             }
+        }
+
+        internal static bool Owns(OperationLease lease)
+        {
+            try
+            {
+                string root = Root(lease.DirectoryPath);
+                using (FileStream guard = Enter(root, 0))
+                {
+                    if (guard == null) return false;
+                    Dictionary<string, object> info = Read(root);
+                    using (Process self = Process.GetCurrentProcess())
+                    {
+                        return info != null && info.ContainsKey("leaseId") && info.ContainsKey("ownerStartTicks") &&
+                            String.Equals(Convert.ToString(info["leaseId"]), lease.Id, StringComparison.Ordinal) &&
+                            Convert.ToInt32(info["ownerPid"]) == self.Id &&
+                            Convert.ToInt64(info["ownerStartTicks"]) == self.StartTime.ToUniversalTime().Ticks;
+                    }
+                }
+            }
+            catch { return false; }
         }
 
         internal static void Release(OperationLease lease)

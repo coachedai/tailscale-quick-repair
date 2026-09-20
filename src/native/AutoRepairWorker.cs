@@ -9,17 +9,16 @@ using System.Web.Script.Serialization;
 
 namespace Tqr
 {
-    // Only these OS boundaries are replaceable in native failure tests. There is
-    // no peer target, normal-repair task, shell command or arbitrary action input.
+    // Only the OS boundary is replaceable in tests. No peer or arbitrary command input.
     public interface IAutoRepairMachine
     {
         DateTime UtcNow { get; }
         bool CanContinue { get; }
         bool CanMutate { get; }
         AutoHealth Observe();
-        bool OpenClient();
-        bool StartService();
-        bool StopService();
+        bool OpenClient(Action authorize);
+        bool StartService(Action authorize);
+        bool StopService(Action authorize);
         void Pause();
     }
     public sealed class AutoRepairResult
@@ -54,11 +53,11 @@ namespace Tqr
                 if (f.Length < 2 || f.Length > 8192) throw new InvalidDataException("Invalid result size.");
                 bytes = new byte[(int)f.Length]; int at = 0;
                 while (at < bytes.Length) { int n = f.Read(bytes, at, bytes.Length-at); if (n == 0) throw new EndOfStreamException(); at += n; }
+                if (f.ReadByte()!=-1) throw new InvalidDataException("Result changed during read.");
             }
             string text = new UTF8Encoding(false, true).GetString(bytes).TrimStart('\uFEFF');
             Dictionary<string, object> doc = Json().DeserializeObject(text) as Dictionary<string, object>;
             if (doc == null) throw new InvalidDataException("Invalid result.");
-            // Native schema 2 is entirely fixed vocabulary, numbers and timestamps.
             if (doc.ContainsKey("schema"))
             {
                 if (text.IndexOf('\\') >= 0) throw new InvalidDataException("Noncanonical result.");
@@ -73,8 +72,8 @@ namespace Tqr
             }
             else
             {
-                // Recognize the previous monitor's fixed envelope solely to allow
-                // migration. Its free message is never copied into a new record.
+                // Recognize the previous monitor solely for migration. Never copy
+                // its free message into a new status, event or policy record.
                 string[] old = { "lastCheckedUtc", "status", "message", "service", "client", "backend", "lastRepairUtc", "lastRepairReason", "cooldownRemainingMinutes" };
                 if (doc.Count != old.Length) throw new InvalidDataException("Unknown legacy result.");
                 foreach (string key in old)
@@ -100,11 +99,11 @@ namespace Tqr
                 !OneOf(r.status,"waiting","healthy","cooldown","manual","error","repairing","disabled","busy") ||
                 !OneOf(r.phase,"Observed","Reserved","OpeningClient","StartingService","StoppingService","Verifying","Complete") ||
                 !OneOf(r.service,"Running","Stopped","Missing","Unknown") || !OneOf(r.client,"Running","Closed","Unknown") ||
-                AutoRepairPolicy.Backend(r.backend) != r.backend || !OneOf(r.reason,"unconfirmed","off","settings_unavailable","integration_unavailable","operation_busy","clock_changed","state_unavailable","installation_missing","service_disabled","disconnected","sign_in","approval","other_user","local_running","recent_attempt","retry_limit","confirming_fault","service_stopped","client_closed","backend_starting","backend_no_state","action_completed","action_unconfirmed","observation_changed","local_recovery","recovery_unconfirmed"))
+                AutoRepairPolicy.Backend(r.backend) != r.backend || !OneOf(r.reason,"unconfirmed","off","settings_unavailable","integration_unavailable","operation_busy","clock_changed","state_unavailable","installation_missing","service_disabled","disconnected","sign_in","approval","other_user","local_running","recent_attempt","retry_limit","confirming_fault","service_stopped","client_closed","backend_starting","backend_no_state","action_completed","action_unconfirmed","observation_changed","local_recovery","recovery_unconfirmed","ownership_changed","interrupted","state_or_action_unavailable"))
                 throw new InvalidDataException("Invalid result vocabulary.");
             DateTime when = AutoRepairPolicy.Time(r.lastCheckedUtc), repair = AutoRepairPolicy.Time(r.lastRepairUtc);
             if (r.recoveryConfirmed != (r.lastRepairUtc != "") ||
-                (r.recoveryConfirmed && (r.status != "healthy" || r.actionsCompleted == 0 || r.service != "Running" ||
+                (r.recoveryConfirmed && (r.status != "healthy" || r.phase!="Complete" || r.actionsCompleted == 0 || r.service != "Running" ||
                     r.client != "Running" || r.backend != "Running" || repair > when || r.lastRepairReason != "local_recovery")) ||
                 (!r.recoveryConfirmed && r.lastRepairReason != "")) throw new InvalidDataException("Invalid recovery claim.");
         }
@@ -112,8 +111,7 @@ namespace Tqr
         {
             try
             {
-                string path=Path.Combine(root,"auto-repair-state.json");
-                Dictionary<string,object> doc=Read(path);
+                Dictionary<string,object> doc=Read(Path.Combine(root,"auto-repair-state.json"));
                 if (!doc.ContainsKey("schema")) return null;
                 return Json().Deserialize<AutoRepairResult>(Json().Serialize(doc));
             }
@@ -121,11 +119,20 @@ namespace Tqr
         }
         public static void CheckExisting(string root)
         {
-            foreach (string name in new[] { "auto-repair-state.json", "auto-repair-state.previous.json" })
+            string primary=Path.Combine(root,"auto-repair-state.json"),previous=Path.Combine(root,"auto-repair-state.previous.json");
+            CheckPath(primary);CheckPath(previous);
+            bool missing=false;
+            try { Read(primary); } catch (FileNotFoundException) { missing=true; }
+            try { Read(previous);if(missing) throw new InvalidDataException("Primary result missing."); } catch (FileNotFoundException) { }
+        }
+        public static string LegacyAttempt(string root)
+        {
+            try
             {
-                string path = Path.Combine(root,name); CheckPath(path);
-                try { Read(path); } catch (FileNotFoundException) { }
+                Dictionary<string,object> doc=Read(Path.Combine(root,"auto-repair-state.json"));
+                return doc.ContainsKey("schema") ? "" : (string)doc["lastRepairUtc"];
             }
+            catch(FileNotFoundException) { return ""; }
         }
         public static void Save(string root, AutoRepairResult value)
         {
@@ -144,7 +151,7 @@ namespace Tqr
     }
     public static class AutoRepairWorker
     {
-        private static bool Healthy(AutoHealth h) { return h != null && h.Service=="Running" && h.Client=="Running" && h.Backend=="Running"; }
+        private static bool Healthy(AutoHealth h) { return h != null && h.Service=="Running" && h.Client=="Running" && h.Backend=="Running" && h.Startup!="Disabled"; }
         private static string Fault(AutoHealth h)
         {
             if(h==null || h.Startup=="Disabled") return "";
@@ -187,19 +194,22 @@ namespace Tqr
                 Observed(Result,h,Machine.UtcNow); return h;
             }
             internal void Save() { Guard(false); AutoRepairRecords.Save(Root,Result); }
-            internal bool Act(string action,string expected)
+            internal void Authorize(string expected)
             {
                 AutoHealth fresh=Read();
-                // Persist any newly observed intentional/authentication hold even
-                // after reserving this attempt. A reservation never overrides it.
                 AutoDecision current=AutoRepairPolicyStore.Observe(Root,fresh,Machine.UtcNow,false);
-                if(current.Action=="Attention") { Result.reason=current.Reason; return false; }
-                if(Fault(fresh)!=expected) { Result.reason="observation_changed"; return false; }
+                if(current.Action=="Attention") throw new InvalidOperationException(current.Reason);
+                if(Fault(fresh)!=expected) throw new InvalidOperationException("observation_changed");
+                AutoRepairRecords.CheckExisting(Root);
                 Guard(true);
+            }
+            internal bool Act(string action,string expected)
+            {
+                Authorize(expected);
                 Result.phase=action; Result.status="repairing"; Result.actionsAttempted++;
                 Save(); // Durable evidence precedes the possible side effect.
-                Guard(true); // Disabling while the record flushed cancels dispatch.
-                bool completed= action=="OpeningClient" ? Machine.OpenClient() : action=="StartingService" ? Machine.StartService() : Machine.StopService();
+                Action permission=delegate { Authorize(expected); };
+                bool completed= action=="OpeningClient" ? Machine.OpenClient(permission) : action=="StartingService" ? Machine.StartService(permission) : Machine.StopService(permission);
                 if(completed) Result.actionsCompleted++;
                 Result.reason=completed?"action_completed":"action_unconfirmed";
                 Save();
@@ -216,12 +226,13 @@ namespace Tqr
                 if(!Directory.Exists(root) || machine==null) { result.reason="integration_unavailable"; return result; }
                 bool? enabled=AutoRepairPolicyStore.ReadEnabled(root);
                 if(enabled!=true) { result.status=enabled==false?"disabled":"manual"; result.reason=enabled==false?"off":"settings_unavailable"; return result; }
-                // Reuse the existing maintenance kind for old-host compatibility.
-                // The marker schema and manual repair protocol remain unchanged.
+                // Existing maintenance kind: old-host compatible marker schema.
                 OperationLease lease=OperationGate.TryAcquire(root,"maintenance");
                 if(lease==null) { result.status="busy";result.reason="operation_busy";return result; }
                 run=new Run { Root=root,Machine=machine,Lease=lease,Result=result,LastUtc=machine.UtcNow };
+                run.Guard(false);
                 AutoRepairRecords.CheckExisting(root);
+                AutoRepairPolicyStore.ImportLegacyAttempt(root,AutoRepairRecords.LegacyAttempt(root),machine.UtcNow);
                 AutoHealth health=run.Read();
                 AutoDecision decision=AutoRepairPolicyStore.Observe(root,health,machine.UtcNow,false);
                 result.reason=decision.Reason;result.cooldownRemainingMinutes=decision.CooldownMinutes;
@@ -233,8 +244,8 @@ namespace Tqr
                 else if(decision.Reason=="service_stopped") action=run.Act("StartingService",decision.Reason);
                 else if(decision.Reason=="backend_starting" || decision.Reason=="backend_no_state")
                 {
-                    // Stop and start are separate, individually guarded operations.
-                    // A cancellation or failed stop never blindly dispatches start.
+                    // Stop and start are separately guarded. Cancellation after stop
+                    // leaves an honest partial result, never overrides the opt-out.
                     if(run.Act("StoppingService",decision.Reason)) action=run.Act("StartingService","service_stopped");
                 }
                 if(action)
@@ -246,7 +257,7 @@ namespace Tqr
                         if(Healthy(health)) break;
                         string fault=Fault(health);
                         if(fault=="client_closed" && result.actionsAttempted<3)
-                        { if(!run.Act("OpeningClient","client_closed")) break; }
+                        { if(!run.Act("OpeningClient","client_closed")) { action=false;break; } }
                         else if(health!=null && (health.Backend=="Stopped" || health.Backend=="NeedsLogin" || health.Backend=="NeedsMachineAuth" || health.Backend=="InUseOtherUser"))
                         { AutoRepairPolicyStore.Observe(root,health,machine.UtcNow,false);break; }
                         machine.Pause();
@@ -261,14 +272,16 @@ namespace Tqr
             }
             catch(Exception ex)
             {
-                result.status="manual"; result.recoveryConfirmed=false;result.lastRepairUtc=result.lastRepairReason="";
-                result.reason=Array.IndexOf(new[] { "ownership_changed","clock_changed","interrupted","off","settings_unavailable","integration_unavailable" },ex.Message)>=0 ? ex.Message : "state_or_action_unavailable";
-                // Never replace another owner's state or force a write over damaged
-                // evidence. In-flight durable phase is retained on cancellation.
+                result.status=ex.Message=="off"?"disabled":"manual";result.recoveryConfirmed=false;result.lastRepairUtc=result.lastRepairReason="";
+                result.reason=Array.IndexOf(new[] { "ownership_changed","clock_changed","interrupted","off","settings_unavailable","integration_unavailable","disconnected","sign_in","approval","other_user","service_disabled","installation_missing","state_unavailable","observation_changed" },ex.Message)>=0 ? ex.Message : "state_or_action_unavailable";
+                result.phase="Complete";
+                // Record cancellation only while still owning the operation and
+                // the existing records remain readable. No force-reset on failure.
+                if(run!=null && run.Lease.IsCurrent) try { AutoRepairRecords.Save(root,result); } catch { }
             }
             finally
             {
-                if(run!=null) try { run.Lease.Dispose(); } catch { result.status="manual";result.reason="ownership_changed";result.recoveryConfirmed=false; }
+                if(run!=null) try { run.Lease.Dispose(); } catch { result.status="manual";result.reason="ownership_changed";result.recoveryConfirmed=false;result.lastRepairUtc=result.lastRepairReason=""; }
             }
             return result;
         }
