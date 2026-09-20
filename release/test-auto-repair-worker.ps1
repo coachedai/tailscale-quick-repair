@@ -261,13 +261,13 @@ $m.Now=[DateTime]::Parse($Stamp,[Globalization.CultureInfo]::InvariantCulture,[G
     $oldProgramData=$env:ProgramData;$env:ProgramData=Join-Path $root 'fixture-program-data'
     $launcher=Join-Path $env:ProgramData 'TailscaleQuickRepair\Launch-Auto-Repair-Monitor.vbs'
     New-Item -ItemType Directory -Path (Split-Path $launcher) -Force|Out-Null;[IO.File]::WriteAllText($launcher,'fixture-only')
-    $scheduler=[TqrWorkerFixture.Scheduler]::new();$task=$scheduler.Folder.Task
+    $script:fixtureScheduler=[TqrWorkerFixture.Scheduler]::new();$task=$script:fixtureScheduler.Folder.Task
     $task.Definition.Principal.UserId=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $task.Definition.Actions.Action.Path=Join-Path $env:SystemRoot 'System32\wscript.exe'
     $task.Definition.Actions.Action.Arguments='"'+$launcher+'"';$task.Definition.Actions.Action.WorkingDirectory=Split-Path $launcher
     function New-Object {
         param([string]$TypeName,[string]$ComObject)
-        if($ComObject -eq 'Schedule.Service'){return $scheduler}
+        if($ComObject -eq 'Schedule.Service'){return $script:fixtureScheduler}
         throw 'Unexpected object creation in the final dispatch fixture.'
     }
     try{
