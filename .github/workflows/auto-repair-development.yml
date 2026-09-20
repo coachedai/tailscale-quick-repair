@@ -62,6 +62,11 @@ jobs:
         env:
           TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
         run: .\release\test-native-permissions.ps1 -EvidenceDirectory .\test-evidence
+      - name: Protected migration and evidence-preserving refusal gates
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-protected-migration.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
       - name: Final source privacy and no-publication check
         shell: powershell
         run: |
