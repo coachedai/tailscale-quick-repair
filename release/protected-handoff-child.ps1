@@ -42,6 +42,9 @@ try{
     }
     elseif($Phase -eq 'ApplyBridge'){
         $type=[Reflection.Assembly]::LoadFile((Join-Path $LegacyPackage 'app\TailscaleQuickRepairUpdater.exe')).GetType('Program')
+        $synthetic='{"schema":1,"published":true,"version":"fixture","versionCode":2,"requiresSetup":false,"protectedHandoff":true,"package":{"url":"https://github.com/coachedai/tailscale-quick-repair/releases/download/vfixture/package.zip","sha256":"'+('a'*64)+'","size":1}}'
+        $parsed=Invoke-Private $type 'DeserializeObject' @($synthetic)
+        Check ($parsed.ContainsKey('protectedHandoff') -and -not [bool](Invoke-Private $type 'ReadBool' @($parsed,'requiresSetup'))) 'Published 5.2.1 updater parser accepts an extra protectedHandoff field while retaining requiresSetup false'
         $manifest=Invoke-Private $type 'ReadPackageManifest' @($CurrentPackage)
         $files=Invoke-Private $type 'VerifyPackageFiles' @($CurrentPackage,$manifest)
         Check (@($files).Count -gt 0) 'Published updater accepts the staged ordinary package'
