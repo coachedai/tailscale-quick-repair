@@ -34,6 +34,9 @@ function Run-Child([string]$Phase,[string]$Legacy,[string]$Current){
 }
 try{
     Add-Type -AssemblyName System.IO.Compression.FileSystem,PresentationFramework
+    $publish=Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json
+    Check ($publish.PSObject.Properties.Name -contains 'protectedHandoff' -and $publish.protectedHandoff -is [bool] -and [bool]$publish.protectedHandoff) 'Candidate explicitly uses the protected update handoff'
+    Check ($publish.requiresSetup -is [bool] -and -not [bool]$publish.requiresSetup) 'Legacy-compatible bridge is not blocked by the 5.2.1 direct-Setup gate'
     Check (-not(Test-Path $app) -and -not(Test-Path $program) -and -not(Get-Service Tailscale -ErrorAction SilentlyContinue)) 'Handoff starts on an empty disposable installation'
     $url='https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase5.2.1/TailscaleQuickRepair-SetupPackage-3.0.0-phase5.2.1.zip'
     $zip=Join-Path $lab 'published.zip';$wc=New-Object Net.WebClient;$wc.Headers.Add('User-Agent','TqrProtectedHandoffAcceptance');$wc.DownloadFile($url,$zip);$wc.Dispose()
