@@ -167,7 +167,8 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  release-compatibility:
+  release_compatibility:
+    name: Release compatibility
     if: github.ref == 'refs/heads/main'
     needs: validate
     permissions:
@@ -187,7 +188,8 @@ jobs:
           }
           if ((git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA) { throw 'Release compatibility source mismatch.' }
           $origin=(git remote get-url origin).Trim()
-          if ($origin -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?    permissions:
+          if ($origin -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?
+    permissions:
       contents: write
     runs-on: windows-latest
     timeout-minutes: 15
@@ -420,8 +422,8 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: needs.validate.outputs.should_publish == 'true' && github.ref == 'refs/heads/main' && needs.release-compatibility.result == 'success'
-    needs: [validate, release-compatibility]
+    if: needs.validate.outputs.should_publish == 'true' && github.ref == 'refs/heads/main' && needs.release_compatibility.result == 'success'
+    needs: [validate, release_compatibility]
     permissions:
       contents: write
     runs-on: windows-latest
