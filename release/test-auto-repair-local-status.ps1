@@ -19,7 +19,7 @@ try {
     $dll=Join-Path $root 'AutoStatus.dll'
     & $compiler /nologo /target:library ('/out:'+$dll) ('/reference:'+$ref) (Join-Path $repo 'src\native\AutoRepairPolicy.cs') (Join-Path $repo 'src\native\AutoRepairLocalStatus.cs')
     Assert-Status ($LASTEXITCODE -eq 0 -and (Test-Path $dll)) 'Local-only collector compiles on the native .NET Framework compiler'
-    Add-Type -Path $dll
+    [void][Reflection.Assembly]::Load([IO.File]::ReadAllBytes($dll))
     foreach($state in @('Running','Stopped','NeedsLogin','NeedsMachineAuth','InUseOtherUser','Starting','NoState')){
         $r=[Tqr.AutoRepairLocalStatus]::Parse(('{"BackendState":"'+$state+'"}'),0,$false,$false)
         Assert-Status ($r.Status -eq 'Complete' -and $r.Backend -ceq $state) "Explicit backend state is retained without inventing health: $state"

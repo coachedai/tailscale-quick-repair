@@ -242,10 +242,10 @@ namespace Tqr
                     catch (FileNotFoundException)
                     {
                         SafePath(path + ".previous");
-                        if (File.Exists(path + ".previous")) throw new InvalidDataException("Primary policy missing.");
+                        if (File.Exists(path + ".previous") || Directory.Exists(path + ".previous")) throw new InvalidDataException("Primary policy missing.");
                         state = new AutoPolicyState();
                     }
-                    if (File.Exists(path + ".previous")) Load(path + ".previous");
+                    if (File.Exists(path + ".previous") || Directory.Exists(path + ".previous")) Load(path + ".previous");
                     AutoDecision decision = AutoRepairPolicy.Evaluate(state, health, now, true, false);
                     if (decision.Reason == "clock_changed" || decision.Reason == "state_unavailable") return decision;
                     // Commit the reservation BEFORE the caller is allowed to dispatch.

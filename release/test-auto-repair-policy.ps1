@@ -48,7 +48,7 @@ try {
     $dll=Join-Path $root 'AutoRepairPolicy.dll'
     & $compiler /nologo /target:library /optimize+ ('/out:'+$dll) ('/reference:'+$reference) (Join-Path $repo 'src\native\AutoRepairPolicy.cs')
     Assert-Case ($LASTEXITCODE -eq 0 -and (Test-Path $dll)) 'Policy compiles on the native .NET Framework compiler'
-    Add-Type -Path $dll
+    [void][Reflection.Assembly]::Load([IO.File]::ReadAllBytes($dll))
     $time=[DateTime]::Parse('2030-01-01T00:00:00.0000000Z',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind)
     $s=New-State; $h=Healthy
     Assert-Case ((Evaluate $s $h $time).Action -eq 'Healthy') 'Healthy requires explicit service client and backend evidence'
@@ -173,11 +173,17 @@ try {
     Assert-Case ([Tqr.AutoRepairPolicyStore]::ReadEnabled($path) -eq $true) 'Existing typed settings and UTC timestamp remain compatible'
     Assert-Case (@(Get-ChildItem $path -Filter '*.tmp').Count -eq 0) 'Failed and successful native writes clean up only their own scratch files'
 
+    $directoryState=New-Fixture 'directory-predecessor'
+    $directoryPrimary=Join-Path $directoryState 'auto-repair-policy.json'
+    New-Item -ItemType Directory -Path ($directoryPrimary+'.previous') | Out-Null
+    Assert-Case ((Observe $directoryState (Fault) $time).Reason -eq 'state_unavailable' -and -not (Test-Path $directoryPrimary)) 'An unexpected predecessor directory cannot create a clean retry budget'
+    Assert-Case (Test-Path -LiteralPath ($directoryPrimary+'.previous') -PathType Container) 'Unexpected predecessor evidence is preserved'
+
     $worker=Join-Path $root 'policy-worker.ps1'
     @'
 param([string]$Dll,[string]$Root,[string]$When,[string]$Result,[switch]$Pause)
 $ErrorActionPreference='Stop'
-Add-Type -Path $Dll
+[void][Reflection.Assembly]::Load([IO.File]::ReadAllBytes($Dll))
 $h=New-Object Tqr.AutoHealth
 $h.Service='Stopped';$h.Startup='Automatic';$h.Client='Running';$h.Backend='Unknown'
 $at=[DateTime]::Parse($When,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind)
