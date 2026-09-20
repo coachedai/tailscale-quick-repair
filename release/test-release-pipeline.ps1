@@ -1,7 +1,7 @@
-param([string]$EvidenceDirectory='.\\test-evidence')
+param([string]$EvidenceDirectory='.\test-evidence')
 $ErrorActionPreference='Stop'
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$workflow=Get-Content -LiteralPath (Join-Path $repo '.github\\workflows\\release.yml') -Raw -Encoding UTF8
+$workflow=Get-Content -LiteralPath (Join-Path $repo '.github\workflows\release.yml') -Raw -Encoding UTF8
 $cases=New-Object 'Collections.Generic.List[object]'
 function Check([bool]$Value,[string]$Name){
     if(-not $Value){throw "FAILED release pipeline: $Name"}
@@ -11,7 +11,7 @@ function Check([bool]$Value,[string]$Name){
 function Count([string]$Needle){return ([regex]::Matches($workflow,[regex]::Escape($Needle))).Count}
 try{
     Check ((Count '  release_compatibility:') -eq 1) 'One clean-runner release compatibility job'
-    Check ([regex]::IsMatch($workflow,"(?m)^  release_compatibility:\\r?\\n    if: github\\.ref == 'refs/heads/main'$")) 'Compatibility job is main-only'
+    Check ([regex]::IsMatch($workflow,"(?m)^  release_compatibility:\r?\n    name: Release compatibility\r?\n    if: github\.ref == 'refs/heads/main'$")) 'Compatibility job is main-only'
     foreach($name in @(
         'Real installed Windows service and recurrence gates',
         'Require independent clock and exact trigger attribution',
@@ -31,12 +31,12 @@ try{
            $workflow.Contains('Main changed during publication; keep the previous update channel.')) 'Publication refuses a moving main branch'
     Check ($workflow.Contains('git push origin HEAD:refs/heads/main') -and -not $workflow.Contains('git push --force')) 'Manifest publication remains non-force only'
     foreach($path in @(
-        'release\\test-native-windows.ps1',
-        'release\\test-native-permissions.ps1',
-        'release\\test-protected-migration.ps1',
-        'release\\test-released-upgrade.ps1',
-        'release\\test-protected-update-handoff.ps1',
-        'release\\protected-handoff-child.ps1'
+        'release\test-native-windows.ps1',
+        'release\test-native-permissions.ps1',
+        'release\test-protected-migration.ps1',
+        'release\test-released-upgrade.ps1',
+        'release\test-protected-update-handoff.ps1',
+        'release\protected-handoff-child.ps1'
     )){
         $scriptText=Get-Content -LiteralPath (Join-Path $repo $path) -Raw -Encoding UTF8
         Check ($scriptText.Contains('$releaseValidation=') -and $scriptText.Contains('$env:TQR_RELEASE_VALIDATION -ceq $env:GITHUB_RUN_ID')) ((Split-Path $path -Leaf)+' retains the stamped release guard')
