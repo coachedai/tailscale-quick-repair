@@ -25,13 +25,15 @@ public class TqrRouteProbe {
     $text=[IO.File]::ReadAllText($UiPath,[Text.Encoding]::UTF8)
     $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)
     $functions=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Start-UpdateInstall'},$true))
-    Check ($functions.Count -eq 1 -and $errors.Count -eq 0) 'Final package has one parsed update action'
+    $handoffFunctions=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-PendingProtectedUpdate'},$true))
+    Check ($functions.Count -eq 1 -and $handoffFunctions.Count -eq 1 -and $errors.Count -eq 0) 'Final package has one parsed update action and one protected handoff action'
     . ([scriptblock]::Create($functions[0].Extent.Text))
+    . ([scriptblock]::Create($handoffFunctions[0].Extent.Text))
     function Get-Brush([string]$Name) { return [Windows.Media.Brushes]::Gray }
     $handlers=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Expression.Extent.Text -ceq '$UpdateNowButton' -and $n.Member.Value -eq 'Add_Click'},$true))
     Check ($handlers.Count -eq 1) 'Final package has one Update now event'
     $xamlMatch=[regex]::Match($text,'(?s)\[xml\]\$xaml\s*=\s*@"\r?\n(?<xaml>.*?)\r?\n"@')
-    foreach($kind in @('protected','ordinary','invalid')) {
+    foreach($kind in @('protected','ordinary','handoff','invalid')) {
         [xml]$xaml=$xamlMatch.Groups['xaml'].Value
         $reader=New-Object Xml.XmlNodeReader $xaml;$window=[Windows.Markup.XamlReader]::Load($reader);$reader.Close()
         $script:routeFixtureClosed=$false
@@ -40,8 +42,9 @@ public class TqrRouteProbe {
         $UpdateStatusText=$window.FindName('UpdateStatusText');$UpdateDetailText=$window.FindName('UpdateDetailText')
         $SetupHostPath=$stub;$UpdaterHostPath=$stub;$ProductVersionCode=[int64]1
         $script:repairActive=$false;$script:updateDownloadActive=$false
-        $flag=switch($kind){'protected'{$true};'ordinary'{$false};default{'not-a-boolean'}}
+        $flag=switch($kind){'protected'{$true};'ordinary'{$false};'handoff'{$false};default{'not-a-boolean'}}
         $script:updateManifest=[pscustomobject]@{versionCode=2;version='fixture';requiresSetup=$flag}
+        if($kind -eq 'handoff'){$script:updateManifest|Add-Member -NotePropertyName protectedHandoff -NotePropertyValue $true}
         $probe=Join-Path $root ($kind+'.args');$env:TQR_ROUTING_PROBE=$probe
         $UpdateNowButton.IsEnabled=$true
         $UpdateNowButton.Add_Click($handlers[0].Arguments[0].ScriptBlock.GetScriptBlock())
@@ -56,8 +59,13 @@ public class TqrRouteProbe {
             while(-not(Test-Path $probe) -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 30}
             Check (Test-Path $probe) "$kind click starts the native fixture child"
             $probeArgs=@(Get-Content $probe)
-            if($kind -eq 'protected') { Check ($probeArgs.Count -eq 1 -and $probeArgs[0] -eq '--upgrade') 'Protected release invokes Setup --upgrade, not the ordinary updater' }
-            else { Check ($probeArgs[0] -eq '--silent' -and $probeArgs -contains '--current-pid' -and $probeArgs -notcontains '--upgrade') 'Ordinary release invokes the normal native updater' }
+            if($kind -eq 'protected') {
+                Check ($probeArgs.Count -eq 1 -and $probeArgs[0] -eq '--upgrade') 'Direct protected release invokes Setup --upgrade, not the ordinary updater'
+            }
+            else {
+                Check ($probeArgs[0] -eq '--silent' -and $probeArgs -contains '--current-pid' -and $probeArgs -notcontains '--upgrade') ($kind+' release invokes the normal native updater')
+                if($kind -eq 'handoff'){Check ($script:updateManifest.protectedHandoff -eq $true) 'Protected handoff deliberately travels through the ordinary updater first'}
+            }
         }
         # The real updater callback posts Close at Background priority. Drain it
         # while its fixture variables still exist; otherwise a later suite's WPF
@@ -67,6 +75,37 @@ public class TqrRouteProbe {
         else { Check (-not $script:routeFixtureClosed) 'Invalid metadata leaves the app window open' }
         $window.Close()
     }
+
+    # The handoff starts only after the ordinary bridge package has restarted
+    # the app. Exercise the actual final function with a harmless Setup fixture.
+    foreach($markerKind in @('valid','wrong')) {
+        [xml]$xaml=$xamlMatch.Groups['xaml'].Value
+        $reader=New-Object Xml.XmlNodeReader $xaml;$window=[Windows.Markup.XamlReader]::Load($reader);$reader.Close()
+        $UpdateStatusText=$window.FindName('UpdateStatusText');$UpdateDetailText=$window.FindName('UpdateDetailText')
+        $SetupHostPath=$stub;$ProductVersionCode=[int64]2
+        $ProtectedUpdateMarkerPath=Join-Path $root ($markerKind+'-protected-update.json')
+        $versionCode=if($markerKind -eq 'valid'){2}else{3}
+        [IO.File]::WriteAllText($ProtectedUpdateMarkerPath,(@{schema=1;versionCode=$versionCode}|ConvertTo-Json -Compress))
+        $script:pendingProtectedUpdateStarted=$false;$script:allowFullExit=$false;$global:TqrUiShutdownRequested=$false
+        $probe=Join-Path $root ($markerKind+'-handoff.args');$env:TQR_ROUTING_PROBE=$probe
+        $started=Invoke-PendingProtectedUpdate
+        if($markerKind -eq 'valid'){
+            Check $started 'Exact handoff marker starts the refreshed Setup route'
+            $end=[DateTime]::UtcNow.AddSeconds(8)
+            while(-not(Test-Path $probe) -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 30}
+            Check (Test-Path $probe) 'Exact handoff marker starts the native Setup fixture'
+            $probeArgs=@(Get-Content $probe)
+            Check ($probeArgs.Count -eq 1 -and $probeArgs[0] -eq '--upgrade') 'Pending handoff passes only the fixed --upgrade argument'
+            Check (Test-Path $ProtectedUpdateMarkerPath) 'UI handoff never deletes the marker before Setup completion'
+            $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
+        }else{
+            Start-Sleep -Milliseconds 150
+            Check (-not $started -and -not(Test-Path $probe)) 'Wrong-version handoff marker starts no process'
+            Check (Test-Path $ProtectedUpdateMarkerPath) 'Rejected marker is preserved for diagnosis'
+        }
+        $window.Close()
+    }
+
     [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'update-routing-results.json'),(@{passed=$true;scope='Actual packaged WPF Update now event and deferred close with harmless native executable fixture';cases=$cases.ToArray()}|ConvertTo-Json -Depth 8))
 } catch {
     [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'update-routing-results.json'),(@{passed=$false;failure=$_.Exception.Message;cases=$cases.ToArray()}|ConvertTo-Json -Depth 8));throw
