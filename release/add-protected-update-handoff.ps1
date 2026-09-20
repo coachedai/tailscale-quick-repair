@@ -49,6 +49,7 @@ $functionBlock = @'
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = $SetupHostPath
             $psi.Arguments = '--upgrade'
+            $psi.Verb = 'runas'
             $psi.UseShellExecute = $true
             $process = [System.Diagnostics.Process]::Start($psi)
 
