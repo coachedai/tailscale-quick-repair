@@ -14,7 +14,7 @@ if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-host
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if((git -C $repo remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?$' -or
    (git -C $repo rev-parse HEAD).Trim() -cne $env:GITHUB_SHA -or
-   (Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json).publish){throw 'Isolated exact-source development required.'}
+   ((Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json).publish -and -not $releaseValidation)){throw 'Isolated exact-source validation required.'}
 New-Item -ItemType Directory -Path $EvidenceDirectory -Force|Out-Null
 $evidence=(Resolve-Path $EvidenceDirectory).Path
 $lab=Join-Path $env:RUNNER_TEMP ('TqrNativeLab-'+[Guid]::NewGuid().ToString('N'))
