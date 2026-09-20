@@ -96,3 +96,41 @@ jobs:
           name: auto-repair-regression-packages
           path: dist/*
           if-no-files-found: error
+  released-upgrade:
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: auto-repair-regression-packages
+          path: upgrade-dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: auto-repair-native-evidence
+          path: upstream-evidence
+      - name: Recheck source privacy and isolation
+        shell: powershell
+        run: .\release\privacy-scan.ps1 -Root .
+      - name: Upgrade genuine released files and existing tasks with the new Setup core
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-released-upgrade.ps1 -OutputDirectory .\upgrade-dist -UpstreamEvidence .\upstream-evidence -EvidenceDirectory .\upgrade-evidence
+      - name: Final no-publication and unchanged-source gate
+        shell: powershell
+        run: |
+          .\release\privacy-scan.ps1 -Root .
+          if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Publication forbidden.' }
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw 'Unexpected source change.' }
+      - name: Preserve released-upgrade evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: released-upgrade-evidence
+          path: upgrade-evidence/*
+          if-no-files-found: error
