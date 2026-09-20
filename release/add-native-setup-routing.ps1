@@ -355,9 +355,24 @@ try {
     & (Join-Path $PSScriptRoot 'add-progress-reset.ps1') -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-support-export.ps1') -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-auto-repair-worker.ps1') -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-protected-update-handoff.ps1') -Path $uiPath
     Copy-Item -LiteralPath (Join-Path $repo 'src\app\Advanced-Diagnostics.ps1') -Destination (Join-Path $appDir 'Advanced-Diagnostics.ps1') -Force
 
     $version = Get-Content -LiteralPath $versionPath -Raw | ConvertFrom-Json
+    $publish = Get-Content -LiteralPath (Join-Path $repo 'release\publish.json') -Raw | ConvertFrom-Json
+    if ([string]$publish.version -cne [string]$version.version -or [int64]$publish.versionCode -ne [int64]$version.versionCode) {
+        throw 'Protected update metadata does not match version.json.'
+    }
+
+    $protectedMarkerPath = Join-Path $appDir 'protected-update.json'
+    if ([bool]$publish.requiresSetup) {
+        [ordered]@{ schema = 1; versionCode = [int64]$version.versionCode } |
+            ConvertTo-Json -Compress |
+            Set-Content -LiteralPath $protectedMarkerPath -Encoding UTF8
+    }
+    elseif (Test-Path -LiteralPath $protectedMarkerPath) {
+        Remove-Item -LiteralPath $protectedMarkerPath -Force
+    }
 
     & (Join-Path $PSScriptRoot 'write-integrity-manifest.ps1') -AppDirectory $appDir -VersionPath $versionPath -Profile 'update'
 
