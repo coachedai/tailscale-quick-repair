@@ -26,7 +26,8 @@ public class TqrRouteProbe {
     $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)
     $functions=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Start-UpdateInstall'},$true))
     $handoffFunctions=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-PendingProtectedUpdate'},$true))
-    Check ($functions.Count -eq 1 -and $handoffFunctions.Count -eq 1 -and $errors.Count -eq 0) 'Final package has one parsed update action and one protected handoff action'
+    $ackFunctions=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Acknowledge-ProtectedRestart'},$true))
+    Check ($functions.Count -eq 1 -and $handoffFunctions.Count -eq 1 -and $ackFunctions.Count -eq 1 -and $errors.Count -eq 0) 'Final package has one parsed update, protected handoff and restart acknowledgement action'
     . ([scriptblock]::Create($functions[0].Extent.Text))
     . ([scriptblock]::Create($handoffFunctions[0].Extent.Text))
     function Get-Brush([string]$Name) { return [Windows.Media.Brushes]::Gray }
@@ -91,11 +92,17 @@ public class TqrRouteProbe {
     $ProtectedUpdateMarkerPath=Join-Path $root 'cancel-protected-update.json'
     [IO.File]::WriteAllText($ProtectedUpdateMarkerPath,(@{schema=1;versionCode=2}|ConvertTo-Json -Compress))
     $script:pendingProtectedUpdateStarted=$false;$script:allowFullExit=$false;$global:TqrUiShutdownRequested=$false
+    $script:cancelRoute=$null
     $cancelled=Invoke-PendingProtectedUpdate -StartProcess {
         param($info)
+        $script:cancelRoute=[pscustomobject]@{file=[string]$info.FileName;arguments=[string]$info.Arguments;verb=[string]$info.Verb;useShell=[bool]$info.UseShellExecute}
         throw (New-Object ComponentModel.Win32Exception 1223)
     }
     Check (-not $cancelled) 'Cancelling Windows approval starts no protected handoff'
+    $currentSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    Check ($script:cancelRoute -and $script:cancelRoute.file -ceq $SetupHostPath -and
+        $script:cancelRoute.verb -ceq 'runas' -and $script:cancelRoute.useShell -and
+        $script:cancelRoute.arguments -ceq ('--upgrade --requester-sid "'+$currentSid+'"')) 'Cancelled Windows approval was prepared only for the installed Setup, fixed upgrade mode and initiating SID'
     Check (Test-Path $ProtectedUpdateMarkerPath) 'Cancelling Windows approval preserves the pending protected update'
     Check (-not $script:pendingProtectedUpdateStarted -and -not $script:allowFullExit -and -not $global:TqrUiShutdownRequested) 'Cancelling Windows approval does not arm shutdown or mark the handoff started'
     Check ($cancelWindow.IsVisible -or -not $cancelWindow.IsLoaded) 'Cancellation does not request the application window to close'
@@ -119,7 +126,9 @@ public class TqrRouteProbe {
             while(-not(Test-Path $probe) -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 30}
             Check (Test-Path $probe) 'Exact handoff marker starts the native Setup fixture'
             $probeArgs=@(Get-Content $probe)
-            Check ($probeArgs.Count -eq 1 -and $probeArgs[0] -eq '--upgrade') 'Pending handoff passes only the fixed --upgrade argument'
+            $currentSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            Check ($probeArgs.Count -eq 3 -and $probeArgs[0] -eq '--upgrade' -and
+                $probeArgs[1] -eq '--requester-sid' -and $probeArgs[2] -ceq $currentSid) 'Pending handoff passes only fixed upgrade mode and the initiating Windows SID'
             Check ($handoffFunctions[0].Extent.Text.Contains("$psi.Verb = 'runas'")) 'Pending handoff requests Windows administrator approval directly'
             Check (Test-Path $ProtectedUpdateMarkerPath) 'UI handoff never deletes the marker before Setup completion'
             $window.Dispatcher.Invoke([Action]{},[Windows.Threading.DispatcherPriority]::ApplicationIdle)
