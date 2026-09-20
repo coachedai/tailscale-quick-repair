@@ -52,7 +52,7 @@ try{
         $updateFunctions=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Start-UpdateInstall'},$true))
         Check ($errors.Count -eq 0 -and $updateFunctions.Count -eq 1) 'Published 5.2.1 installed UI has one parsed Update now action'
         $route=[string]$updateFunctions[0].Extent.Text
-        Check ($route.Contains("Copy-Item -LiteralPath $UpdaterHostPath -Destination $tempUpdater -Force") -and
+        Check ($route.Contains('Copy-Item -LiteralPath $UpdaterHostPath -Destination $tempUpdater -Force') -and
             $route.Contains('$psi.FileName = $tempUpdater') -and
             $route.Contains("'--silent'") -and $route.Contains("'--current-pid'") -and $route.Contains("'--current-code'")) 'Published Update now route copies the updater to TEMP before replacement'
 
