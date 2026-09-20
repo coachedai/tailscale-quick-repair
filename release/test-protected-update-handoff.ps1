@@ -12,7 +12,7 @@ if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-host
    $PSVersionTable.PSVersion.Major -ne 5){throw 'Protected handoff acceptance refused this environment.'}
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if((git -C $repo rev-parse HEAD).Trim() -cne $env:GITHUB_SHA -or
-   (Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json).publish){throw 'Exact unpublished source required.'}
+   ((Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json).publish -and -not $releaseValidation)){throw 'Exact isolated source required.'}
 New-Item -ItemType Directory -Path $EvidenceDirectory -Force|Out-Null
 $evidence=(Resolve-Path $EvidenceDirectory).Path
 $lab=Join-Path $env:RUNNER_TEMP ('TqrProtectedHandoff-'+[Guid]::NewGuid().ToString('N'));[void][IO.Directory]::CreateDirectory($lab)
