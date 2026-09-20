@@ -2,16 +2,18 @@ param([Parameter(Mandatory=$true)][string]$OutputDirectory,[string]$EvidenceDire
 $ErrorActionPreference='Stop'
 # Run ONLY after this exact disposable job has installed and permission-tested
 # its own product files. No configurable system root or production-PC mode.
+$releaseValidation=($env:GITHUB_REF_NAME -ceq 'main' -and $env:TQR_RELEASE_VALIDATION -ceq $env:GITHUB_RUN_ID -and -not [string]::IsNullOrEmpty($env:GITHUB_RUN_ID))
+$developmentValidation=($env:GITHUB_REF_NAME -ceq 'work/6.1-auto-repair-safety')
 if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
    $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64' -or
    $env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-quick-repair' -or
-   $env:GITHUB_REF_NAME -cne 'work/6.1-auto-repair-safety' -or
+   -not ($developmentValidation -or $releaseValidation) -or
    $env:TQR_NATIVE_LAB_RUN -cne $env:GITHUB_RUN_ID -or [string]::IsNullOrEmpty($env:GITHUB_RUN_ID) -or
    $PSVersionTable.PSVersion.Major -ne 5){throw 'Disposable migration lab refused this environment.'}
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if((git -C $repo rev-parse HEAD).Trim() -cne $env:GITHUB_SHA -or
    (git -C $repo remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?$' -or
-   (Get-Content (Join-Path $repo 'release/publish.json') -Raw|ConvertFrom-Json).publish){throw 'Exact unpublished isolated source required.'}
+   ((Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json).publish -and -not $releaseValidation)){throw 'Exact unpublished isolated source required.'}
 $evidence=(Resolve-Path $EvidenceDirectory).Path
 foreach($name in @('native-windows-results.json','native-permission-results.json')){
     $prior=Get-Content (Join-Path $evidence $name) -Raw|ConvertFrom-Json
