@@ -19,7 +19,7 @@ $lab=Join-Path $env:RUNNER_TEMP ('TqrNativeLab-'+[Guid]::NewGuid().ToString('N')
 New-Item -ItemType Directory -Path $lab|Out-Null
 $cases=New-Object 'Collections.Generic.List[object]'
 $observations=New-Object 'Collections.Generic.List[object]'
-$passed=$false;$cleanupOK=$true;$stage='preflight';$failureType='';$failureCode=0
+$passed=$false;$cleanupOK=$true;$stage='preflight';$failureType='';$failureCode=0;$reflectionBoundary=''
 $vendorInstalled=$false;$productOwned=$false;$vendorOwned=$false;$setupLease=$false
 $createdTasks=New-Object 'Collections.Generic.List[string]'
 $folderName='';$folder=$null;$scheduler=$null;$setupType=$null;$msi='';$vendorHash='';$repeatDelta=-1
@@ -36,7 +36,15 @@ function Stage([string]$Name){$script:stage=$Name;Write-Host "Native lab stage: 
 function Setup([string]$Name,[object[]]$Arguments){
     $m=$setupType.GetMethod($Name,[Reflection.BindingFlags]'NonPublic,Static')
     if(-not $m){throw 'Expected native Setup method missing.'}
-    return ,($m.Invoke($null,$Arguments))
+    $script:stage='native Setup '+$Name
+    # PowerShell wraps private CLR return values in PSObject when they cross a
+    # function boundary. Reflection needs the original CLR objects, not wrappers.
+    $nativeArguments=New-Object object[] $Arguments.Count
+    for($i=0;$i -lt $Arguments.Count;$i++){
+        $nativeArguments[$i]=if($null -eq $Arguments[$i]){$null}else{$Arguments[$i].PSObject.BaseObject}
+    }
+    $script:reflectionBoundary=$Name+':'+(($nativeArguments|ForEach-Object {if($null -eq $_){'null'}else{$_.GetType().FullName}})-join ',')
+    return ,($m.Invoke($null,$nativeArguments))
 }
 function JsonWrite([string]$Path,$Value){[IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 8 -Compress),(New-Object Text.UTF8Encoding($false)))}
 function NewState([string]$Name){
@@ -271,14 +279,15 @@ try{
             try{$scheduler.GetFolder('\').DeleteFolder($folderName,0)}catch{$cleanupOK=$false}
         }
     }
-    if($vendorInstalled){
+    if($vendorOwned -and $vendorInstalled){
         try{Msi $false;if(Get-Service 'Tailscale' -ErrorAction SilentlyContinue){$cleanupOK=$false}}catch{$cleanupOK=$false}
     }
+    if($vendorOwned -and (Get-Service 'Tailscale' -ErrorAction SilentlyContinue)){$cleanupOK=$false}
     $cases.Add([pscustomobject]@{name='Only owned native lab tasks and vendor installation are cleaned up';passed=$cleanupOK})
     [pscustomobject]@{
         passed=($passed -and $cleanupOK);source=$env:GITHUB_SHA;scope='Real empty GitHub-hosted Windows machine: unmodified Setup cores, installed worker and official unauthenticated vendor service; real scheduled dispatch and full recurrence';
         vendorVersion='1.102.3';vendorSha256=$vendorHash;recurrenceSeconds=$repeatDelta;cases=@($cases.ToArray());observations=@($observations.ToArray());
-        failureStage=$(if($passed){''}else{$stage});failureType=$failureType;failureCode=$failureCode;
+        failureStage=$(if($passed){''}else{$stage});failureType=$failureType;failureCode=$failureCode;reflectionBoundary=$reflectionBoundary;
         limits=@('No tailnet login, authentication key or remote peer','Fresh stopped-service policy is an explicitly separate state fixture; observed-intent state is preserved','Real service event uses the exact Setup subscription with a harmless action; actual monitor task dispatch is a separate test','Setup verification/application/registration cores execute natively; interactive UAC, alternate-admin, restart/rollback and full entry are not certified','No actual sleep/resume, logon or VPN transition is induced','No raw vendor logs, host paths, usernames, addresses, private state or MSI is uploaded; transient files remain only on the disposable runner')
     }|ConvertTo-Json -Depth 10|Set-Content (Join-Path $evidence 'native-windows-results.json') -Encoding UTF8
 }
