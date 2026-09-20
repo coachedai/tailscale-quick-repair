@@ -12,9 +12,11 @@ function Failure($Record){
 }
 # This suite follows real Windows installation acceptance in the SAME disposable
 # job, or prepares an empty isolated development fixture without vendor software.
+$releaseValidation=($env:GITHUB_REF_NAME -ceq 'main' -and $env:TQR_RELEASE_VALIDATION -ceq $env:GITHUB_RUN_ID -and -not [string]::IsNullOrEmpty($env:GITHUB_RUN_ID))
+$developmentValidation=($env:GITHUB_REF_NAME -ceq 'work/6.1-auto-repair-safety')
 if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
    $env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-quick-repair' -or
-   $env:GITHUB_REF_NAME -cne 'work/6.1-auto-repair-safety' -or $env:RUNNER_OS -cne 'Windows' -or
+   -not ($developmentValidation -or $releaseValidation) -or $env:RUNNER_OS -cne 'Windows' -or
    $env:TQR_NATIVE_LAB_RUN -cne $env:GITHUB_RUN_ID -or [string]::IsNullOrEmpty($env:GITHUB_RUN_ID) -or
    $PSVersionTable.PSVersion.Major -ne 5){throw 'Disposable permission acceptance guard refused this environment.'}
 $program=Join-Path $env:ProgramData 'TailscaleQuickRepair'
@@ -132,7 +134,7 @@ try{
         $repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
         if((git -C $repo rev-parse HEAD).Trim() -cne $env:GITHUB_SHA -or
            (git -C $repo remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?$' -or
-           (Get-Content (Join-Path $repo 'release/publish.json') -Raw|ConvertFrom-Json).publish){throw 'Exact isolated unpublished source required.'}
+           ((Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json).publish -and -not $releaseValidation)){throw 'Exact isolated unpublished source required.'}
         $packages=@(Get-ChildItem -LiteralPath $FreshPackage -Filter '*SetupPackage-*.zip')
         if($packages.Count -ne 1){throw 'One exact protected test package required.'}
         $package=Join-Path $work 'package';Expand-Archive -LiteralPath $packages[0].FullName -DestinationPath $package
