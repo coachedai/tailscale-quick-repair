@@ -50,6 +50,30 @@ internal static class PublicSetupHost
         }
     }
 
+    private static bool TryAcquireUpgradeOperationLock()
+    {
+        string root = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "TailscaleQuickRepair"
+        );
+        Stopwatch watch = Stopwatch.StartNew();
+
+        while (watch.Elapsed < TimeSpan.FromSeconds(15))
+        {
+            if (TryAcquireOperationLock("setup")) return true;
+
+            Tqr.OperationState owner = Tqr.OperationGate.Inspect(root);
+            if (owner != null &&
+                !String.Equals(owner.kind, "update", StringComparison.Ordinal) &&
+                !String.Equals(owner.kind, "another operation", StringComparison.Ordinal))
+                return false;
+
+            System.Threading.Thread.Sleep(100);
+        }
+
+        return false;
+    }
+
     [STAThread]
     private static int Main(string[] args)
     {
@@ -94,7 +118,11 @@ internal static class PublicSetupHost
                 return RelaunchElevated(peer, startup, repairOnly, upgradeOnly);
             }
 
-            if (!TryAcquireOperationLock(repairOnly ? "maintenance" : "setup"))
+            bool acquired = upgradeOnly
+                ? TryAcquireUpgradeOperationLock()
+                : TryAcquireOperationLock(repairOnly ? "maintenance" : "setup");
+
+            if (!acquired)
                 throw new InvalidOperationException("Another Quick Repair operation is already running. Try Setup again when it finishes.");
 
             operationAcquired = true;
