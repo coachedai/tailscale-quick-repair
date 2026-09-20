@@ -5,9 +5,11 @@ param(
     [string]$Report
 )
 $ErrorActionPreference='Stop'
+$releaseValidation=($env:GITHUB_REF_NAME -ceq 'main' -and $env:TQR_RELEASE_VALIDATION -ceq $env:GITHUB_RUN_ID -and -not [string]::IsNullOrEmpty($env:GITHUB_RUN_ID))
+$developmentValidation=($env:GITHUB_REF_NAME -ceq 'work/6.1-auto-repair-safety')
 if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
    $env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-quick-repair' -or
-   $env:GITHUB_REF_NAME -cne 'work/6.1-auto-repair-safety' -or
+   -not ($developmentValidation -or $releaseValidation) -or
    $env:TQR_NATIVE_LAB_RUN -cne $env:GITHUB_RUN_ID -or -not $env:GITHUB_RUN_ID -or
    $PSVersionTable.PSVersion.Major -ne 5){throw 'Protected handoff child refused this environment.'}
 
