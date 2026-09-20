@@ -93,7 +93,9 @@ $startup = @'
 $startupNew = @'
                 Show-UpdateResult
                 [void](Get-ActiveOperationLock -RecoverStale)
-                [void](Invoke-PendingProtectedUpdate)
+                if (Invoke-PendingProtectedUpdate) {
+                    return
+                }
 '@
 if($text -notmatch [regex]::Escape('[void](Invoke-PendingProtectedUpdate)')) {
     Replace-ExactOnce $startup $startupNew 'startup protected update handoff'
