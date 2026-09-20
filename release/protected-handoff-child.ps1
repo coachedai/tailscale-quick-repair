@@ -51,6 +51,31 @@ try{
     }
     else{
         $type=[Reflection.Assembly]::LoadFile((Join-Path $app 'TailscaleQuickRepairSetup.exe')).GetType('PublicSetupHost')
+        $holderScript=Join-Path $env:TEMP ('TqrHandoffLease-'+[Guid]::NewGuid().ToString('N')+'.ps1')
+        $ready=$holderScript+'.ready'
+        [IO.File]::WriteAllText($holderScript,@'
+param([string]$Dll,[string]$Root,[string]$Ready)
+Add-Type -Path $Dll
+$lease=[Tqr.OperationGate]::TryAcquire($Root,'update')
+if(-not $lease){exit 31}
+try{
+    [IO.File]::WriteAllText($Ready,'ready')
+    Start-Sleep -Milliseconds 1500
+}finally{$lease.Dispose()}
+'@)
+        $psi=New-Object Diagnostics.ProcessStartInfo
+        $psi.FileName=Join-Path $PSHOME 'powershell.exe';$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
+        $psi.Arguments='-NoProfile -NonInteractive -File "'+$holderScript+'" -Dll "'+(Join-Path $app 'TailscaleQuickRepair.Operations.dll')+'" -Root "'+$app+'" -Ready "'+$ready+'"'
+        $holder=[Diagnostics.Process]::Start($psi)
+        $deadline=[DateTime]::UtcNow.AddSeconds(10)
+        while(-not(Test-Path $ready) -and [DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 25}
+        Check (Test-Path $ready) 'A separate old-updater owner holds the real operation lease'
+        $wait=[Diagnostics.Stopwatch]::StartNew()
+        $acquired=[bool](Invoke-Private $type 'TryAcquireUpgradeOperationLock')
+        Check ($acquired -and $wait.ElapsedMilliseconds -ge 1000 -and $wait.ElapsedMilliseconds -lt 10000) 'Refreshed Setup waits only for the finishing update owner and then acquires safely'
+        [void](Invoke-Private $type 'ReleaseOperationLock');$lease=$false
+        Check ($holder.WaitForExit(10000) -and $holder.ExitCode -eq 0) 'Previous updater owner exits normally without its lock being stolen'
+        $holder.Dispose();Remove-Item $holderScript,$ready -Force -ErrorAction SilentlyContinue
         $marker=Get-Content (Join-Path $app 'protected-update.json') -Raw|ConvertFrom-Json
         $wrong=$false
         try{[void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @([int64]$marker.versionCode+1))}catch{$wrong=$true}
