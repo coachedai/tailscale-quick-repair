@@ -8,7 +8,7 @@ function Invoke-AutoRepairWorker {
     Add-Type -Path $library -ErrorAction Stop
     if ([Tqr.AutoRepairPolicyStore]::ReadEnabled($root) -ne $true) { return }
     $machine = New-Object Tqr.WindowsAutoRepairMachine
-    $result = [Tqr.AutoRepairWorker]::Execute($root,$machine)
+    $result = [Tqr.AutoRepairWorker]::ExecuteScheduled($root,$machine)
     if ($result.status -in @('manual','error')) { throw 'Automatic recovery needs attention.' }
 }
 

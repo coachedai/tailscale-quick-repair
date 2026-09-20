@@ -544,10 +544,7 @@ internal static class PublicSetupHost
 
             if (recurring)
             {
-                dynamic trigger = task.Triggers.Create(1);
-                trigger.StartBoundary = DateTime.Now.AddMinutes(1).ToString("s");
-                trigger.Repetition.Interval = "PT5M";
-                trigger.Repetition.Duration = "P3650D";
+                ConfigureAutoMonitorSchedule(task,DateTime.Now,WindowsIdentity.GetCurrent().User.Value);
             }
 
             root.RegisterTaskDefinition(name, task, 6, null, null, 3, null);
@@ -557,6 +554,35 @@ internal static class PublicSetupHost
             ReleaseCom(taskObject);
             ReleaseCom(rootObject);
             ReleaseCom(serviceObject);
+        }
+    }
+    private static void ConfigureAutoMonitorSchedule(object definition,DateTime now,string userSid)
+    {
+        // Fixed local event sources, no SSID/device/user data in subscriptions.
+        // No client process-exit auditing is enabled; resident UI observes that
+        // transition, while exited UIs retain the five-minute fallback.
+        dynamic task=definition;
+        task.Settings.StartWhenAvailable=true;
+        task.Settings.WakeToRun=false;
+        task.Settings.RunOnlyIfNetworkAvailable=false;
+        task.Settings.RestartCount=0;
+        dynamic fallback=task.Triggers.Create(1);
+        fallback.Id="LocalFallback";fallback.StartBoundary=now.AddMinutes(1).ToString("s");
+        fallback.Repetition.Interval="PT5M"; // Unlimited; not a ten-year expiry.
+        dynamic logon=task.Triggers.Create(9);
+        logon.Id="LocalLogon";logon.UserId=userSid;logon.Delay="PT30S";
+        string[] subscriptions={
+            "<QueryList><Query Id='0' Path='System'><Select Path='System'>*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1]]</Select>"+
+            "<Select Path='System'>*[System[Provider[@Name='Service Control Manager'] and EventID=7036]] and *[EventData[Data[@Name='param1']='Tailscale']]</Select></Query></QueryList>",
+            "<QueryList><Query Id='0' Path='Microsoft-Windows-NetworkProfile/Operational'><Select Path='Microsoft-Windows-NetworkProfile/Operational'>*[System[Provider[@Name='Microsoft-Windows-NetworkProfile'] and (EventID=10000 or EventID=10001)]]</Select></Query></QueryList>"
+        };
+        for(int i=0;i<subscriptions.Length;i++)
+        {
+            dynamic trigger=task.Triggers.Create(0);
+            trigger.Id=i==0?"LocalSystemEvents":"LocalNetworkEvents";
+            trigger.Subscription=subscriptions[i];trigger.Delay="PT30S";
+            trigger.Repetition.Interval="PT1M";trigger.Repetition.Duration="PT2M";
+            trigger.Repetition.StopAtDurationEnd=false;
         }
     }
     private static void WriteLocalConfig(string peer)
@@ -595,7 +621,7 @@ internal static class PublicSetupHost
         using (RegistryKey run = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
         {
             object value = run == null ? null : run.GetValue(StartupName);
-            return value != null && !String.IsNullOrWhiteSpace(Convert.ToString(value));
+            return value != null && !String.IsNullOrWhiteSpace(value.ToString());
         }
     }
 

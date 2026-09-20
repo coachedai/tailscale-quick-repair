@@ -1,8 +1,8 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase6.1.0-dev",
-  "versionCode": 30000710,
+  "version": "3.0.0-phase6.2.0-dev",
+  "versionCode": 30000720,
   "requiresSetup": true,
   "publicInstaller": true,
   "notes": "Development only: integrated local automatic recovery worker. Protected Setup is required. Do not distribute before remaining integration and failure acceptance gates."

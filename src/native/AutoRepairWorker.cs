@@ -23,11 +23,13 @@ namespace Tqr
     }
     public sealed class AutoRepairResult
     {
-        public int schema = 2, actionsAttempted, actionsCompleted, cooldownRemainingMinutes;
+        public int schema = 3, actionsAttempted, actionsCompleted, cooldownRemainingMinutes;
         public string runId = "", lastCheckedUtc = "", status = "waiting", reason = "unconfirmed", phase = "Observed";
         public string service = "Unknown", client = "Unknown", backend = "Unknown";
         public string lastRepairUtc = "", lastRepairReason = "";
         public bool recoveryConfirmed;
+        public string reservedUtc = "", action1 = "", action2 = "", action3 = "";
+        public string action1Utc = "", action2Utc = "", action3Utc = "";
     }
     public static class AutoRepairRecords
     {
@@ -61,9 +63,11 @@ namespace Tqr
             if (doc.ContainsKey("schema"))
             {
                 if (text.IndexOf('\\') >= 0) throw new InvalidDataException("Noncanonical result.");
-                if (doc.Count != typeof(AutoRepairResult).GetFields().Length) throw new InvalidDataException("Unknown result fields.");
+                bool older = doc["schema"] is int && (int)doc["schema"] == 2;
+                if (doc.Count != typeof(AutoRepairResult).GetFields().Length - (older ? 7 : 0)) throw new InvalidDataException("Unknown result fields.");
                 foreach (System.Reflection.FieldInfo field in typeof(AutoRepairResult).GetFields())
                 {
+                    if (older && IsAuditField(field.Name)) continue;
                     object v;
                     if (!doc.TryGetValue(field.Name, out v) || v == null || v.GetType() != field.FieldType ||
                         Regex.Matches(text, "\"" + field.Name + "\"\\s*:").Count != 1) throw new InvalidDataException("Invalid result field.");
@@ -89,11 +93,16 @@ namespace Tqr
             }
             return doc;
         }
+        private static bool IsAuditField(string name)
+        {
+            return name == "reservedUtc" || name == "action1" || name == "action2" || name == "action3" ||
+                name == "action1Utc" || name == "action2Utc" || name == "action3Utc";
+        }
         private static bool OneOf(string v, params string[] choices) { return Array.IndexOf(choices, v) >= 0; }
         private static void Validate(AutoRepairResult r)
         {
             Guid id;
-            if (r.schema != 2 || !Guid.TryParseExact(r.runId,"N",out id) || String.IsNullOrEmpty(r.lastCheckedUtc) ||
+            if ((r.schema != 2 && r.schema != 3) || !Guid.TryParseExact(r.runId,"N",out id) || String.IsNullOrEmpty(r.lastCheckedUtc) ||
                 r.actionsAttempted < 0 || r.actionsAttempted > 3 || r.actionsCompleted < 0 || r.actionsCompleted > r.actionsAttempted ||
                 r.cooldownRemainingMinutes < 0 || r.cooldownRemainingMinutes > 60 ||
                 !OneOf(r.status,"waiting","healthy","cooldown","manual","error","repairing","disabled","busy") ||
@@ -102,16 +111,34 @@ namespace Tqr
                 AutoRepairPolicy.Backend(r.backend) != r.backend || !OneOf(r.reason,"unconfirmed","off","settings_unavailable","integration_unavailable","operation_busy","clock_changed","state_unavailable","installation_missing","service_disabled","disconnected","sign_in","approval","other_user","local_running","recent_attempt","retry_limit","confirming_fault","service_stopped","client_closed","backend_starting","backend_no_state","action_completed","action_unconfirmed","observation_changed","local_recovery","recovery_unconfirmed","ownership_changed","interrupted","state_or_action_unavailable"))
                 throw new InvalidDataException("Invalid result vocabulary.");
             DateTime when = AutoRepairPolicy.Time(r.lastCheckedUtc), repair = AutoRepairPolicy.Time(r.lastRepairUtc);
+            if (r.schema == 3)
+            {
+                DateTime reserved = AutoRepairPolicy.Time(r.reservedUtc), last = reserved;
+                if ((r.actionsAttempted > 0 && reserved == DateTime.MinValue) || reserved > when)
+                    throw new InvalidDataException("Missing reservation evidence.");
+                string[] actions = { r.action1, r.action2, r.action3 };
+                string[] stamps = { r.action1Utc, r.action2Utc, r.action3Utc };
+                for (int i=0; i<3; i++)
+                {
+                    if (i >= r.actionsCompleted)
+                    { if (actions[i] != "" || stamps[i] != "") throw new InvalidDataException("Unexpected action evidence."); continue; }
+                    DateTime at = AutoRepairPolicy.Time(stamps[i]);
+                    if (!OneOf(actions[i],"client_opened","service_started","service_stopped") || at == DateTime.MinValue || at < last || at > when)
+                        throw new InvalidDataException("Invalid completed action evidence.");
+                    last = at;
+                }
+            }
             if (r.recoveryConfirmed != (r.lastRepairUtc != "") ||
                 (r.recoveryConfirmed && (r.status != "healthy" || r.phase!="Complete" || r.actionsCompleted == 0 || r.service != "Running" ||
                     r.client != "Running" || r.backend != "Running" || repair > when || r.lastRepairReason != "local_recovery")) ||
                 (!r.recoveryConfirmed && r.lastRepairReason != "")) throw new InvalidDataException("Invalid recovery claim.");
         }
-        public static AutoRepairResult Current(string root)
+        public static AutoRepairResult Current(string root) { return Snapshot(root,false); }
+        public static AutoRepairResult Snapshot(string root, bool previous)
         {
             try
             {
-                Dictionary<string,object> doc=Read(Path.Combine(root,"auto-repair-state.json"));
+                Dictionary<string,object> doc=Read(Path.Combine(root,previous ? "auto-repair-state.previous.json" : "auto-repair-state.json"));
                 if (!doc.ContainsKey("schema")) return null;
                 return Json().Deserialize<AutoRepairResult>(Json().Serialize(doc));
             }
@@ -147,6 +174,8 @@ namespace Tqr
                 if (File.Exists(path)) File.Replace(scratch,path,previous); else File.Move(scratch,path);
             }
             finally { if (File.Exists(scratch)) File.Delete(scratch); }
+            // Secondary typed history never controls whether the repair succeeded.
+            AutoRepairBackground.Record(root,value,false);
         }
     }
     public static class AutoRepairWorker
@@ -210,13 +239,24 @@ namespace Tqr
                 Save(); // Durable evidence precedes the possible side effect.
                 Action permission=delegate { Authorize(expected); };
                 bool completed= action=="OpeningClient" ? Machine.OpenClient(permission) : action=="StartingService" ? Machine.StartService(permission) : Machine.StopService(permission);
-                if(completed) Result.actionsCompleted++;
+                if(completed)
+                {
+                    Result.actionsCompleted++;
+                    string code=action=="OpeningClient"?"client_opened":action=="StartingService"?"service_started":"service_stopped";
+                    string at=Machine.UtcNow.ToString("o",CultureInfo.InvariantCulture);
+                    if(Result.actionsCompleted==1){Result.action1=code;Result.action1Utc=at;}
+                    else if(Result.actionsCompleted==2){Result.action2=code;Result.action2Utc=at;}
+                    else {Result.action3=code;Result.action3Utc=at;}
+                    Result.lastCheckedUtc=at;
+                }
                 Result.reason=completed?"action_completed":"action_unconfirmed";
                 Save();
                 return completed;
             }
         }
-        public static AutoRepairResult Execute(string root,IAutoRepairMachine machine)
+        public static AutoRepairResult Execute(string root,IAutoRepairMachine machine) { return ExecuteCore(root,machine,false); }
+        public static AutoRepairResult ExecuteScheduled(string root,IAutoRepairMachine machine) { return ExecuteCore(root,machine,true); }
+        private static AutoRepairResult ExecuteCore(string root,IAutoRepairMachine machine,bool scheduled)
         {
             AutoRepairResult result=new AutoRepairResult { runId=Guid.NewGuid().ToString("N"),lastCheckedUtc=DateTime.UtcNow.ToString("o") };
             Run run=null;
@@ -232,13 +272,23 @@ namespace Tqr
                 run=new Run { Root=root,Machine=machine,Lease=lease,Result=result,LastUtc=machine.UtcNow };
                 run.Guard(false);
                 AutoRepairRecords.CheckExisting(root);
+                // No former worker can still own this lease. Reconcile bounded
+                // prior snapshots before overwriting them, including uncertain exits.
+                AutoRepairBackground.Reconcile(root,true);
+                AutoRepairResult prior=AutoRepairRecords.Current(root);
+                if(scheduled && prior!=null)
+                {
+                    double age=(machine.UtcNow-AutoRepairPolicy.Time(prior.lastCheckedUtc)).TotalSeconds;
+                    if(age>=0 && age<30) return prior; // Persisted flood suppression; not a new observation.
+                }
                 AutoRepairPolicyStore.ImportLegacyAttempt(root,AutoRepairRecords.LegacyAttempt(root),machine.UtcNow);
                 AutoHealth health=run.Read();
                 AutoDecision decision=AutoRepairPolicyStore.Observe(root,health,machine.UtcNow,false);
                 result.reason=decision.Reason;result.cooldownRemainingMinutes=decision.CooldownMinutes;
                 result.status=decision.Action=="Healthy"?"healthy":decision.Action=="Attention"?"manual":decision.Action=="Cooldown"?"cooldown":"waiting";
                 if(decision.Action!="RequestRepair") { result.phase="Complete";run.Save();return result; }
-                result.phase="Reserved";result.reason=decision.Reason;run.Save();
+                result.phase="Reserved";result.reason=decision.Reason;
+                result.reservedUtc=result.lastCheckedUtc=machine.UtcNow.ToString("o",CultureInfo.InvariantCulture);run.Save();
                 bool action=false;
                 if(decision.Reason=="client_closed") action=run.Act("OpeningClient",decision.Reason);
                 else if(decision.Reason=="service_stopped") action=run.Act("StartingService",decision.Reason);
@@ -275,6 +325,8 @@ namespace Tqr
                 result.status=ex.Message=="off"?"disabled":"manual";result.recoveryConfirmed=false;result.lastRepairUtc=result.lastRepairReason="";
                 result.reason=Array.IndexOf(new[] { "ownership_changed","clock_changed","interrupted","off","settings_unavailable","integration_unavailable","disconnected","sign_in","approval","other_user","service_disabled","installation_missing","state_unavailable","observation_changed" },ex.Message)>=0 ? ex.Message : "state_or_action_unavailable";
                 result.phase="Complete";
+                if(machine!=null && machine.UtcNow.Kind==DateTimeKind.Utc && machine.UtcNow>=AutoRepairPolicy.Time(result.lastCheckedUtc))
+                    result.lastCheckedUtc=machine.UtcNow.ToString("o",CultureInfo.InvariantCulture);
                 // Record cancellation only while still owning the operation and
                 // the existing records remain readable. No force-reset on failure.
                 if(run!=null && run.Lease.IsCurrent) try { AutoRepairRecords.Save(root,result); } catch { }

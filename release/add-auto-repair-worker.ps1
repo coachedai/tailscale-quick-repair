@@ -133,7 +133,7 @@ $needle='            $status=[string]$state.status'
 if(([regex]::Matches($text,[regex]::Escape($needle))).Count -ne 1){throw 'Expected one automatic notification adapter.'}
 $text=$text.Replace($needle,@'
             if($state.PSObject.Properties.Name -contains 'schema'){
-                if($state.schema -isnot [int] -or $state.schema -ne 2){return}
+                if($state.schema -isnot [int] -or $state.schema -notin @(2,3)){return}
                 $state=[Tqr.AutoRepairRecords]::Current($StateDir)
                 if(-not $state){return}
                 if($state.status -eq 'healthy' -and -not $state.recoveryConfirmed){return}
@@ -151,6 +151,59 @@ $text=$text.Replace($old,@'
             $AutoRepairStatusText.Foreground=Get-Brush 'Amber'
             return
         }
+'@)
+Replace-Function 'Test-AutoRepairSmartEnabled' @'
+function Test-AutoRepairSmartEnabled {
+    try {
+        return (-not $script:allowFullExit -and -not $global:TqrUiShutdownRequested -and
+            $script:autoRepairAvailable -and [Tqr.AutoRepairPolicyStore]::ReadEnabled($StateDir) -eq $true)
+    } catch { return $false }
+}
+'@
+Replace-Function 'Queue-AutoRepairSmartCheck' @'
+function Queue-AutoRepairSmartCheck {
+    param([string]$Reason,[int]$DelaySeconds=10)
+    try {
+        Initialize-OperationGate
+        if(-not $script:autoEventClock){$script:autoEventClock=[Diagnostics.Stopwatch]::StartNew()}
+        if(-not $script:autoEventQueue){$script:autoEventQueue=New-Object Tqr.AutoRepairEventQueue}
+        $enabled=Test-AutoRepairSmartEnabled
+        $script:autoEventQueue.Signal($script:autoEventClock.ElapsedMilliseconds,$DelaySeconds,$enabled)
+        if(-not $script:autoEventQueue.Pending){return}
+        if(-not $script:autoRepairTriggerTimer){
+            $script:autoRepairTriggerTimer=New-Object Windows.Threading.DispatcherTimer
+            $script:autoRepairTriggerTimer.Interval=[TimeSpan]::FromSeconds(1)
+            $script:autoRepairTriggerTimer.Add_Tick({ Invoke-AutoRepairEventTick })
+        }
+        if(-not $script:autoRepairTriggerTimer.IsEnabled){$script:autoRepairTriggerTimer.Start()}
+    } catch { }
+}
+function Invoke-AutoRepairEventTick {
+    try {
+        $enabled=Test-AutoRepairSmartEnabled
+        $busy=$script:repairActive -or $null -ne (Get-ActiveOperation)
+        if($script:autoEventQueue.Take($script:autoEventClock.ElapsedMilliseconds,$enabled,$busy)){
+            $started=Invoke-AutoRepairMonitorNow
+            if($started){
+                $AutoRepairStatusText.Text='Local check requested'
+                $AutoRepairStatusText.Foreground=Get-Brush 'Muted'
+            }
+        }
+    } catch { if($script:autoEventQueue){$script:autoEventQueue.Cancel()} }
+    finally {
+        if(-not $script:autoEventQueue -or -not $script:autoEventQueue.Pending){
+            if($script:autoRepairTriggerTimer){$script:autoRepairTriggerTimer.Stop()}
+        }
+    }
+}
+'@
+# Reconciliation is secondary and cannot run a local/peer probe. A UI reader must
+# never turn a live worker's progress into an interrupted-outcome event.
+$historyAnchor='            $view = [Tqr.LocalHistory]::Read($StateDir)'
+if(([regex]::Matches($text,[regex]::Escape($historyAnchor))).Count -ne 1){throw 'Expected one History view.'}
+$text=$text.Replace($historyAnchor,@'
+            if(-not [Tqr.AutoRepairBackground]::Reconcile($StateDir,$false)){$script:historyWriteUnavailable=$true}
+            $view = [Tqr.LocalHistory]::Read($StateDir)
 '@)
 [void][scriptblock]::Create($text)
 [IO.File]::WriteAllText($Path,$text,(New-Object Text.UTF8Encoding($true)))

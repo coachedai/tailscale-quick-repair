@@ -252,6 +252,8 @@ try {
     # Isolate assembly identity: the protected package is a separate native build.
     & (Join-Path $PSHOME 'powershell.exe') -NoProfile -NonInteractive -STA -File (Join-Path $PSScriptRoot 'test-auto-repair-worker.ps1') -OutputDirectory ([IO.Path]::GetFullPath($OutputDirectory)) -EvidenceDirectory ([IO.Path]::GetFullPath($EvidenceDirectory))
     if ($LASTEXITCODE -ne 0) { throw 'Integrated automatic worker gates failed.' }
+    & (Join-Path $PSHOME 'powershell.exe') -NoProfile -NonInteractive -STA -File (Join-Path $PSScriptRoot 'test-auto-background.ps1') -OutputDirectory ([IO.Path]::GetFullPath($OutputDirectory)) -EvidenceDirectory ([IO.Path]::GetFullPath($EvidenceDirectory))
+    if ($LASTEXITCODE -ne 0) { throw 'Automatic background lifecycle gates failed.' }
     Json-Write (Join-Path $EvidenceDirectory 'native-results.json') @{passed=$true;runtime='Windows PowerShell 5.1 / WPF / .NET Framework';scope='Packaged Guardian event and real process ownership; OS integration probes are fixture stubs';cases=$script:results.ToArray()}
     Write-Host "Native package gates passed: $($script:results.Count) assertions."
 } catch {

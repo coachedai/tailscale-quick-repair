@@ -142,6 +142,7 @@ try {
         ('"{0}"' -f (Join-Path $repo 'src\native\AutoRepairPolicy.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\AutoRepairLocalStatus.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\AutoRepairWorker.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\AutoRepairBackground.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\WindowsAutoRepairMachine.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\OperationGate.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\LocalHistory.cs')),
