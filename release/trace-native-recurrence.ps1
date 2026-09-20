@@ -139,3 +139,26 @@ function Close-NativeRecurrenceTrace($Context) {
         } finally {$Context.Configuration.Dispose();$Context.Configuration=$null}
     }
 }
+# A few log entries alone are not attribution. Require two distinct running
+# instances, each tied to the real time trigger, task start and marker process.
+function Test-NativeRecurrenceAttribution($Report) {
+    if($Report.eventReadError -ne 0 -or @($Report.observations).Count -ne 2 -or
+       [Math]::Abs($Report.clockDifferenceSeconds) -gt 2 -or
+       @($Report.samples|Where-Object {[Math]::Abs($_.clockDifferenceSeconds) -gt 0.5}).Count -gt 0){return $false}
+    $enabled=@($Report.triggers|Where-Object enabled)
+    if(@($Report.triggers).Count -ne 4 -or $enabled.Count -ne 1 -or
+       $enabled[0].type -ne 1 -or $enabled[0].interval -cne 'PT5M' -or $enabled[0].duration -cne ''){return $false}
+    $ids=New-Object 'Collections.Generic.HashSet[int]'
+    foreach($entry in $Report.observations){
+        if($entry.error -ne 0 -or -not $entry.exactTask -or @($entry.instances).Count -ne 1){return $false}
+        $id=[int]$entry.instances[0]
+        if($id -lt 1 -or -not $ids.Add($id)){return $false}
+        foreach($eventId in @(107,100,200)){
+            $matches=@($Report.events|Where-Object {$_.eventId -eq $eventId -and $_.instance -eq $id})
+            if($matches.Count -ne 1 -or ($eventId -eq 200 -and -not $matches[0].matchesMarkerProcess)){return $false}
+        }
+    }
+    if(@($Report.events|Where-Object {$_.eventId -eq 107}).Count -ne 2 -or
+       @($Report.events|Where-Object {$_.eventId -in @(108,109,110,117,118,119,120,121,122,123,124,125,322)}).Count -gt 0){return $false}
+    return $true
+}

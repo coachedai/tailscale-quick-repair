@@ -48,6 +48,15 @@ jobs:
         env:
           TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
         run: .\release\test-native-windows.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Require independent clock and exact trigger attribution
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . .\release\trace-native-recurrence.ps1
+          $trace = Get-Content .\test-evidence\native-recurrence-trace.json -Raw | ConvertFrom-Json
+          if ($trace.source -cne $env:GITHUB_SHA -or -not $trace.channelRestored -or -not (Test-NativeRecurrenceAttribution $trace)) {
+            throw 'Independent recurrence attribution did not pass. Preserve the original trace and do not publish.'
+          }
       - name: Ordinary-user protected file and task gates
         shell: powershell
         env:
