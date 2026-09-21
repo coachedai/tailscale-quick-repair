@@ -833,6 +833,13 @@ internal static class PublicSetupHost
 
     private static bool RecoverInterruptedFileTransaction()
     {
+        return RecoverInterruptedFileTransactionCore(null);
+    }
+
+    // Private acceptance seam for kill/restart recovery tests. Production uses
+    // the wrapper above and never supplies a callback.
+    private static bool RecoverInterruptedFileTransactionCore(Action<int> afterRestore)
+    {
         string root = GetRecoveryRoot();
         if (!Directory.Exists(root))
         {
@@ -873,6 +880,7 @@ internal static class PublicSetupHost
                 throw new InvalidDataException("Setup recovery backup verification failed.");
         }
 
+        int restored = 0;
         foreach (RecoveryEntry entry in document.entries)
         {
             string target = ResolveInstallTarget(entry.path);
@@ -912,6 +920,9 @@ internal static class PublicSetupHost
                     File.Delete(target);
                 }
             }
+
+            restored++;
+            if (afterRestore != null) afterRestore(restored);
         }
 
         foreach (RecoveryEntry entry in document.entries)
