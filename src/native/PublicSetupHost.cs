@@ -231,6 +231,10 @@ internal static class PublicSetupHost
     }
     private static int Install(string peer, bool startup, bool upgradeOnly)
     {
+        // Restore any payload transaction that was interrupted by a killed
+        // Setup process before downloading or applying another release.
+        RecoverInterruptedFileTransaction();
+
         string work = Path.Combine(Path.GetTempPath(), "TailscaleQuickRepair-Setup-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
 
@@ -437,52 +441,536 @@ internal static class PublicSetupHost
         return target;
     }
 
+    private const int RecoverySchema = 1;
+    private const int RecoveryByteLimit = 32768;
+    private const int RecoveryEntryLimit = 64;
+    private const string RecoveryJournalName = "transaction.json";
+    private const string RecoveryNextName = "transaction.next";
+
     private static void ApplyFiles(List<InstallFile> files, string work)
     {
-        PrepareProtectedRoot();
-        string backup = Path.Combine(work, "backup");
-        Directory.CreateDirectory(backup);
-        List<BackupEntry> backups = new List<BackupEntry>();
-        int index = 0;
+        ApplyFilesCore(files, work, null);
+    }
 
+    // afterReplace is a private acceptance seam only. Production always passes
+    // null; the disposable Windows lab uses it to suspend a real transaction
+    // after a replacement so the owning process can be killed.
+    private static void ApplyFilesCore(List<InstallFile> files, string work, Action<int> afterReplace)
+    {
+        RecoverInterruptedFileTransaction();
+        PrepareProtectedRoot();
+
+        RecoveryDocument transaction = null;
         try
         {
+            transaction = PrepareFileTransaction(files);
+
+            int applied = 0;
             foreach (InstallFile file in files)
             {
-                index++;
-                bool existed = File.Exists(file.Target);
-                string backupPath = Path.Combine(backup, index.ToString() + ".bak");
-                if (existed) File.Copy(file.Target, backupPath, true);
-                backups.Add(new BackupEntry { Target = file.Target, Backup = backupPath, Existed = existed });
-
                 string parent = Path.GetDirectoryName(file.Target);
                 if (!String.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+
                 string next = file.Target + ".setup.new";
-                File.Copy(file.Source, next, true);
+                RefuseUnsafeTemporaryPath(next);
+                CopyFileFlushed(file.Source, next, true);
+
+                if (Directory.Exists(file.Target))
+                    throw new IOException("Setup target unexpectedly became a directory.");
+                CheckInstallPath(file.Target);
                 if (File.Exists(file.Target)) File.Delete(file.Target);
                 File.Move(next, file.Target);
                 ProtectInstalledProgramFile(file.Target);
+
+                applied++;
+                if (afterReplace != null) afterReplace(applied);
             }
 
             foreach (InstallFile file in files)
             {
-                if (!File.Exists(file.Target) || !String.Equals(Sha256File(file.Target), file.Sha256, StringComparison.OrdinalIgnoreCase))
+                if (!File.Exists(file.Target) ||
+                    !String.Equals(Sha256File(file.Target), file.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw new IOException("Installed file verification failed: " + file.RelativePath);
             }
+
+            CompleteFileTransaction(transaction);
+            transaction = null;
         }
         catch
         {
-            foreach (BackupEntry entry in backups)
+            if (transaction != null)
             {
                 try
                 {
-                    if (entry.Existed) { File.Copy(entry.Backup, entry.Target, true); ProtectInstalledProgramFile(entry.Target); }
-                    else if (File.Exists(entry.Target)) File.Delete(entry.Target);
+                    RecoverInterruptedFileTransaction();
+                    transaction = null;
                 }
-                catch { }
+                catch (Exception recovery)
+                {
+                    throw new IOException(
+                        "Setup stopped after a file error and the previous files could not be fully restored. " +
+                        "Recovery evidence was preserved.",
+                        recovery
+                    );
+                }
             }
             throw;
         }
+    }
+
+    private static string GetRecoveryRoot()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "TailscaleQuickRepair.SetupRecovery"
+        );
+    }
+
+    private static System.Security.AccessControl.DirectorySecurity RecoveryDirectorySecurity()
+    {
+        var security = new System.Security.AccessControl.DirectorySecurity();
+        security.SetSecurityDescriptorSddlForm(
+            "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
+        );
+        return security;
+    }
+
+    private static void RequireRecoveryRootSecurity(string root)
+    {
+        if (!Directory.Exists(root) || File.Exists(root))
+            throw new IOException("Setup recovery storage has an unexpected type.");
+
+        CheckInstallPath(root);
+        var actual = Directory.GetAccessControl(root);
+        if (!actual.AreAccessRulesProtected ||
+            actual.GetOwner(typeof(SecurityIdentifier)).Value != "S-1-5-32-544")
+            throw new IOException("Setup recovery storage permissions are invalid.");
+
+        bool system = false;
+        bool admins = false;
+        var rules = actual.GetAccessRules(true, true, typeof(SecurityIdentifier));
+        foreach (System.Security.AccessControl.AuthorizationRule raw in rules)
+        {
+            var rule = raw as System.Security.AccessControl.FileSystemAccessRule;
+            if (rule == null ||
+                rule.AccessControlType != System.Security.AccessControl.AccessControlType.Allow)
+                throw new IOException("Setup recovery storage permissions are invalid.");
+
+            string sid = rule.IdentityReference.Value;
+            if (sid == "S-1-5-18") system = true;
+            else if (sid == "S-1-5-32-544") admins = true;
+            else throw new IOException("Setup recovery storage grants an unexpected identity.");
+        }
+
+        if (!system || !admins)
+            throw new IOException("Setup recovery storage permissions are incomplete.");
+    }
+
+    private static string EnsureRecoveryRoot()
+    {
+        string root = GetRecoveryRoot();
+        CheckInstallPath(root);
+
+        if (File.Exists(root))
+            throw new IOException("Setup recovery storage is occupied by a file.");
+
+        if (!Directory.Exists(root))
+            Directory.CreateDirectory(root, RecoveryDirectorySecurity());
+
+        RequireRecoveryRootSecurity(root);
+        return root;
+    }
+
+    private static void RefuseUnsafeTemporaryPath(string path)
+    {
+        if (Directory.Exists(path))
+            throw new IOException("Setup temporary path is occupied by a directory.");
+        if (File.Exists(path))
+        {
+            FileAttributes attributes = File.GetAttributes(path);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Setup temporary path is redirected.");
+            using (FileStream probe = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                RequireSingleLink(probe);
+            File.Delete(path);
+        }
+    }
+
+    private static void CopyFileFlushed(string source, string destination, bool replaceDestination)
+    {
+        if (replaceDestination) RefuseUnsafeTemporaryPath(destination);
+        else if (File.Exists(destination) || Directory.Exists(destination))
+            throw new IOException("Setup recovery backup already exists.");
+
+        using (FileStream input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read))
+        using (FileStream output = new FileStream(
+            destination,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            65536,
+            FileOptions.WriteThrough))
+        {
+            input.CopyTo(output);
+            output.Flush(true);
+        }
+    }
+
+    private static RecoveryDocument PrepareFileTransaction(List<InstallFile> files)
+    {
+        if (files == null || files.Count == 0 || files.Count > RecoveryEntryLimit)
+            throw new InvalidDataException("Setup transaction file count is invalid.");
+
+        string root = EnsureRecoveryRoot();
+        string journal = Path.Combine(root, RecoveryJournalName);
+        if (File.Exists(journal) || Directory.Exists(journal))
+            throw new IOException("An earlier Setup transaction still needs recovery.");
+
+        HashSet<string> paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        List<RecoveryEntry> entries = new List<RecoveryEntry>();
+        int number = 0;
+
+        foreach (InstallFile file in files)
+        {
+            string relative = file.RelativePath.Replace('\\', '/');
+            if (!paths.Add(relative))
+                throw new InvalidDataException("Setup transaction contains a duplicate path.");
+
+            // Resolve through the same fixed target mapper used by installation.
+            string target = ResolveInstallTarget(relative);
+            if (!String.Equals(Path.GetFullPath(target), Path.GetFullPath(file.Target), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Setup transaction target changed unexpectedly.");
+            if (Directory.Exists(target))
+                throw new IOException("Setup target is unexpectedly a directory.");
+
+            bool existed = File.Exists(target);
+            if (existed)
+            {
+                CheckInstallPath(target);
+                using (FileStream probe = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    RequireSingleLink(probe);
+            }
+
+            number++;
+            entries.Add(new RecoveryEntry {
+                path = relative,
+                existed = existed,
+                backup = existed ? number.ToString("D4", CultureInfo.InvariantCulture) + ".bak" : "",
+                sha256 = "",
+                size = 0
+            });
+        }
+
+        RecoveryDocument document = new RecoveryDocument {
+            schema = RecoverySchema,
+            state = "preparing",
+            entries = entries.ToArray()
+        };
+        WriteRecoveryDocument(root, document);
+
+        try
+        {
+            foreach (RecoveryEntry entry in document.entries)
+            {
+                if (!entry.existed) continue;
+                string target = ResolveInstallTarget(entry.path);
+                string backup = Path.Combine(root, entry.backup);
+                CopyFileFlushed(target, backup, false);
+                FileInfo info = new FileInfo(backup);
+                entry.size = info.Length;
+                entry.sha256 = Sha256File(backup);
+            }
+
+            document.state = "prepared";
+            WriteRecoveryDocument(root, document);
+            ValidatePreparedRecovery(root, document);
+            return document;
+        }
+        catch
+        {
+            // No product file is mutated before the prepared journal is durable.
+            try { CleanupPreparingRecovery(root); } catch { }
+            throw;
+        }
+    }
+
+    private static void WriteRecoveryDocument(string root, RecoveryDocument document)
+    {
+        RequireRecoveryRootSecurity(root);
+        byte[] bytes = new UTF8Encoding(false, true).GetBytes(Json.Serialize(document));
+        if (bytes.Length < 2 || bytes.Length > RecoveryByteLimit)
+            throw new InvalidDataException("Setup recovery journal is too large.");
+
+        string journal = Path.Combine(root, RecoveryJournalName);
+        string next = Path.Combine(root, RecoveryNextName);
+        RefuseUnsafeTemporaryPath(next);
+
+        using (FileStream stream = new FileStream(
+            next, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+        {
+            stream.Write(bytes, 0, bytes.Length);
+            stream.Flush(true);
+        }
+
+        if (File.Exists(journal)) File.Replace(next, journal, null);
+        else File.Move(next, journal);
+    }
+
+    private static RecoveryDocument ReadRecoveryDocument(string root)
+    {
+        RequireRecoveryRootSecurity(root);
+        string journal = Path.Combine(root, RecoveryJournalName);
+        if (!File.Exists(journal) || Directory.Exists(journal))
+            throw new FileNotFoundException("Setup recovery journal is missing.", journal);
+
+        CheckInstallPath(journal);
+        using (FileStream probe = new FileStream(journal, FileMode.Open, FileAccess.Read, FileShare.Read))
+            RequireSingleLink(probe);
+
+        FileInfo info = new FileInfo(journal);
+        if (info.Length < 2 || info.Length > RecoveryByteLimit)
+            throw new InvalidDataException("Setup recovery journal size is invalid.");
+
+        Dictionary<string, object> rootFields =
+            Json.Deserialize<Dictionary<string, object>>(File.ReadAllText(journal, new UTF8Encoding(false, true)));
+        if (rootFields == null || rootFields.Count != 3 ||
+            !rootFields.ContainsKey("schema") || !rootFields.ContainsKey("state") || !rootFields.ContainsKey("entries") ||
+            !(rootFields["schema"] is int) || Convert.ToInt32(rootFields["schema"]) != RecoverySchema ||
+            !(rootFields["state"] is string))
+            throw new InvalidDataException("Setup recovery journal schema is invalid.");
+
+        string state = Convert.ToString(rootFields["state"]);
+        if (state != "preparing" && state != "prepared")
+            throw new InvalidDataException("Setup recovery journal state is invalid.");
+
+        object[] rawEntries = rootFields["entries"] as object[];
+        if (rawEntries == null)
+        {
+            ArrayList list = rootFields["entries"] as ArrayList;
+            if (list != null) rawEntries = list.ToArray();
+        }
+        if (rawEntries == null || rawEntries.Length == 0 || rawEntries.Length > RecoveryEntryLimit)
+            throw new InvalidDataException("Setup recovery journal entry count is invalid.");
+
+        HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        List<RecoveryEntry> entries = new List<RecoveryEntry>();
+        foreach (object raw in rawEntries)
+        {
+            Dictionary<string, object> fields = raw as Dictionary<string, object>;
+            if (fields == null || fields.Count != 5 ||
+                !fields.ContainsKey("path") || !fields.ContainsKey("existed") ||
+                !fields.ContainsKey("backup") || !fields.ContainsKey("sha256") || !fields.ContainsKey("size") ||
+                !(fields["path"] is string) || !(fields["existed"] is bool) ||
+                !(fields["backup"] is string) || !(fields["sha256"] is string) ||
+                (!(fields["size"] is int) && !(fields["size"] is long)))
+                throw new InvalidDataException("Setup recovery journal entry is invalid.");
+
+            RecoveryEntry entry = new RecoveryEntry {
+                path = Convert.ToString(fields["path"]).Replace('\\', '/'),
+                existed = Convert.ToBoolean(fields["existed"]),
+                backup = Convert.ToString(fields["backup"]),
+                sha256 = Convert.ToString(fields["sha256"]).ToLowerInvariant(),
+                size = Convert.ToInt64(fields["size"])
+            };
+
+            if (!seen.Add(entry.path))
+                throw new InvalidDataException("Setup recovery journal contains a duplicate path.");
+            ResolveInstallTarget(entry.path);
+
+            if (entry.existed)
+            {
+                if (!Regex.IsMatch(entry.backup, "^[0-9]{4}\\.bak$", RegexOptions.CultureInvariant))
+                    throw new InvalidDataException("Setup recovery backup name is invalid.");
+                if (state == "prepared" && (!IsSha256(entry.sha256) || entry.size < 0))
+                    throw new InvalidDataException("Setup recovery backup metadata is invalid.");
+            }
+            else if (entry.backup.Length != 0 || entry.sha256.Length != 0 || entry.size != 0)
+                throw new InvalidDataException("Setup recovery metadata for a new file is invalid.");
+
+            entries.Add(entry);
+        }
+
+        return new RecoveryDocument { schema = RecoverySchema, state = state, entries = entries.ToArray() };
+    }
+
+    private static void ValidatePreparedRecovery(string root, RecoveryDocument document)
+    {
+        if (document == null || document.state != "prepared")
+            throw new InvalidDataException("Setup recovery transaction is not prepared.");
+
+        HashSet<string> expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        expected.Add(RecoveryJournalName);
+        expected.Add(RecoveryNextName);
+
+        foreach (RecoveryEntry entry in document.entries)
+        {
+            if (!entry.existed) continue;
+            expected.Add(entry.backup);
+            string backup = Path.Combine(root, entry.backup);
+            if (!File.Exists(backup) || Directory.Exists(backup))
+                throw new InvalidDataException("Setup recovery backup is missing.");
+            CheckInstallPath(backup);
+            using (FileStream probe = new FileStream(backup, FileMode.Open, FileAccess.Read, FileShare.Read))
+                RequireSingleLink(probe);
+            FileInfo info = new FileInfo(backup);
+            if (info.Length != entry.size ||
+                !String.Equals(Sha256File(backup), entry.sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Setup recovery backup verification failed.");
+        }
+
+        foreach (string item in Directory.GetFileSystemEntries(root))
+        {
+            string name = Path.GetFileName(item);
+            if (!expected.Contains(name))
+                throw new IOException("Setup recovery storage contains unexpected evidence.");
+            if (Directory.Exists(item))
+                throw new IOException("Setup recovery storage contains an unexpected directory.");
+        }
+    }
+
+    private static bool RecoverInterruptedFileTransaction()
+    {
+        string root = GetRecoveryRoot();
+        if (!Directory.Exists(root))
+        {
+            if (File.Exists(root))
+                throw new IOException("Setup recovery storage is occupied by a file.");
+            return false;
+        }
+
+        RequireRecoveryRootSecurity(root);
+        string journal = Path.Combine(root, RecoveryJournalName);
+        string next = Path.Combine(root, RecoveryNextName);
+
+        if (!File.Exists(journal))
+        {
+            // A preparing transaction cannot have changed product files. Only
+            // remove our fixed preparation artifacts; unexpected evidence fails closed.
+            CleanupPreparingRecovery(root);
+            return true;
+        }
+
+        RecoveryDocument document = ReadRecoveryDocument(root);
+        if (document.state == "preparing")
+        {
+            CleanupPreparingRecovery(root);
+            return true;
+        }
+
+        ValidatePreparedRecovery(root, document);
+
+        // Validate every backup before modifying any target.
+        foreach (RecoveryEntry entry in document.entries)
+        {
+            if (!entry.existed) continue;
+            string backup = Path.Combine(root, entry.backup);
+            FileInfo info = new FileInfo(backup);
+            if (info.Length != entry.size ||
+                !String.Equals(Sha256File(backup), entry.sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Setup recovery backup verification failed.");
+        }
+
+        foreach (RecoveryEntry entry in document.entries)
+        {
+            string target = ResolveInstallTarget(entry.path);
+            string setupTemp = target + ".setup.new";
+            if (File.Exists(setupTemp))
+            {
+                CheckInstallPath(setupTemp);
+                if ((File.GetAttributes(setupTemp) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("Setup temporary recovery path is redirected.");
+                File.Delete(setupTemp);
+            }
+            else if (Directory.Exists(setupTemp))
+                throw new IOException("Setup temporary recovery path is a directory.");
+
+            if (entry.existed)
+            {
+                string restoreTemp = target + ".setup.recover";
+                RefuseUnsafeTemporaryPath(restoreTemp);
+                CopyFileFlushed(Path.Combine(root, entry.backup), restoreTemp, true);
+
+                if (Directory.Exists(target))
+                    throw new IOException("Setup recovery target became a directory.");
+                CheckInstallPath(target);
+                if (File.Exists(target)) File.Delete(target);
+                File.Move(restoreTemp, target);
+                ProtectInstalledProgramFile(target);
+            }
+            else
+            {
+                if (Directory.Exists(target))
+                    throw new IOException("Setup recovery target became a directory.");
+                CheckInstallPath(target);
+                if (File.Exists(target))
+                {
+                    if ((File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0)
+                        throw new IOException("Setup recovery target is redirected.");
+                    File.Delete(target);
+                }
+            }
+        }
+
+        foreach (RecoveryEntry entry in document.entries)
+        {
+            string target = ResolveInstallTarget(entry.path);
+            if (entry.existed)
+            {
+                if (!File.Exists(target) ||
+                    !String.Equals(Sha256File(target), entry.sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("Recovered Setup file verification failed.");
+            }
+            else if (File.Exists(target) || Directory.Exists(target))
+                throw new IOException("A file created by the interrupted Setup could not be removed.");
+        }
+
+        CompleteFileTransaction(document);
+        return true;
+    }
+
+    private static void CleanupPreparingRecovery(string root)
+    {
+        RequireRecoveryRootSecurity(root);
+        foreach (string item in Directory.GetFileSystemEntries(root))
+        {
+            string name = Path.GetFileName(item);
+            if (name != RecoveryJournalName && name != RecoveryNextName &&
+                !Regex.IsMatch(name, "^[0-9]{4}\\.bak$", RegexOptions.CultureInvariant))
+                throw new IOException("Setup recovery storage contains unexpected evidence.");
+            if (Directory.Exists(item))
+                throw new IOException("Setup recovery storage contains an unexpected directory.");
+        }
+
+        foreach (string item in Directory.GetFiles(root))
+        {
+            CheckInstallPath(item);
+            if ((File.GetAttributes(item) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Setup recovery evidence is redirected.");
+            File.Delete(item);
+        }
+        Directory.Delete(root, false);
+    }
+
+    private static void CompleteFileTransaction(RecoveryDocument document)
+    {
+        string root = GetRecoveryRoot();
+        if (document == null || !Directory.Exists(root))
+            throw new IOException("Setup recovery transaction disappeared.");
+
+        RecoveryDocument current = ReadRecoveryDocument(root);
+        if (current.state != "prepared" || current.entries.Length != document.entries.Length)
+            throw new InvalidDataException("Setup recovery transaction changed unexpectedly.");
+
+        ValidatePreparedRecovery(root, current);
+        foreach (RecoveryEntry entry in current.entries)
+        {
+            if (entry.existed) File.Delete(Path.Combine(root, entry.backup));
+        }
+
+        string next = Path.Combine(root, RecoveryNextName);
+        if (File.Exists(next)) File.Delete(next);
+        File.Delete(Path.Combine(root, RecoveryJournalName));
+        Directory.Delete(root, false);
     }
 
     private static void RegisterRepairTask()
@@ -1184,4 +1672,6 @@ internal static class PublicSetupHost
     private sealed class PackageFile { public string Path; public string Sha256; public long Size; }
     private sealed class InstallFile { public string Source; public string Target; public string RelativePath; public string Sha256; }
     private sealed class BackupEntry { public string Target; public string Backup; public bool Existed; }
+    private sealed class RecoveryDocument { public int schema; public string state; public RecoveryEntry[] entries; }
+    private sealed class RecoveryEntry { public string path; public bool existed; public string backup; public string sha256; public long size; }
 }
