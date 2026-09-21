@@ -744,7 +744,7 @@ internal static class PublicSetupHost
             throw new InvalidDataException("Setup recovery journal schema is invalid.");
 
         string state = Convert.ToString(rootFields["state"]);
-        if (state != "preparing" && state != "prepared" && state != "committed")
+        if (state != "preparing" && state != "prepared" && state != "committed" && state != "rolledBack")
             throw new InvalidDataException("Setup recovery journal state is invalid.");
 
         object[] rawEntries = rootFields["entries"] as object[];
@@ -790,7 +790,7 @@ internal static class PublicSetupHost
             {
                 if (!Regex.IsMatch(entry.backup, "^[0-9]{4}\\.bak$", RegexOptions.CultureInvariant))
                     throw new InvalidDataException("Setup recovery backup name is invalid.");
-                if ((state == "prepared" || state == "committed") && (!IsSha256(entry.sha256) || entry.size < 0))
+                if ((state == "prepared" || state == "committed" || state == "rolledBack") && (!IsSha256(entry.sha256) || entry.size < 0))
                     throw new InvalidDataException("Setup recovery backup metadata is invalid.");
             }
             else if (entry.backup.Length != 0 || entry.sha256.Length != 0 || entry.size != 0)
@@ -877,6 +877,11 @@ internal static class PublicSetupHost
             CleanupCommittedRecovery(root, document);
             return true;
         }
+        if (document.state == "rolledBack")
+        {
+            CleanupRolledBackRecovery(root, document);
+            return true;
+        }
 
         ValidatePreparedRecovery(root, document);
 
@@ -949,7 +954,7 @@ internal static class PublicSetupHost
                 throw new IOException("A file created by the interrupted Setup could not be removed.");
         }
 
-        CompleteFileTransaction(document);
+        CompleteRolledBackFileTransaction(document);
         return true;
     }
 
@@ -973,6 +978,88 @@ internal static class PublicSetupHost
                 throw new IOException("Setup recovery evidence is redirected.");
             File.Delete(item);
         }
+        Directory.Delete(root, false);
+    }
+
+    private static void CompleteRolledBackFileTransaction(RecoveryDocument document)
+    {
+        string root = GetRecoveryRoot();
+        if (document == null || !Directory.Exists(root))
+            throw new IOException("Setup recovery transaction disappeared.");
+
+        RecoveryDocument current = ReadRecoveryDocument(root);
+        if (current.state != "prepared" || current.entries.Length != document.entries.Length)
+            throw new InvalidDataException("Setup recovery transaction changed unexpectedly.");
+
+        ValidatePreparedRecovery(root, current);
+        ValidateRolledBackTargets(current);
+
+        // Make the restored old file set durable before deleting any backup.
+        // A kill during cleanup can therefore resume without depending on a
+        // backup that a previous cleanup attempt already removed.
+        current.state = "rolledBack";
+        WriteRecoveryDocument(root, current);
+        CleanupRolledBackRecovery(root, current);
+    }
+
+    private static void ValidateRolledBackTargets(RecoveryDocument document)
+    {
+        foreach (RecoveryEntry entry in document.entries)
+        {
+            string target = ResolveInstallTarget(entry.path);
+            if (entry.existed)
+            {
+                if (!File.Exists(target) || Directory.Exists(target) ||
+                    !String.Equals(Sha256File(target), entry.sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("Rolled-back Setup file verification failed.");
+            }
+            else if (File.Exists(target) || Directory.Exists(target))
+                throw new IOException("A candidate-only file remains after Setup rollback.");
+        }
+    }
+
+    private static void CleanupRolledBackRecovery(string root, RecoveryDocument document)
+    {
+        if (document == null || document.state != "rolledBack")
+            throw new InvalidDataException("Setup recovery transaction is not rolled back.");
+
+        RequireRecoveryRootSecurity(root);
+        ValidateRolledBackTargets(document);
+
+        HashSet<string> expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        expected.Add(RecoveryJournalName);
+        expected.Add(RecoveryNextName);
+        foreach (RecoveryEntry entry in document.entries)
+            if (entry.existed) expected.Add(entry.backup);
+
+        foreach (string item in Directory.GetFileSystemEntries(root))
+        {
+            string name = Path.GetFileName(item);
+            if (!expected.Contains(name) || Directory.Exists(item))
+                throw new IOException("Rolled-back Setup recovery storage contains unexpected evidence.");
+        }
+
+        foreach (RecoveryEntry entry in document.entries)
+        {
+            if (!entry.existed) continue;
+            string backup = Path.Combine(root, entry.backup);
+            if (!File.Exists(backup)) continue;
+            CheckInstallPath(backup);
+            if ((File.GetAttributes(backup) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Rolled-back Setup backup is redirected.");
+            File.Delete(backup);
+        }
+
+        string next = Path.Combine(root, RecoveryNextName);
+        if (File.Exists(next))
+        {
+            CheckInstallPath(next);
+            if ((File.GetAttributes(next) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Rolled-back Setup journal temporary file is redirected.");
+            File.Delete(next);
+        }
+
+        File.Delete(Path.Combine(root, RecoveryJournalName));
         Directory.Delete(root, false);
     }
 
