@@ -496,7 +496,7 @@ internal static class PublicSetupHost
                     throw new IOException("Installed file verification failed: " + file.RelativePath);
             }
 
-            CompleteFileTransaction(transaction);
+            CompleteFileTransaction(transaction, afterReplace);
             transaction = null;
         }
         catch
@@ -874,12 +874,12 @@ internal static class PublicSetupHost
         }
         if (document.state == "committed")
         {
-            CleanupCommittedRecovery(root, document);
+            CleanupCommittedRecovery(root, document, afterRestore);
             return true;
         }
         if (document.state == "rolledBack")
         {
-            CleanupRolledBackRecovery(root, document);
+            CleanupRolledBackRecovery(root, document, afterRestore);
             return true;
         }
 
@@ -954,7 +954,7 @@ internal static class PublicSetupHost
                 throw new IOException("A file created by the interrupted Setup could not be removed.");
         }
 
-        CompleteRolledBackFileTransaction(document);
+        CompleteRolledBackFileTransaction(document, afterRestore);
         return true;
     }
 
@@ -981,7 +981,7 @@ internal static class PublicSetupHost
         Directory.Delete(root, false);
     }
 
-    private static void CompleteRolledBackFileTransaction(RecoveryDocument document)
+    private static void CompleteRolledBackFileTransaction(RecoveryDocument document, Action<int> progress)
     {
         string root = GetRecoveryRoot();
         if (document == null || !Directory.Exists(root))
@@ -999,7 +999,8 @@ internal static class PublicSetupHost
         // backup that a previous cleanup attempt already removed.
         current.state = "rolledBack";
         WriteRecoveryDocument(root, current);
-        CleanupRolledBackRecovery(root, current);
+        if (progress != null) progress(-1);
+        CleanupRolledBackRecovery(root, current, progress);
     }
 
     private static void ValidateRolledBackTargets(RecoveryDocument document)
@@ -1018,7 +1019,7 @@ internal static class PublicSetupHost
         }
     }
 
-    private static void CleanupRolledBackRecovery(string root, RecoveryDocument document)
+    private static void CleanupRolledBackRecovery(string root, RecoveryDocument document, Action<int> progress)
     {
         if (document == null || document.state != "rolledBack")
             throw new InvalidDataException("Setup recovery transaction is not rolled back.");
@@ -1039,6 +1040,7 @@ internal static class PublicSetupHost
                 throw new IOException("Rolled-back Setup recovery storage contains unexpected evidence.");
         }
 
+        int deletedBackups = 0;
         foreach (RecoveryEntry entry in document.entries)
         {
             if (!entry.existed) continue;
@@ -1048,6 +1050,8 @@ internal static class PublicSetupHost
             if ((File.GetAttributes(backup) & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("Rolled-back Setup backup is redirected.");
             File.Delete(backup);
+            deletedBackups++;
+            if (progress != null) progress(-1000 - deletedBackups);
         }
 
         string next = Path.Combine(root, RecoveryNextName);
@@ -1063,7 +1067,7 @@ internal static class PublicSetupHost
         Directory.Delete(root, false);
     }
 
-    private static void CompleteFileTransaction(RecoveryDocument document)
+    private static void CompleteFileTransaction(RecoveryDocument document, Action<int> progress)
     {
         string root = GetRecoveryRoot();
         if (document == null || !Directory.Exists(root))
@@ -1087,10 +1091,11 @@ internal static class PublicSetupHost
         // finish cleanup instead of requiring a backup that was already removed.
         current.state = "committed";
         WriteRecoveryDocument(root, current);
-        CleanupCommittedRecovery(root, current);
+        if (progress != null) progress(-2);
+        CleanupCommittedRecovery(root, current, progress);
     }
 
-    private static void CleanupCommittedRecovery(string root, RecoveryDocument document)
+    private static void CleanupCommittedRecovery(string root, RecoveryDocument document, Action<int> progress)
     {
         if (document == null || document.state != "committed")
             throw new InvalidDataException("Setup recovery transaction is not committed.");
@@ -1116,6 +1121,7 @@ internal static class PublicSetupHost
                 throw new IOException("Committed Setup recovery storage contains unexpected evidence.");
         }
 
+        int deletedBackups = 0;
         foreach (RecoveryEntry entry in document.entries)
         {
             if (!entry.existed) continue;
@@ -1126,6 +1132,8 @@ internal static class PublicSetupHost
                 if ((File.GetAttributes(backup) & FileAttributes.ReparsePoint) != 0)
                     throw new IOException("Committed Setup backup is redirected.");
                 File.Delete(backup);
+                deletedBackups++;
+                if (progress != null) progress(-2000 - deletedBackups);
             }
         }
 
