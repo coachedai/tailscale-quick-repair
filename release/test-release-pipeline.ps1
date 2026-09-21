@@ -18,11 +18,12 @@ try{
         'Ordinary-user protected file and task gates',
         'Protected migration and evidence-preserving refusal gates',
         'Upgrade genuine released 5.2.1 files and tasks',
+        'Recover files after killed Setup and killed recovery',
         'Verify the published 5.2.1 protected-update handoff'
     )){
         Check ((Count $name) -eq 1) ("Required release gate remains: "+$name)
     }
-    Check ((Count 'TQR_RELEASE_VALIDATION: ${{ github.run_id }}') -eq 5) 'Every destructive release-only test receives the stamped run ID'
+    Check ((Count 'TQR_RELEASE_VALIDATION: ${{ github.run_id }}') -eq 6) 'Every destructive release-only test receives the stamped run ID'
     Check ($workflow.Contains('name: quick-repair-${{ needs.validate.outputs.safe_version }}') -and
            $workflow.Contains('name: runtime-evidence-${{ needs.validate.outputs.safe_version }}')) 'Compatibility consumes exact native-tested package and evidence artifacts'
     Check ($workflow.Contains('needs: [validate, release_compatibility]') -and
@@ -36,7 +37,9 @@ try{
         'release\test-protected-migration.ps1',
         'release\test-released-upgrade.ps1',
         'release\test-protected-update-handoff.ps1',
-        'release\protected-handoff-child.ps1'
+        'release\protected-handoff-child.ps1',
+        'release\test-interrupted-setup-recovery.ps1',
+        'release\interrupted-setup-child.ps1'
     )){
         $scriptText=Get-Content -LiteralPath (Join-Path $repo $path) -Raw -Encoding UTF8
         Check ($scriptText.Contains('$releaseValidation=') -and $scriptText.Contains('$env:TQR_RELEASE_VALIDATION -ceq $env:GITHUB_RUN_ID')) ((Split-Path $path -Leaf)+' retains the stamped release guard')
