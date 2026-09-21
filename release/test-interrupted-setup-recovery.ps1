@@ -137,6 +137,14 @@ try{
     }
     Check $allRestored 'Third process restores every published baseline file hash and removes files that did not previously exist'
 
+    # Preserve the recovered installation intact, but move it out of the product
+    # paths so the following handoff test starts from a genuinely empty install.
+    $appArchive=Join-Path (Split-Path -Parent $app) ('TqrInterruptedEvidence-'+[Guid]::NewGuid().ToString('N'))
+    $programArchive=Join-Path (Split-Path -Parent $program) ('TqrInterruptedEvidence-'+[Guid]::NewGuid().ToString('N'))
+    [IO.Directory]::Move($app,$appArchive)
+    [IO.Directory]::Move($program,$programArchive)
+    Check (-not(Test-Path $app) -and -not(Test-Path $program)) 'Recovered installation is preserved by same-volume rename before the next independent compatibility test'
+
     $passed=$true
 }catch{
     $chain=New-Object 'Collections.Generic.List[object]'
