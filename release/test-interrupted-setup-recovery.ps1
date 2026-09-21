@@ -93,7 +93,7 @@ try{
     $candidate=Join-Path $lab 'candidate';$candidateManifest=Expand-Verified $setupZip[0].FullName $candidate
 
     [void](Run-Child 'InstallLegacy' $legacy)
-    Check (Test-Path $app -and Test-Path $program) 'Published baseline files are installed by their compiled Setup core'
+    Check ((Test-Path -LiteralPath $app -PathType Container) -and (Test-Path -LiteralPath $program -PathType Container)) 'Published baseline files are installed by their compiled Setup core'
 
     $candidateType=[Reflection.Assembly]::LoadFile((Join-Path $candidate 'app\TailscaleQuickRepairSetup.exe')).GetType('PublicSetupHost')
     $resolve=$candidateType.GetMethod('ResolveInstallTarget',[Reflection.BindingFlags]'NonPublic,Static')
