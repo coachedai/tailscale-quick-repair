@@ -660,7 +660,8 @@ internal static class PublicSetupHost
                 existed = existed,
                 backup = existed ? number.ToString("D4", CultureInfo.InvariantCulture) + ".bak" : "",
                 sha256 = "",
-                size = 0
+                size = 0,
+                newSha256 = file.Sha256.ToLowerInvariant()
             });
         }
 
@@ -743,7 +744,7 @@ internal static class PublicSetupHost
             throw new InvalidDataException("Setup recovery journal schema is invalid.");
 
         string state = Convert.ToString(rootFields["state"]);
-        if (state != "preparing" && state != "prepared")
+        if (state != "preparing" && state != "prepared" && state != "committed")
             throw new InvalidDataException("Setup recovery journal state is invalid.");
 
         object[] rawEntries = rootFields["entries"] as object[];
@@ -760,11 +761,13 @@ internal static class PublicSetupHost
         foreach (object raw in rawEntries)
         {
             Dictionary<string, object> fields = raw as Dictionary<string, object>;
-            if (fields == null || fields.Count != 5 ||
+            if (fields == null || fields.Count != 6 ||
                 !fields.ContainsKey("path") || !fields.ContainsKey("existed") ||
                 !fields.ContainsKey("backup") || !fields.ContainsKey("sha256") || !fields.ContainsKey("size") ||
+                !fields.ContainsKey("newSha256") ||
                 !(fields["path"] is string) || !(fields["existed"] is bool) ||
                 !(fields["backup"] is string) || !(fields["sha256"] is string) ||
+                !(fields["newSha256"] is string) ||
                 (!(fields["size"] is int) && !(fields["size"] is long)))
                 throw new InvalidDataException("Setup recovery journal entry is invalid.");
 
@@ -773,18 +776,21 @@ internal static class PublicSetupHost
                 existed = Convert.ToBoolean(fields["existed"]),
                 backup = Convert.ToString(fields["backup"]),
                 sha256 = Convert.ToString(fields["sha256"]).ToLowerInvariant(),
-                size = Convert.ToInt64(fields["size"])
+                size = Convert.ToInt64(fields["size"]),
+                newSha256 = Convert.ToString(fields["newSha256"]).ToLowerInvariant()
             };
 
             if (!seen.Add(entry.path))
                 throw new InvalidDataException("Setup recovery journal contains a duplicate path.");
             ResolveInstallTarget(entry.path);
+            if (!IsSha256(entry.newSha256))
+                throw new InvalidDataException("Setup recovery candidate digest is invalid.");
 
             if (entry.existed)
             {
                 if (!Regex.IsMatch(entry.backup, "^[0-9]{4}\\.bak$", RegexOptions.CultureInvariant))
                     throw new InvalidDataException("Setup recovery backup name is invalid.");
-                if (state == "prepared" && (!IsSha256(entry.sha256) || entry.size < 0))
+                if ((state == "prepared" || state == "committed") && (!IsSha256(entry.sha256) || entry.size < 0))
                     throw new InvalidDataException("Setup recovery backup metadata is invalid.");
             }
             else if (entry.backup.Length != 0 || entry.sha256.Length != 0 || entry.size != 0)
@@ -864,6 +870,11 @@ internal static class PublicSetupHost
         if (document.state == "preparing")
         {
             CleanupPreparingRecovery(root);
+            return true;
+        }
+        if (document.state == "committed")
+        {
+            CleanupCommittedRecovery(root, document);
             return true;
         }
 
@@ -978,11 +989,68 @@ internal static class PublicSetupHost
         ValidatePreparedRecovery(root, current);
         foreach (RecoveryEntry entry in current.entries)
         {
-            if (entry.existed) File.Delete(Path.Combine(root, entry.backup));
+            string target = ResolveInstallTarget(entry.path);
+            if (!File.Exists(target) ||
+                !String.Equals(Sha256File(target), entry.newSha256, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Installed file changed before transaction commit.");
+        }
+
+        // Commit the verified new file set before deleting any backup. If Setup
+        // dies during cleanup, the next run can validate the new hashes and
+        // finish cleanup instead of requiring a backup that was already removed.
+        current.state = "committed";
+        WriteRecoveryDocument(root, current);
+        CleanupCommittedRecovery(root, current);
+    }
+
+    private static void CleanupCommittedRecovery(string root, RecoveryDocument document)
+    {
+        if (document == null || document.state != "committed")
+            throw new InvalidDataException("Setup recovery transaction is not committed.");
+
+        RequireRecoveryRootSecurity(root);
+        HashSet<string> expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        expected.Add(RecoveryJournalName);
+        expected.Add(RecoveryNextName);
+
+        foreach (RecoveryEntry entry in document.entries)
+        {
+            if (entry.existed) expected.Add(entry.backup);
+            string target = ResolveInstallTarget(entry.path);
+            if (!File.Exists(target) ||
+                !String.Equals(Sha256File(target), entry.newSha256, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Committed Setup file verification failed.");
+        }
+
+        foreach (string item in Directory.GetFileSystemEntries(root))
+        {
+            string name = Path.GetFileName(item);
+            if (!expected.Contains(name) || Directory.Exists(item))
+                throw new IOException("Committed Setup recovery storage contains unexpected evidence.");
+        }
+
+        foreach (RecoveryEntry entry in document.entries)
+        {
+            if (!entry.existed) continue;
+            string backup = Path.Combine(root, entry.backup);
+            if (File.Exists(backup))
+            {
+                CheckInstallPath(backup);
+                if ((File.GetAttributes(backup) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("Committed Setup backup is redirected.");
+                File.Delete(backup);
+            }
         }
 
         string next = Path.Combine(root, RecoveryNextName);
-        if (File.Exists(next)) File.Delete(next);
+        if (File.Exists(next))
+        {
+            CheckInstallPath(next);
+            if ((File.GetAttributes(next) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Committed Setup journal temporary file is redirected.");
+            File.Delete(next);
+        }
+
         File.Delete(Path.Combine(root, RecoveryJournalName));
         Directory.Delete(root, false);
     }
@@ -1687,5 +1755,5 @@ internal static class PublicSetupHost
     private sealed class InstallFile { public string Source; public string Target; public string RelativePath; public string Sha256; }
     private sealed class BackupEntry { public string Target; public string Backup; public bool Existed; }
     private sealed class RecoveryDocument { public int schema; public string state; public RecoveryEntry[] entries; }
-    private sealed class RecoveryEntry { public string path; public bool existed; public string backup; public string sha256; public long size; }
+    private sealed class RecoveryEntry { public string path; public bool existed; public string backup; public string sha256; public long size; public string newSha256; }
 }
