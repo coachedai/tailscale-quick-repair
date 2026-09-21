@@ -73,8 +73,12 @@ try{
     $resultFn=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Show-UpdateResult'},$true))
     Check ($fn.Count -eq 1 -and $ackFn.Count -eq 1 -and $resultFn.Count -eq 1) 'Bridged UI contains one handoff, restart acknowledgement and update-result function'
     $source=$fn[0].Extent.Text
-    Check ($source.Contains('$psi.FileName = $SetupHostPath') -and $source.Contains("'--upgrade --requester-sid \"' + $requesterSid + '\"'") -and
-        $source.Contains("$psi.Verb = 'runas'") -and $source.Contains('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value')) 'Handoff launches only the installed Setup host in elevated upgrade mode for the initiating Windows account'
+    Check ($source.Contains('$psi.FileName = $SetupHostPath') -and
+        $source.Contains('$psi.Arguments = ') -and
+        $source.Contains('--upgrade --requester-sid "') -and
+        $source.Contains('$requesterSid') -and
+        $source.Contains("$psi.Verb = 'runas'") -and
+        $source.Contains('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value')) 'Handoff launches only the installed Setup host in elevated upgrade mode for the initiating Windows account'
     Check ($source.Contains('$ProtectedUpdateMarkerPath') -and -not $source.Contains('Repair-Backend.ps1')) 'Handoff uses the version marker and never runs a protected script directly'
     Check ($resultFn[0].Extent.Text.Contains('Update downloaded · finishing setup') -and
         $resultFn[0].Extent.Text.Contains('Windows approval is needed to finish the protected part of this update.')) 'Bridge success remains provisional until protected Setup completes'
