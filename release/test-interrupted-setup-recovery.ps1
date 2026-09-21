@@ -113,37 +113,76 @@ try{
     }
     Check ($changedIndex -gt 0) 'Candidate contains at least one real payload change from published 5.2.1'
 
-    $applyReady=Join-Path $lab 'apply.ready'
+    function Test-BaselineRestored {
+        foreach($entry in $candidateManifest.files){
+            $before=$baseline[[string]$entry.path]
+            if($before.existed){
+                if(-not(Test-Path -LiteralPath $before.target -PathType Leaf) -or (Hash $before.target) -cne $before.sha){return $false}
+            }elseif(Test-Path -LiteralPath $before.target){return $false}
+        }
+        return $true
+    }
+    function Test-CandidateInstalled {
+        foreach($entry in $candidateManifest.files){
+            $target=[string]$resolve.Invoke($null,@([string]$entry.path))
+            if(-not(Test-Path -LiteralPath $target -PathType Leaf) -or (Hash $target) -cne ([string]$entry.sha256).ToLowerInvariant()){return $false}
+        }
+        return $true
+    }
+
+    # Scenario 1: kill Setup after a real changed-file replacement, then kill
+    # rollback itself after one restored entry. A third process must restore all.
+    $applyReady=Join-Path $lab 'apply-first.ready'
     [void](Run-Child 'ApplyPause' $candidate $changedIndex $applyReady -ExpectKill)
-    Check (Test-Path (Join-Path $recovery 'transaction.json') -PathType Leaf) 'Killed Setup leaves its protected persistent recovery journal'
-    Check ((Test-Path $changedTarget -PathType Leaf) -and (Hash $changedTarget) -ceq $changedSha) 'Killed Setup occurred after the selected changed file was actually replaced'
+    Check (Test-Path -LiteralPath (Join-Path $recovery 'transaction.json') -PathType Leaf) 'Killed Setup leaves its protected persistent recovery journal'
+    Check ((Test-Path -LiteralPath $changedTarget -PathType Leaf) -and (Hash $changedTarget) -ceq $changedSha) 'Killed Setup occurred after the selected changed file was actually replaced'
 
     $journal=Get-Content (Join-Path $recovery 'transaction.json') -Raw|ConvertFrom-Json
     Check ($journal.schema -eq 1 -and $journal.state -ceq 'prepared' -and @($journal.entries).Count -eq @($candidateManifest.files).Count) 'Recovery journal covers the complete candidate file set before mutation'
 
-    $recoverReady=Join-Path $lab 'recover.ready'
+    $recoverReady=Join-Path $lab 'recover-first.ready'
     [void](Run-Child 'RecoveryPause' $candidate 1 $recoverReady -ExpectKill)
-    Check (Test-Path (Join-Path $recovery 'transaction.json') -PathType Leaf) 'Killing recovery preserves the same transaction for another attempt'
-
+    Check (Test-Path -LiteralPath (Join-Path $recovery 'transaction.json') -PathType Leaf) 'Killing recovery preserves the same prepared transaction for another attempt'
     [void](Run-Child 'Recover' $candidate)
-    Check (-not(Test-Path $recovery)) 'Successful retry removes only the completed recovery transaction'
+    Check (-not(Test-Path -LiteralPath $recovery)) 'Retry after killed restore removes only the completed recovery transaction'
+    Check (Test-BaselineRestored) 'Third process restores every published baseline file hash and removes candidate-only files'
 
-    $allRestored=$true
-    foreach($f in $candidateManifest.files){
-        $before=$baseline[[string]$f.path]
-        if($before.existed){
-            if(-not(Test-Path $before.target -PathType Leaf) -or (Hash $before.target) -cne $before.sha){$allRestored=$false}
-        }elseif(Test-Path $before.target){$allRestored=$false}
-    }
-    Check $allRestored 'Third process restores every published baseline file hash and removes files that did not previously exist'
+    # Scenario 2: kill again, but this time allow all old files to restore and
+    # kill after the rolledBack journal is durable and one backup is deleted.
+    $applyReady2=Join-Path $lab 'apply-rollback-cleanup.ready'
+    [void](Run-Child 'ApplyPause' $candidate $changedIndex $applyReady2 -ExpectKill)
+    $rollbackReady=Join-Path $lab 'rollback-cleanup.ready'
+    [void](Run-Child 'RecoveryPause' $candidate -1001 $rollbackReady -ExpectKill)
+    $rolledJournal=Get-Content (Join-Path $recovery 'transaction.json') -Raw|ConvertFrom-Json
+    Check ($rolledJournal.state -ceq 'rolledBack') 'Rollback cleanup kill occurs only after the restored old file set is durably marked rolledBack'
+    Check (Test-BaselineRestored) 'All baseline file hashes are already restored before rollback backup cleanup'
+    $expectedBackups=@($rolledJournal.entries|Where-Object {$_.existed}).Count
+    $remainingBackups=@(Get-ChildItem -LiteralPath $recovery -Filter '*.bak' -File).Count
+    Check ($expectedBackups -gt 0 -and $remainingBackups -lt $expectedBackups) 'Rollback cleanup was killed after at least one verified backup had already been removed'
+    [void](Run-Child 'Recover' $candidate)
+    Check (-not(Test-Path -LiteralPath $recovery) -and (Test-BaselineRestored)) 'Next process finishes rolled-back cleanup without requiring an already deleted backup'
 
-    # Preserve the recovered installation intact, but move it out of the product
-    # paths so the following handoff test starts from a genuinely empty install.
+    # Scenario 3: complete the candidate payload, durably mark it committed,
+    # delete one old backup, then kill Setup. Recovery must keep the verified new
+    # payload and only finish its interrupted cleanup.
+    $commitReady=Join-Path $lab 'commit-cleanup.ready'
+    [void](Run-Child 'ApplyPause' $candidate -2001 $commitReady -ExpectKill)
+    $committedJournal=Get-Content (Join-Path $recovery 'transaction.json') -Raw|ConvertFrom-Json
+    Check ($committedJournal.state -ceq 'committed') 'Commit cleanup kill occurs only after the entire new payload is durably marked committed'
+    Check (Test-CandidateInstalled) 'Every candidate manifest file has its expected SHA-256 before committed cleanup resumes'
+    $expectedCommittedBackups=@($committedJournal.entries|Where-Object {$_.existed}).Count
+    $remainingCommittedBackups=@(Get-ChildItem -LiteralPath $recovery -Filter '*.bak' -File).Count
+    Check ($expectedCommittedBackups -gt 0 -and $remainingCommittedBackups -lt $expectedCommittedBackups) 'Committed cleanup was killed after at least one old backup had already been removed'
+    [void](Run-Child 'Recover' $candidate)
+    Check (-not(Test-Path -LiteralPath $recovery) -and (Test-CandidateInstalled)) 'Next process keeps the committed candidate payload and finishes cleanup without a deleted backup'
+
+    # Preserve the final candidate installation intact, but move it out of the
+    # product paths so the following handoff test starts from an empty install.
     $appArchive=Join-Path (Split-Path -Parent $app) ('TqrInterruptedEvidence-'+[Guid]::NewGuid().ToString('N'))
     $programArchive=Join-Path (Split-Path -Parent $program) ('TqrInterruptedEvidence-'+[Guid]::NewGuid().ToString('N'))
     [IO.Directory]::Move($app,$appArchive)
     [IO.Directory]::Move($program,$programArchive)
-    Check (-not(Test-Path $app) -and -not(Test-Path $program)) 'Recovered installation is preserved by same-volume rename before the next independent compatibility test'
+    Check ((-not(Test-Path -LiteralPath $app)) -and (-not(Test-Path -LiteralPath $program))) 'Recovered/committed fixture is preserved by same-volume rename before the next independent compatibility test'
 
     $passed=$true
 }catch{
@@ -154,7 +193,7 @@ try{
     if($child){try{if(-not $child.HasExited){$child.Kill();[void]$child.WaitForExit(5000)}}catch{$cleanup=$false};$child.Dispose()}
     $cases.Add([pscustomobject]@{name='Interrupted Setup lab kills only its explicitly owned child processes; failed file evidence remains on the disposable runner';passed=$cleanup})
     [pscustomobject]@{passed=($passed -and $cleanup);source=$env:GITHUB_SHA;fromVersion='3.0.0-phase5.2.1';cases=@($cases.ToArray());failure=$failure;
-      scope='Persistent payload-file transaction recovery after killed Setup and killed recovery processes';
+      scope='Persistent payload-file transaction recovery after killed apply, killed rollback, rollback-cleanup and committed-cleanup processes';
       limits=@('This does not certify task, startup-registry or shortcut rollback after a kill','This does not simulate whole-PC power loss or storage-controller write loss','No live tailnet or user machine is touched','Recovery journal contains only fixed package-relative paths and file digest metadata')}|
       ConvertTo-Json -Depth 9|Set-Content (Join-Path $evidence 'interrupted-setup-results.json') -Encoding UTF8
 }
