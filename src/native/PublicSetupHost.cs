@@ -473,8 +473,10 @@ internal static class PublicSetupHost
                 if (!String.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
 
                 string next = file.Target + ".setup.new";
-                RefuseUnsafeTemporaryPath(next);
-                CopyFileFlushed(file.Source, next, true);
+                if (File.Exists(next) || Directory.Exists(next))
+                    throw new IOException("Setup temporary path already exists. Existing evidence was preserved.");
+                CheckInstallPath(next);
+                CopyFileFlushed(file.Source, next, false);
 
                 if (Directory.Exists(file.Target))
                     throw new IOException("Setup target unexpectedly became a directory.");
