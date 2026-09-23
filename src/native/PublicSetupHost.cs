@@ -1281,7 +1281,11 @@ internal static class PublicSetupHost
         // No client process-exit auditing is enabled; resident UI observes that
         // transition, while exited UIs retain the five-minute fallback.
         dynamic task=definition;
-        task.Settings.StartWhenAvailable=true;
+        // Do not replay a missed time fallback. Resume/network/logon have their
+        // own delayed local triggers, and the next PT5M fallback remains enough.
+        // StartWhenAvailable can otherwise create a separate "missed task"
+        // execution in addition to the regular recurrence.
+        task.Settings.StartWhenAvailable=false;
         task.Settings.WakeToRun=false;
         task.Settings.RunOnlyIfNetworkAvailable=false;
         task.Settings.RestartCount=0;
