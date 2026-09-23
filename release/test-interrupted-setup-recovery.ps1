@@ -137,8 +137,28 @@ try{
     Check (Test-Path -LiteralPath (Join-Path $recovery 'transaction.json') -PathType Leaf) 'Killed Setup leaves its protected persistent recovery journal'
     Check ((Test-Path -LiteralPath $changedTarget -PathType Leaf) -and (Hash $changedTarget) -ceq $changedSha) 'Killed Setup occurred after the selected changed file was actually replaced'
 
-    $journal=Get-Content (Join-Path $recovery 'transaction.json') -Raw|ConvertFrom-Json
-    Check ($journal.schema -eq 1 -and $journal.state -ceq 'prepared' -and @($journal.entries).Count -eq @($candidateManifest.files).Count) 'Recovery journal covers the complete candidate file set before mutation'
+    $journalPath=Join-Path $recovery 'transaction.json'
+    $journalRaw=Get-Content -LiteralPath $journalPath -Raw
+    $journal=$journalRaw|ConvertFrom-Json
+    $currentSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    Check ($journal.schema -eq 1 -and $journal.state -ceq 'prepared' -and
+        [string]$journal.userSid -ceq $currentSid -and
+        @($journal.entries).Count -eq @($candidateManifest.files).Count) 'Recovery journal covers the complete candidate file set and initiating Windows account before mutation'
+
+    # The recovery root is machine-wide, but app targets are per-user. A journal
+    # from another Windows account must be refused before any target is touched.
+    $differentSid=if($currentSid -cne 'S-1-5-18'){'S-1-5-18'}else{'S-1-5-32-544'}
+    $ownerField='"userSid":"'+$currentSid+'"'
+    Check ($journalRaw.Contains($ownerField)) 'Prepared recovery journal contains exactly the initiating SID field'
+    $tampered=$journalRaw.Replace($ownerField,('"userSid":"'+$differentSid+'"'))
+    Check ($tampered -cne $journalRaw) 'Cross-user recovery fixture changes only the journal owner value'
+    [IO.File]::WriteAllText($journalPath,$tampered,(New-Object Text.UTF8Encoding($false)))
+    $changedBeforeRefusal=Hash $changedTarget
+    [void](Run-Child 'RecoverRefuse' $candidate)
+    Check ((Test-Path -LiteralPath $journalPath -PathType Leaf) -and
+        (Hash $changedTarget) -ceq $changedBeforeRefusal) 'Another Windows account is refused without changing the candidate file or deleting recovery evidence'
+    [IO.File]::WriteAllText($journalPath,$journalRaw,(New-Object Text.UTF8Encoding($false)))
+    Check ([IO.File]::ReadAllText($journalPath) -ceq $journalRaw) 'Original same-user recovery journal is restored exactly for the remaining kill tests'
 
     $recoverReady=Join-Path $lab 'recover-first.ready'
     [void](Run-Child 'RecoveryPause' $candidate 1 $recoverReady -ExpectKill)
