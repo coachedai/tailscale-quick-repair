@@ -295,6 +295,11 @@ $m.Now=[DateTime]::Parse($Stamp,[Globalization.CultureInfo]::InvariantCulture,[G
         $AutoRepairCheckNowButton.Add_Click($click[0].Arguments[0].ScriptBlock.GetScriptBlock())
         $AutoRepairCheckNowButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
         Assert-Worker ($task.Runs -eq 2) 'Actual packaged WPF check action follows verified monitor routing'
+        $task.Definition.Actions.Action.Arguments='unexpected'
+        $AutoRepairStatusText.Text='Enabled - checking local Tailscale'
+        $AutoRepairCheckNowButton.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+        Assert-Worker ($task.Runs -eq 2 -and $AutoRepairStatusText.Text -eq 'Could not start local check') 'Actual packaged WPF check action reports a refused scheduler launch instead of remaining on checking'
+        $task.Definition.Actions.Action.Arguments=$original
         Assert-Worker (Set-AutoRepairEnabled $false) 'Native preference writer saves explicit opt-out'
         Assert-Worker (-not(Get-AutoRepairEnabled) -and -not(Invoke-AutoRepairMonitorNow)) 'Opt-out prevents the final UI scheduler call'
         [IO.File]::WriteAllText((Join-Path $StateDir 'auto-repair.json'),'{broken')

@@ -187,9 +187,16 @@ public class NotificationCenter {public NotificationSettings State=new Notificat
     $endTimer.Interval=[TimeSpan]::FromMilliseconds(1300);$endTimer.Add_Tick({$frame.Continue=$false;$endTimer.Stop()});$endTimer.Start()
     [Windows.Threading.Dispatcher]::PushFrame($frame)
     Check ($script:dispatches -eq 1 -and $AutoRepairStatusText.Text -eq 'Local check requested') 'Actual final native WPF timer dispatches only the local monitor route'
+    function Invoke-AutoRepairMonitorNow{$script:dispatches++;return $false}
+    $script:autoEventQueue=New-Object Tqr.AutoRepairEventQueue
+    Queue-AutoRepairSmartCheck -Reason 'Synthetic refused local check' -DelaySeconds 10
+    $script:autoEventClock.ElapsedMilliseconds+=10000
+    Invoke-AutoRepairEventTick
+    Check ($script:dispatches -eq 2 -and $AutoRepairStatusText.Text -eq 'Could not start local check') 'Actual final event route reports a refused scheduler launch instead of claiming a request started'
+    $script:autoEventQueue.Cancel();Invoke-AutoRepairEventTick
     JsonWrite (Join-Path $StateDir 'auto-repair.json') @{enabled=$false}
     Invoke-AutoRepairEventTick
-    Check (-not $script:autoRepairTriggerTimer.IsEnabled -and -not $script:autoEventQueue.Pending -and $script:dispatches -eq 1) 'Disabling during a queued follow-up stops the real timer without another dispatch'
+    Check (-not $script:autoRepairTriggerTimer.IsEnabled -and -not $script:autoEventQueue.Pending -and $script:dispatches -eq 2) 'Disabling during a queued follow-up stops the real timer without another dispatch'
     Update-LocalHistoryView
     Check ($HistoryText.Text.Contains('Automatic repair started the Tailscale service') -and $HistoryText.Text.Contains('Automatic local recovery confirmed')) 'Next UI session renders the background actions in the existing History column'
     $originalResult=[IO.File]::ReadAllBytes((Join-Path $StateDir 'auto-repair-state.json'))

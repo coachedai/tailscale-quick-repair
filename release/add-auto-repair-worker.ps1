@@ -188,6 +188,10 @@ function Invoke-AutoRepairEventTick {
                 $AutoRepairStatusText.Text='Local check requested'
                 $AutoRepairStatusText.Foreground=Get-Brush 'Muted'
             }
+            else {
+                $AutoRepairStatusText.Text='Could not start local check'
+                $AutoRepairStatusText.Foreground=Get-Brush 'Amber'
+            }
         }
     } catch { if($script:autoEventQueue){$script:autoEventQueue.Cancel()} }
     finally {
@@ -205,6 +209,22 @@ $text=$text.Replace($historyAnchor,@'
             $script:autoHistoryReconcileUnavailable = -not [Tqr.AutoRepairBackground]::Reconcile($StateDir,$false)
             $view = [Tqr.LocalHistory]::Read($StateDir)
 '@)
+# Manual enable/check actions must not remain on a false 'checking' state when
+# the verified scheduler route refuses or fails to launch the protected task.
+$manualDispatch=@'
+            Initialize-AutoRepairLocalWatch
+            Invoke-AutoRepairMonitorNow
+'@
+$manualDispatchFeedback=@'
+            Initialize-AutoRepairLocalWatch
+            if(-not (Invoke-AutoRepairMonitorNow)){
+                $AutoRepairStatusText.Text='Could not start local check'
+                $AutoRepairStatusText.Foreground=Get-Brush 'Amber'
+            }
+'@
+if(([regex]::Matches($text,[regex]::Escape($manualDispatch))).Count -ne 2){throw 'Expected two manual automatic-repair dispatch actions.'}
+$text=$text.Replace($manualDispatch,$manualDispatchFeedback)
+
 $historyWarning="            if (`$script:historyWriteUnavailable) { `$HistoryText.Text += [Environment]::NewLine + 'The latest event could not be saved.' }"
 if(([regex]::Matches($text,[regex]::Escape($historyWarning))).Count -ne 1){throw 'Expected one History write warning.'}
 $text=$text.Replace($historyWarning,$historyWarning+[Environment]::NewLine+@'
