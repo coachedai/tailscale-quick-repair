@@ -1,9 +1,12 @@
 param(
-    [ValidateSet('InstallLegacy','ApplyPause','RecoveryPause','Recover','RecoverRefuse')][string]$Phase,
+    [ValidateSet('InstallLegacy','LegacyIntegration','ApplyPause','RecoveryPause','Recover','RecoverRefuse','IntegrationPause','IntegrationComplete')][string]$Phase,
     [string]$Package,
     [string]$Work,
     [int]$PauseAfter=0,
     [string]$Ready='',
+    [string]$Peer='integration-replay.invalid',
+    [string]$Startup='true',
+    [long]$VersionCode=0,
     [string]$Report=''
 )
 $ErrorActionPreference='Stop'
@@ -37,6 +40,31 @@ try{
         $manifest=Invoke-Private $type 'ReadPackageManifest' @($Package)
         $files=Invoke-Private $type 'VerifyPackage' @($Package,$manifest)
         [void](Invoke-Private $type 'ApplyFiles' @($files,$Work))
+    }
+    elseif($Phase -eq 'LegacyIntegration'){
+        [void](Invoke-Private $type 'WriteLocalConfig' @('integration-legacy.invalid'))
+        [void](Invoke-Private $type 'RegisterRepairTask')
+        [void](Invoke-Private $type 'RegisterAutoRepairTask')
+        [void](Invoke-Private $type 'ConfigureStartup' @($false))
+        [void](Invoke-Private $type 'CreateStartMenuShortcut')
+    }
+    elseif($Phase -eq 'IntegrationPause'){
+        if($VersionCode -le 0){throw 'Candidate version code is required.'}
+        [void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @($VersionCode))
+        $startupValue=[bool]::Parse($Startup)
+        $callback=[Action[int]]{
+            param([int]$index)
+            if($index -eq $PauseAfter){
+                [IO.File]::WriteAllText($Ready,('integration-'+$index))
+                Start-Sleep -Seconds 90
+            }
+        }
+        [void](Invoke-Private $type 'CompleteInstalledIntegrationCore' @($Peer,$startupValue,$true,$VersionCode,$callback))
+    }
+    elseif($Phase -eq 'IntegrationComplete'){
+        if($VersionCode -le 0){throw 'Candidate version code is required.'}
+        [void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @($VersionCode))
+        [void](Invoke-Private $type 'CompleteInstalledIntegration' @($Peer,[bool]::Parse($Startup),$true,$VersionCode))
     }
     elseif($Phase -eq 'ApplyPause'){
         $manifest=Invoke-Private $type 'ReadPackageManifest' @($Package)
