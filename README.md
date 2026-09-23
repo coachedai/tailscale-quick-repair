@@ -8,7 +8,7 @@ This repository is the public source and update channel for **Tailscale Quick Re
 
 New users install with the native Windows Setup release asset. Setup asks for the Tailscale target this PC should check — either a Tailscale IP or a MagicDNS device name — and can optionally start Quick Repair with Windows.
 
-Existing installs update from **Details → Maintenance → Check again → Update now**. Ordinary app updates stay user-level. Releases that update the protected repair engine hand off to the native Setup host and request normal Windows administrator approval.
+Existing installs update from **Details → Maintenance → Check again → Update now**. Ordinary app updates stay user-level. Releases that update the protected repair engine hand off to the native Setup host and request normal Windows administrator approval. For protected updates, approve the Windows prompt with the same Windows account that launched Quick Repair; using separate administrator credentials is intentionally refused so per-user settings are never migrated into the wrong profile.
 
 See `docs/INSTALL.md` for the full installation and upgrade flow.
 

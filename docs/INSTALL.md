@@ -35,7 +35,7 @@ Open **Details → Maintenance** and choose **Check again**.
 
 If a normal app update is available, **Update now** downloads and verifies the release package, stages it, creates a rollback checkpoint, replaces the user-level app files, verifies the installed hashes, and restarts Quick Repair.
 
-If an update also changes the protected repair engine or scheduled tasks, **Update now** hands the migration to `TailscaleQuickRepairSetup.exe`. Windows then asks for administrator approval. The Setup host preserves the existing target and startup preference, verifies the protected Setup package, updates the protected components, rebuilds the scheduled tasks/integration, and restarts the app.
+If an update also changes the protected repair engine or scheduled tasks, **Update now** hands the migration to `TailscaleQuickRepairSetup.exe`. Windows then asks for administrator approval. Approve that prompt with the same Windows account that launched Quick Repair. Separate administrator credentials are deliberately refused in this release so LocalAppData settings, restart acknowledgement and scheduled-task identity cannot silently switch to another profile. The Setup host preserves the existing target and startup preference, verifies the protected Setup package, updates the protected components, rebuilds the scheduled tasks/integration, and restarts the app.
 
 ## What gets installed
 

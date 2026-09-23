@@ -16,6 +16,7 @@ This keeps the normal Update button as the starting point while ensuring that pr
 - A missing, malformed or wrong-version marker cannot authorise protected installation.
 - The updated interface starts only the installed Setup executable with the fixed `--upgrade` mode.
 - Windows administrator approval is requested only when the protected part is ready to run.
+- The approving Windows account must be the same account that launched Quick Repair. A different administrator account is refused before migration so per-user state cannot be redirected into another profile.
 - Cancelling that approval does not remove the marker, close the app or claim the update completed.
 - Setup reuses the existing target and startup preference; it does not ask users to re-enter them during an upgrade.
 - A successful protected install writes a pending restart version before the handoff marker is removed.
@@ -23,4 +24,4 @@ This keeps the normal Update button as the starting point while ensuring that pr
 - The marker is kept if protected installation does not complete, so the app can continue to show that attention is required.
 - No live release channel changes are made by development tests.
 
-The native test installs the genuine published 5.2.1 package, applies the tested ordinary package through the published updater core, confirms that protected files are untouched, checks the refreshed Setup file and handoff marker, and verifies the fixed upgrade route. Full user approval, cancellation, restart and rollback tests remain required before release.
+Development acceptance starts from the genuine published 5.2.1 package and covers the staged updater, protected-file preservation, refreshed Setup handoff, cancellation/retry, restart acknowledgement, and a real separate local administrator account that must be refused before migration. The exact pass/fail result belongs to the Windows workflow and pull-request evidence. Physical UAC prompt rendering and separate-account support remain outside this release scope.

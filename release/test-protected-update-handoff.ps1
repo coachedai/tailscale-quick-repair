@@ -18,6 +18,7 @@ $evidence=(Resolve-Path $EvidenceDirectory).Path
 $lab=Join-Path $env:RUNNER_TEMP ('TqrProtectedHandoff-'+[Guid]::NewGuid().ToString('N'));[void][IO.Directory]::CreateDirectory($lab)
 $app=Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair';$program=Join-Path $env:ProgramData 'TailscaleQuickRepair'
 $cases=New-Object 'Collections.Generic.List[object]';$passed=$false;$failure=$null;$stage='preflight';$child=$null;$cleanup=$true
+$altContext=$null;$altUser=$null;$altGroup=$null;$altRoot='';$altUserName=''
 $legacyHash='bad4deb522afd9442e918cacde1f58cc1509635de3be172626846060516df470'
 function Check([bool]$Value,[string]$Name){$script:stage=$Name;$cases.Add([pscustomobject]@{name=$Name;passed=$Value});if(-not $Value){throw 'Protected handoff assertion failed.'};Write-Host ('PASS protected handoff: '+$Name)}
 function Expand-Zip([string]$Zip,[string]$Destination){Expand-Archive -LiteralPath $Zip -DestinationPath $Destination;return (Get-Content (Join-Path $Destination 'package-manifest.json') -Raw|ConvertFrom-Json)}
@@ -83,6 +84,83 @@ try{
     Check ($resultFn[0].Extent.Text.Contains('Update downloaded · finishing setup') -and
         $resultFn[0].Extent.Text.Contains('Windows approval is needed to finish the protected part of this update.')) 'Bridge success remains provisional until protected Setup completes'
 
+    # Use an actual second local administrator account to verify the identity
+    # boundary. This is a credential-context test, not a visual UAC test. No
+    # password, SID, username or profile path is written to uploaded evidence.
+    Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+    $requesterSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $altContext=New-Object -TypeName DirectoryServices.AccountManagement.PrincipalContext -ArgumentList @([DirectoryServices.AccountManagement.ContextType]::Machine,$env:COMPUTERNAME)
+    $altUserName='TqrAlt'+[Guid]::NewGuid().ToString('N').Substring(0,12)
+    $altPassword='Tqr!'+[Guid]::NewGuid().ToString('N')+'aA9'
+    $altUser=New-Object -TypeName DirectoryServices.AccountManagement.UserPrincipal -ArgumentList $altContext
+    $altUser.SamAccountName=$altUserName
+    $altUser.SetPassword($altPassword)
+    $altUser.Enabled=$true
+    $altUser.Save()
+    $altGroup=[DirectoryServices.AccountManagement.GroupPrincipal]::FindByIdentity(
+        $altContext,[DirectoryServices.AccountManagement.IdentityType]::Sid,'S-1-5-32-544')
+    if(-not $altGroup){throw 'Built-in Administrators group was not found.'}
+    $altGroup.Members.Add($altUser);$altGroup.Save()
+    Check ($altUser.Sid -and $altUser.Sid.Value -cne $requesterSid -and $altGroup.Members.Contains($altUser)) 'Fixture creates a distinct real local administrator account'
+
+    $altRoot=Join-Path $env:ProgramData ('TqrAlternateAdmin-'+[Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $altRoot|Out-Null
+    $altAcl=Get-Acl -LiteralPath $altRoot
+    $altRule=New-Object Security.AccessControl.FileSystemAccessRule(
+        $altUser.Sid,[Security.AccessControl.FileSystemRights]::Modify,
+        ([Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'),
+        [Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)
+    $altAcl.AddAccessRule($altRule);Set-Acl -LiteralPath $altRoot -AclObject $altAcl
+    $altSetup=Join-Path $altRoot 'TailscaleQuickRepairSetup.exe'
+    $altDll=Join-Path $altRoot 'TailscaleQuickRepair.Operations.dll'
+    Copy-Item (Join-Path $app 'TailscaleQuickRepairSetup.exe') $altSetup
+    Copy-Item (Join-Path $app 'TailscaleQuickRepair.Operations.dll') $altDll
+    $altReport=Join-Path $altRoot 'result.json'
+    $altScript=Join-Path $altRoot 'identity-test.ps1'
+    [IO.File]::WriteAllText($altScript,@'
+param([string]$Dll,[string]$Setup,[string]$RequesterSid,[string]$Report)
+$ErrorActionPreference='Stop'
+$complete=$false;$different=$false;$refused=$false;$failureCode=0
+try{
+    Add-Type -Path $Dll
+    $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+    $different=($identity.User -and $identity.User.Value -cne $RequesterSid)
+    $type=[Reflection.Assembly]::LoadFile($Setup).GetType('PublicSetupHost')
+    $method=$type.GetMethod('RequireRequesterIdentity',[Reflection.BindingFlags]'NonPublic,Static')
+    if(-not $method){throw 'Requester identity boundary missing.'}
+    try{[void]$method.Invoke($null,@($RequesterSid))}
+    catch{
+        $ex=$_.Exception
+        while($ex.InnerException){$ex=$ex.InnerException}
+        $refused=($ex -is [UnauthorizedAccessException])
+        $failureCode=$ex.HResult
+    }
+    $complete=$different -and $refused
+}finally{
+    [pscustomobject]@{complete=$complete;differentAccount=$different;refused=$refused;failureCode=$failureCode}|
+        ConvertTo-Json -Compress|Set-Content -LiteralPath $Report -Encoding UTF8
+}
+if(-not $complete){exit 23}
+'@,(New-Object Text.UTF8Encoding($false)))
+
+    $configBefore=(Get-FileHash (Join-Path $app 'config.json')).Hash
+    $markerBefore=(Get-FileHash (Join-Path $app 'protected-update.json')).Hash
+    $backendBefore=(Get-FileHash (Join-Path $program 'Repair-Backend.ps1')).Hash
+    $secure=ConvertTo-SecureString $altPassword -AsPlainText -Force
+    $credential=New-Object Management.Automation.PSCredential(($env:COMPUTERNAME+'\'+$altUserName),$secure)
+    $arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$altScript+
+        '" -Dll "'+$altDll+'" -Setup "'+$altSetup+'" -RequesterSid "'+$requesterSid+'" -Report "'+$altReport+'"'
+    $altProcess=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $arguments -Credential $credential -LoadUserProfile -WindowStyle Hidden -PassThru
+    if(-not $altProcess.WaitForExit(45000)){try{$altProcess.Kill()}catch{};throw 'Alternate administrator fixture exceeded its time bound.'}
+    $altExit=$altProcess.ExitCode;$altProcess.Dispose()
+    $altResult=Get-Content -LiteralPath $altReport -Raw|ConvertFrom-Json
+    Check ($altExit -eq 0 -and $altResult.complete -is [bool] -and $altResult.complete -and
+        $altResult.differentAccount -and $altResult.refused) 'A real separate local administrator account is refused by the requester identity boundary'
+    Check ((Get-FileHash (Join-Path $app 'config.json')).Hash -ceq $configBefore -and
+        (Get-FileHash (Join-Path $app 'protected-update.json')).Hash -ceq $markerBefore -and
+        (Get-FileHash (Join-Path $program 'Repair-Backend.ps1')).Hash -ceq $backendBefore) 'Separate-account refusal leaves config, handoff evidence and protected backend bytes unchanged'
+    Copy-Item $altReport (Join-Path $evidence 'alternate-admin-refusal.json')
+
     Run-Child 'CheckSetupMarker' $legacy $bridge
     Check (-not(Test-Path (Join-Path $app 'protected-update.json'))) 'Refreshed Setup owns marker completion after strict validation'
     Check ((Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json).versionCode -eq $bridgeManifest.versionCode) 'Bridge leaves the user-level app on the intended release code'
@@ -126,12 +204,16 @@ try{
     $failure=[pscustomobject]@{stage=$stage;line=$_.InvocationInfo.ScriptLineNumber;exceptions=@($chain.ToArray())}
 }finally{
     if($child){try{if(-not $child.HasExited){$child.Kill();[void]$child.WaitForExit(5000)}}catch{$cleanup=$false};$child.Dispose()}
+    if($altUser){try{$altUser.Delete()}catch{$cleanup=$false};try{$altUser.Dispose()}catch{}}
+    if($altGroup){try{$altGroup.Dispose()}catch{}}
+    if($altContext){try{$altContext.Dispose()}catch{}}
+    if($passed -and $altRoot -and (Test-Path -LiteralPath $altRoot)){try{Remove-Item -LiteralPath $altRoot -Recurse -Force}catch{$cleanup=$false}}
     Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name 'PendingRestartVersionCode' -ErrorAction SilentlyContinue
     $scheduler=$null
     try{$scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();$folder=$scheduler.GetFolder('\');foreach($name in @('Tailscale Quick Repair','Tailscale Quick Repair Auto Monitor')){try{$t=$folder.GetTask($name);$t.Enabled=$false;$folder.DeleteTask($name,0)}catch{}}}catch{$cleanup=$false}
     $cases.Add([pscustomobject]@{name='Only fixture-owned scheduled tasks are removed after the handoff test';passed=$cleanup})
     [pscustomobject]@{passed=($passed -and $cleanup);source=$env:GITHUB_SHA;fromVersion='3.0.0-phase5.2.1';cases=@($cases.ToArray());failure=$failure;
       scope='Published updater applies only the user-level bridge; refreshed Setup marker and route are verified separately';
-      limits=@('No live update manifest is changed','The final protected package is not applied through the public channel in this test','Interactive UAC approval, cancellation and relaunch remain separate acceptance','Existing protected files are compared and left untouched by the old updater')}|ConvertTo-Json -Depth 9|Set-Content (Join-Path $evidence 'protected-handoff-results.json') -Encoding UTF8
+      limits=@('No live update manifest is changed','The final protected package is not applied through the public channel in this test','Physical UAC visuals and credential-prompt interaction remain separate field acceptance','A real separate administrator account is tested only for safe refusal, not supported migration','Existing protected files are compared and left untouched by the old updater')}|ConvertTo-Json -Depth 9|Set-Content (Join-Path $evidence 'protected-handoff-results.json') -Encoding UTF8
 }
 if(-not $passed -or -not $cleanup){throw 'Protected handoff acceptance failed; inspect preserved evidence.'}
