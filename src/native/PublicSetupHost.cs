@@ -668,6 +668,7 @@ internal static class PublicSetupHost
         RecoveryDocument document = new RecoveryDocument {
             schema = RecoverySchema,
             state = "preparing",
+            userSid = CurrentUserSid(),
             entries = entries.ToArray()
         };
         WriteRecoveryDocument(root, document);
@@ -737,15 +738,17 @@ internal static class PublicSetupHost
 
         Dictionary<string, object> rootFields =
             Json.Deserialize<Dictionary<string, object>>(File.ReadAllText(journal, new UTF8Encoding(false, true)));
-        if (rootFields == null || rootFields.Count != 3 ||
-            !rootFields.ContainsKey("schema") || !rootFields.ContainsKey("state") || !rootFields.ContainsKey("entries") ||
+        if (rootFields == null || rootFields.Count != 4 ||
+            !rootFields.ContainsKey("schema") || !rootFields.ContainsKey("state") ||
+            !rootFields.ContainsKey("userSid") || !rootFields.ContainsKey("entries") ||
             !(rootFields["schema"] is int) || Convert.ToInt32(rootFields["schema"]) != RecoverySchema ||
-            !(rootFields["state"] is string))
+            !(rootFields["state"] is string) || !(rootFields["userSid"] is string))
             throw new InvalidDataException("Setup recovery journal schema is invalid.");
 
         string state = Convert.ToString(rootFields["state"]);
         if (state != "preparing" && state != "prepared" && state != "committed" && state != "rolledBack")
             throw new InvalidDataException("Setup recovery journal state is invalid.");
+        string userSid = NormalizeSid(Convert.ToString(rootFields["userSid"]));
 
         object[] rawEntries = rootFields["entries"] as object[];
         if (rawEntries == null)
@@ -799,7 +802,7 @@ internal static class PublicSetupHost
             entries.Add(entry);
         }
 
-        return new RecoveryDocument { schema = RecoverySchema, state = state, entries = entries.ToArray() };
+        return new RecoveryDocument { schema = RecoverySchema, state = state, userSid = userSid, entries = entries.ToArray() };
     }
 
     private static void ValidatePreparedRecovery(string root, RecoveryDocument document)
@@ -837,6 +840,18 @@ internal static class PublicSetupHost
         }
     }
 
+    private static void RequireRecoveryOwner(RecoveryDocument document)
+    {
+        if (document == null || String.IsNullOrWhiteSpace(document.userSid))
+            throw new InvalidDataException("Setup recovery owner is missing.");
+
+        string expected = NormalizeSid(document.userSid);
+        if (!String.Equals(CurrentUserSid(), expected, StringComparison.Ordinal))
+            throw new UnauthorizedAccessException(
+                "Interrupted Setup recovery belongs to another Windows account. Existing recovery evidence was preserved."
+            );
+    }
+
     private static bool RecoverInterruptedFileTransaction()
     {
         return RecoverInterruptedFileTransactionCore(null);
@@ -867,6 +882,7 @@ internal static class PublicSetupHost
         }
 
         RecoveryDocument document = ReadRecoveryDocument(root);
+        RequireRecoveryOwner(document);
         if (document.state == "preparing")
         {
             CleanupPreparingRecovery(root);
@@ -988,7 +1004,9 @@ internal static class PublicSetupHost
             throw new IOException("Setup recovery transaction disappeared.");
 
         RecoveryDocument current = ReadRecoveryDocument(root);
-        if (current.state != "prepared" || current.entries.Length != document.entries.Length)
+        RequireRecoveryOwner(current);
+        if (!String.Equals(current.userSid, document.userSid, StringComparison.Ordinal) ||
+            current.state != "prepared" || current.entries.Length != document.entries.Length)
             throw new InvalidDataException("Setup recovery transaction changed unexpectedly.");
 
         ValidatePreparedRecovery(root, current);
@@ -1024,6 +1042,7 @@ internal static class PublicSetupHost
         if (document == null || document.state != "rolledBack")
             throw new InvalidDataException("Setup recovery transaction is not rolled back.");
 
+        RequireRecoveryOwner(document);
         RequireRecoveryRootSecurity(root);
         ValidateRolledBackTargets(document);
 
@@ -1074,7 +1093,9 @@ internal static class PublicSetupHost
             throw new IOException("Setup recovery transaction disappeared.");
 
         RecoveryDocument current = ReadRecoveryDocument(root);
-        if (current.state != "prepared" || current.entries.Length != document.entries.Length)
+        RequireRecoveryOwner(current);
+        if (!String.Equals(current.userSid, document.userSid, StringComparison.Ordinal) ||
+            current.state != "prepared" || current.entries.Length != document.entries.Length)
             throw new InvalidDataException("Setup recovery transaction changed unexpectedly.");
 
         ValidatePreparedRecovery(root, current);
@@ -1100,6 +1121,7 @@ internal static class PublicSetupHost
         if (document == null || document.state != "committed")
             throw new InvalidDataException("Setup recovery transaction is not committed.");
 
+        RequireRecoveryOwner(document);
         RequireRecoveryRootSecurity(root);
         HashSet<string> expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         expected.Add(RecoveryJournalName);
@@ -1853,6 +1875,6 @@ internal static class PublicSetupHost
     private sealed class PackageFile { public string Path; public string Sha256; public long Size; }
     private sealed class InstallFile { public string Source; public string Target; public string RelativePath; public string Sha256; }
     private sealed class BackupEntry { public string Target; public string Backup; public bool Existed; }
-    private sealed class RecoveryDocument { public int schema; public string state; public RecoveryEntry[] entries; }
+    private sealed class RecoveryDocument { public int schema; public string state; public string userSid; public RecoveryEntry[] entries; }
     private sealed class RecoveryEntry { public string path; public bool existed; public string backup; public string sha256; public long size; public string newSha256; }
 }
