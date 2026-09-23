@@ -105,6 +105,23 @@ function Test-TailscaleServicePresent {
     try{$service=Get-Service 'Tailscale' -ErrorAction SilentlyContinue;return $null -ne $service}
     finally{if($service){$service.Dispose()}}
 }
+function Stop-OwnedVendorClient {
+    $expected=[IO.Path]::GetFullPath((Join-Path $vendorDir 'tailscale-ipn.exe'))
+    $session=[Diagnostics.Process]::GetCurrentProcess().SessionId
+    $stopped=0
+    foreach($process in @(Get-Process -Name 'tailscale-ipn' -ErrorAction SilentlyContinue)){
+        try{
+            if($process.SessionId -ne $session){continue}
+            $actual=[IO.Path]::GetFullPath($process.MainModule.FileName)
+            if($actual -ine $expected){throw 'Refusing to stop a non-fixture Tailscale client process.'}
+            try{[void]$process.CloseMainWindow()}catch{}
+            if(-not $process.WaitForExit(2500)){$process.Kill();if(-not $process.WaitForExit(5000)){throw 'Fixture Tailscale client did not exit.'}}
+            $stopped++
+        }
+        finally{$process.Dispose()}
+    }
+    return $stopped
+}
 function MarkerTimes([string]$Path){
     if(-not(Test-Path -LiteralPath $Path)){return @()}
     if((Get-Item -LiteralPath $Path).Length -gt 4096){throw 'Unexpected task marker size.'}
@@ -225,6 +242,22 @@ try{
     Check $machine.CanContinue 'Installed production boundary retains a stable interactive environment'
     $intentRoot=NewState 'real-observed-intent';$result=[Tqr.AutoRepairWorker]::Execute($intentRoot,$machine)
     Check ($result.status -eq 'manual' -and $result.actionsAttempted -eq 0 -and -not $result.recoveryConfirmed) 'Real unauthenticated vendor state requires attention without automatic mutation'
+
+    # Exercise the actual production client-launch boundary without pretending
+    # that an unauthenticated backend authorises automatic repair. No login key,
+    # peer or sign-in command is supplied to the disposable runner.
+    $script:clientAuthorizations=0
+    $opened=$machine.OpenClient([Action]{ $script:clientAuthorizations++ })
+    $clientHealth=Observe (New-Object Tqr.WindowsAutoRepairMachine) 'after-real-client-open'
+    Check ($opened -and $script:clientAuthorizations -eq 1 -and $clientHealth.Client -eq 'Running' -and
+        $clientHealth.Backend -in @('NeedsLogin','Stopped')) 'Production client boundary opens the exact installed Tailscale client in the current session'
+    $stillHeld=[Tqr.AutoRepairWorker]::Execute($intentRoot,(New-Object Tqr.WindowsAutoRepairMachine))
+    Check ($stillHeld.status -eq 'manual' -and $stillHeld.actionsAttempted -eq 0 -and -not $stillHeld.recoveryConfirmed) 'Opening the real client cannot bypass the preserved sign-in or disconnect hold'
+    $stoppedClients=Stop-OwnedVendorClient
+    $clientWait=[Diagnostics.Stopwatch]::StartNew();$closedHealth=$null
+    do{$closedHealth=(New-Object Tqr.WindowsAutoRepairMachine).Observe();if($closedHealth.Client -eq 'Closed'){break};Start-Sleep -Milliseconds 250}while($clientWait.Elapsed.TotalSeconds -lt 10)
+    Check ($stoppedClients -ge 1 -and $closedHealth.Client -eq 'Closed') 'Native lab closes only the exact fixture-owned client after the reopen acceptance'
+
     $event=HarmlessTask 'RealServiceEvent' 'LocalSystemEvents'
     Check (@(MarkerTimes $event.Marker).Count -eq 0) 'Service-event acceptance starts without a pre-existing success marker'
     Stage 'stop only the vendor service installed by this lab'
@@ -331,6 +364,9 @@ try{
             catch{if($_.Exception.HResult -ne -2147024894){Mark-CleanupFailure ('verify_product_task_absent:'+ $name) $_.Exception}}
         }
     }
+    if($vendorOwned){
+        try{[void](Stop-OwnedVendorClient)}catch{Mark-CleanupFailure 'stop_fixture_client' $_.Exception}
+    }
     if($vendorOwned -and $vendorInstalled){
         try{
             Msi $false
@@ -346,7 +382,7 @@ try{
         vendorVersion='1.102.3';vendorSha256=$vendorHash;recurrenceSeconds=$repeatDelta;fallbackScheduledUtc=$fallbackScheduledUtc;fallbackFirings=$fallbackFirings;firstDelaySeconds=$firstDelaySeconds;cases=@($cases.ToArray());observations=@($observations.ToArray());
         failureStage=$(if($passed){''}else{$blockedStage});failureType=$failureType;failureCode=$failureCode;reflectionBoundary=$blockedBoundary;timingTraceError=$timingError;
         cleanupStage=$cleanupStage;cleanupFailureType=$cleanupFailureType;cleanupFailureCode=$cleanupFailureCode;
-        limits=@('No tailnet login, authentication key or remote peer','Fresh stopped-service policy is an explicitly separate state fixture; observed-intent state is preserved','Real service event uses the exact Setup subscription with a harmless action; actual monitor task dispatch is a separate test','Setup verification/application/registration cores execute natively; interactive UAC, alternate-admin, restart/rollback and full entry are not certified','No actual sleep/resume, logon or VPN transition is induced','No raw vendor logs, host paths, usernames, addresses, private state or MSI is uploaded; transient files remain only on the disposable runner')
+        limits=@('No tailnet login, authentication key or remote peer','Fresh stopped-service policy is an explicitly separate state fixture; observed-intent state is preserved','Real service event uses the exact Setup subscription with a harmless action; actual monitor task dispatch is a separate test','Setup verification/application/registration cores execute natively; interactive UAC, alternate-admin, restart/rollback and full entry are not certified','Real client reopen is exercised without authentication; authenticated recovery remains separate','No actual sleep/resume, logon or VPN transition is induced','No raw vendor logs, host paths, usernames, addresses, private state or MSI is uploaded; transient files remain only on the disposable runner')
     }|ConvertTo-Json -Depth 10|Set-Content (Join-Path $evidence 'native-windows-results.json') -Encoding UTF8
 }
 if(-not $passed -or -not $cleanupOK){$why=if(-not $passed){$blockedStage}else{$cleanupStage};throw ('Native Windows acceptance remains blocked: '+$why)}
