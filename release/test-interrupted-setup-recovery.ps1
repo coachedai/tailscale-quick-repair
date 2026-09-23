@@ -48,14 +48,24 @@ function Expand-Verified([string]$Zip,[string]$Destination){
     }
     return $manifest
 }
-function Run-Child([string]$Phase,[string]$Package,[int]$PauseAfter=0,[string]$Ready='',[switch]$ExpectKill){
+function Run-Child(
+    [string]$Phase,
+    [string]$Package,
+    [int]$PauseAfter=0,
+    [string]$Ready='',
+    [switch]$ExpectKill,
+    [string]$Peer='integration-replay.invalid',
+    [bool]$Startup=$true,
+    [long]$VersionCode=0
+){
     $report=Join-Path $lab ($Phase+'-'+[Guid]::NewGuid().ToString('N')+'.json')
     $work=Join-Path $lab ($Phase+'-work-'+[Guid]::NewGuid().ToString('N'));[void][IO.Directory]::CreateDirectory($work)
     $psi=New-Object Diagnostics.ProcessStartInfo
     $psi.FileName=Join-Path $PSHOME 'powershell.exe';$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
     $psi.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -STA -File "'+(Join-Path $PSScriptRoot 'interrupted-setup-child.ps1')+
         '" -Phase '+$Phase+' -Package "'+$Package+'" -Work "'+$work+'" -PauseAfter '+$PauseAfter+
-        ' -Ready "'+$Ready+'" -Report "'+$report+'"'
+        ' -Ready "'+$Ready+'" -Peer "'+$Peer+'" -Startup '+$Startup.ToString().ToLowerInvariant()+
+        ' -VersionCode '+$VersionCode+' -Report "'+$report+'"'
     $script:child=[Diagnostics.Process]::Start($psi)
     if($ExpectKill){
         $deadline=[DateTime]::UtcNow.AddSeconds(45)
@@ -93,7 +103,14 @@ try{
     $candidate=Join-Path $lab 'candidate';$candidateManifest=Expand-Verified $setupZip[0].FullName $candidate
 
     [void](Run-Child 'InstallLegacy' $legacy)
+    [void](Run-Child 'LegacyIntegration' $legacy)
     Check ((Test-Path -LiteralPath $app -PathType Container) -and (Test-Path -LiteralPath $program -PathType Container)) 'Published baseline files are installed by their compiled Setup core'
+    $legacyAuto=$folder.GetTask($taskNames[1])
+    Check ($legacyAuto.Definition.Triggers.Count -eq 1 -and
+        $legacyAuto.Definition.Triggers.Item(1).Repetition.Interval -ceq 'PT5M') 'Published 5.2.1 automatic task is installed before interruption testing'
+    $legacyRun=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run',$false)
+    try{$legacyStartup=if($legacyRun){$legacyRun.GetValue('Tailscale Quick Repair',$null)}else{$null}}finally{if($legacyRun){$legacyRun.Dispose()}}
+    Check ($null -eq $legacyStartup) 'Published baseline integration keeps the fixture startup preference off'
 
     $candidateType=[Reflection.Assembly]::LoadFile((Join-Path $candidate 'app\TailscaleQuickRepairSetup.exe')).GetType('PublicSetupHost')
     $resolve=$candidateType.GetMethod('ResolveInstallTarget',[Reflection.BindingFlags]'NonPublic,Static')
@@ -196,6 +213,81 @@ try{
     [void](Run-Child 'Recover' $candidate)
     Check (-not(Test-Path -LiteralPath $recovery) -and (Test-CandidateInstalled)) 'Next process keeps the committed candidate payload and finishes cleanup without a deleted backup'
 
+    # Scenario 4: the candidate payload is already committed but Windows
+    # integration is interrupted. The same fixed sequence must be safe to replay
+    # from a fresh Setup process without rolling the payload backwards.
+    $integrationPeer='integration-replay.invalid'
+    $markerPath=Join-Path $app 'protected-update.json'
+    $markerText=(@{schema=1;versionCode=[int64]$candidateManifest.versionCode}|ConvertTo-Json -Compress)
+    [IO.File]::WriteAllText($markerPath,$markerText,(New-Object Text.UTF8Encoding($false)))
+    Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name 'PendingRestartVersionCode' -ErrorAction SilentlyContinue
+
+    $earlyReady=Join-Path $lab 'integration-early.ready'
+    [void](Run-Child -Phase 'IntegrationPause' -Package $candidate -PauseAfter 2 -Ready $earlyReady -ExpectKill -Peer $integrationPeer -Startup $true -VersionCode ([int64]$candidateManifest.versionCode))
+
+    $earlyConfig=Get-Content (Join-Path $app 'config.json') -Raw|ConvertFrom-Json
+    $earlyAuto=$folder.GetTask($taskNames[1])
+    $earlyRun=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run',$false)
+    try{$earlyStartup=if($earlyRun){$earlyRun.GetValue('Tailscale Quick Repair',$null)}else{$null}}finally{if($earlyRun){$earlyRun.Dispose()}}
+    $earlyRestart=Get-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name 'PendingRestartVersionCode' -ErrorAction SilentlyContinue
+    Check ([string]$earlyConfig.peer -ceq $integrationPeer) 'Killed integration preserves the completed target update'
+    Check ($earlyAuto.Definition.Triggers.Count -eq 1) 'Kill after repair-task replacement leaves the still-unmodified 5.2.1 automatic task visible'
+    Check ($null -eq $earlyStartup) 'Kill before startup integration leaves the previous startup preference unchanged'
+    Check ((Test-Path -LiteralPath $markerPath -PathType Leaf) -and (-not $earlyRestart -or $null -eq $earlyRestart.PendingRestartVersionCode)) 'Early integration kill keeps the handoff marker and cannot claim restart completion'
+    Check (Test-CandidateInstalled) 'Early integration kill never rolls the already committed candidate payload backwards'
+
+    [void](Run-Child -Phase 'IntegrationComplete' -Package $candidate -Peer $integrationPeer -Startup $true -VersionCode ([int64]$candidateManifest.versionCode))
+
+    $repairTask=$folder.GetTask($taskNames[0]);$autoTask=$folder.GetTask($taskNames[1])
+    Check ($repairTask.Definition.Triggers.Count -eq 0 -and $autoTask.Definition.Triggers.Count -eq 4 -and
+        $autoTask.Definition.Triggers.Item(1).Repetition.Interval -ceq 'PT5M' -and
+        -not [bool]$autoTask.Definition.Settings.StartWhenAvailable) 'Fresh Setup replay converges both tasks to the current protected definitions'
+    $runKey=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run',$false)
+    try{$startupValue=if($runKey){[string]$runKey.GetValue('Tailscale Quick Repair',$null)}else{''}}finally{if($runKey){$runKey.Dispose()}}
+    $expectedStartup='"'+(Join-Path $app 'TailscaleQuickRepair.exe')+'" --start-in-tray'
+    Check ($startupValue -ceq $expectedStartup) 'Integration replay applies the requested startup preference exactly'
+    $shortcut=Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)) 'Tailscale Quick Repair.lnk'
+    $shell=New-Object -ComObject WScript.Shell;$link=$null
+    try{$link=$shell.CreateShortcut($shortcut);$shortcutTarget=[string]$link.TargetPath}finally{
+        if($link){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($link)}
+        if($shell){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)}
+    }
+    Check ((Test-Path -LiteralPath $shortcut -PathType Leaf) -and
+        [IO.Path]::GetFullPath($shortcutTarget) -ieq [IO.Path]::GetFullPath((Join-Path $app 'TailscaleQuickRepair.exe'))) 'Integration replay leaves the Start menu shortcut targeting the installed app'
+    $restartKey=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\TailscaleQuickRepair',$false)
+    try{
+        if(-not $restartKey){throw 'Restart acknowledgement key is missing.'}
+        $restartValue=$restartKey.GetValue('PendingRestartVersionCode',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $restartKind=$restartKey.GetValueKind('PendingRestartVersionCode')
+    }finally{if($restartKey){$restartKey.Dispose()}}
+    Check ($restartKind -eq [Microsoft.Win32.RegistryValueKind]::QWord -and
+        [int64]$restartValue -eq [int64]$candidateManifest.versionCode -and
+        -not(Test-Path -LiteralPath $markerPath)) 'Completed replay writes the exact restart acknowledgement before clearing the handoff marker'
+    Check (Test-CandidateInstalled) 'Integration replay leaves every committed candidate payload hash unchanged'
+
+    # Late interruption: restart acknowledgement is durable, but the marker
+    # remains because Setup has not crossed its final completion step.
+    [IO.File]::WriteAllText($markerPath,$markerText,(New-Object Text.UTF8Encoding($false)))
+    Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name 'PendingRestartVersionCode' -ErrorAction SilentlyContinue
+    $lateReady=Join-Path $lab 'integration-late.ready'
+    [void](Run-Child -Phase 'IntegrationPause' -Package $candidate -PauseAfter 6 -Ready $lateReady -ExpectKill -Peer $integrationPeer -Startup $true -VersionCode ([int64]$candidateManifest.versionCode))
+    $lateRestart=Get-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name 'PendingRestartVersionCode' -ErrorAction Stop
+    Check ([int64]$lateRestart.PendingRestartVersionCode -eq [int64]$candidateManifest.versionCode -and
+        (Test-Path -LiteralPath $markerPath -PathType Leaf)) 'Late integration kill preserves both the exact restart acknowledgement and unfinished handoff marker'
+    Check (Test-CandidateInstalled) 'Late integration kill also leaves the committed payload untouched'
+
+    [void](Run-Child -Phase 'IntegrationComplete' -Package $candidate -Peer $integrationPeer -Startup $true -VersionCode ([int64]$candidateManifest.versionCode))
+    Check (-not(Test-Path -LiteralPath $markerPath) -and (Test-CandidateInstalled)) 'Fresh Setup process safely replays late integration and clears the marker only at final completion'
+
+    # Remove only fixture-owned Windows integration after all assertions so the
+    # following protected-handoff suite starts from an empty product footprint.
+    foreach($name in $taskNames){try{$folder.DeleteTask($name,0)}catch{}}
+    $cleanupRun=[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Run')
+    try{$cleanupRun.DeleteValue('Tailscale Quick Repair',$false)}finally{$cleanupRun.Dispose()}
+    Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name 'PendingRestartVersionCode' -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $shortcut -Force -ErrorAction SilentlyContinue
+    foreach($name in $taskNames){$exists=$false;try{[void]$folder.GetTask($name);$exists=$true}catch{};Check (-not $exists) 'Only fixture-owned Quick Repair tasks are removed after integration replay acceptance'}
+
     # Preserve the final candidate installation intact, but move it out of the
     # product paths so the following handoff test starts from an empty install.
     $appArchive=Join-Path (Split-Path -Parent $app) ('TqrInterruptedEvidence-'+[Guid]::NewGuid().ToString('N'))
@@ -213,8 +305,8 @@ try{
     if($child){try{if(-not $child.HasExited){$child.Kill();[void]$child.WaitForExit(5000)}}catch{$cleanup=$false};$child.Dispose()}
     $cases.Add([pscustomobject]@{name='Interrupted Setup lab kills only its explicitly owned child processes; failed file evidence remains on the disposable runner';passed=$cleanup})
     [pscustomobject]@{passed=($passed -and $cleanup);source=$env:GITHUB_SHA;fromVersion='3.0.0-phase5.2.1';cases=@($cases.ToArray());failure=$failure;
-      scope='Persistent payload-file transaction recovery after killed apply, killed rollback, rollback-cleanup and committed-cleanup processes';
-      limits=@('This does not certify task, startup-registry or shortcut rollback after a kill','This does not simulate whole-PC power loss or storage-controller write loss','No live tailnet or user machine is touched','Recovery journal contains only fixed package-relative paths and file digest metadata')}|
+      scope='Persistent payload-file recovery plus replay-safe post-file Windows integration after killed Setup processes';
+      limits=@('Post-file integration converges to the candidate state rather than rolling task/startup/shortcut state back to 5.2.1','This does not simulate whole-PC power loss or storage-controller write loss','Physical UAC/relaunch behavior remains a separate gate','No live tailnet or user machine is touched','Recovery journal contains only fixed package-relative paths and file digest metadata')}|
       ConvertTo-Json -Depth 9|Set-Content (Join-Path $evidence 'interrupted-setup-results.json') -Encoding UTF8
 }
 if(-not $passed -or -not $cleanup){throw 'Interrupted Setup recovery acceptance failed; inspect preserved evidence.'}

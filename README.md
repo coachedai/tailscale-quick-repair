@@ -36,7 +36,9 @@ Before installation it verifies the published package size and SHA-256. The pack
 
 The release pipeline then extracts the finished package again and repeats those checks before publication. Protected-engine releases also build and verify a separate full Setup package.
 
-Updates are applied transactionally with rollback protection. The update path is native and does not use the retired encoded-PowerShell/BAT bridge.
+Updates use protected transaction recovery for payload files. If Setup is interrupted after the new payload is already verified, its Windows integration steps are safe to replay to the same release state. The update path is native and does not use the retired encoded-PowerShell/BAT bridge.
+
+See `docs/interrupted-setup-recovery.md` for the recovery model and its current limits.
 
 ## Main components
 
