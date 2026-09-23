@@ -161,12 +161,12 @@ if(-not $complete){exit 23}
     Check (Test-Path -LiteralPath $identityReport -PathType Leaf) 'Foreign privileged identity test produces bounded typed evidence'
     $identityResult=Get-Content -LiteralPath $identityReport -Raw|ConvertFrom-Json
     Copy-Item $identityReport (Join-Path $evidence 'foreign-identity-refusal.json')
+    $identityExitWatch=[Diagnostics.Stopwatch]::StartNew()
+    while([int]$registeredIdentityTask.State -in @(2,4) -and $identityExitWatch.Elapsed.TotalSeconds -lt 30){Start-Sleep -Milliseconds 100}
+    Check ([int]$registeredIdentityTask.State -notin @(2,4)) 'Foreign identity fixture task fully exits before its final scheduler result is evaluated'
     Check ($identityResult.complete -is [bool] -and $identityResult.complete -and
         $identityResult.differentAccount -and $identityResult.privilegedForeignIdentity -and $identityResult.refused -and
         [int64]$registeredIdentityTask.LastTaskResult -eq 0) 'A real foreign elevated Windows identity is refused by the requester identity boundary'
-    $identityExitWatch=[Diagnostics.Stopwatch]::StartNew()
-    while([int]$registeredIdentityTask.State -in @(2,4) -and $identityExitWatch.Elapsed.TotalSeconds -lt 30){Start-Sleep -Milliseconds 100}
-    Check ([int]$registeredIdentityTask.State -notin @(2,4)) 'Foreign identity fixture task fully exits before cleanup begins'
     Check ((Get-FileHash (Join-Path $app 'config.json')).Hash -ceq $configBefore -and
         (Get-FileHash (Join-Path $app 'protected-update.json')).Hash -ceq $markerBefore -and
         (Get-FileHash (Join-Path $program 'Repair-Backend.ps1')).Hash -ceq $backendBefore) 'Foreign-identity refusal leaves config, handoff evidence and protected backend bytes unchanged'

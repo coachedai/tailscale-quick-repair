@@ -130,6 +130,76 @@ public class NotificationCenter {public NotificationSettings State=new Notificat
     $before=(Get-FileHash $history).Hash;[void][Tqr.AutoRepairBackground]::Reconcile($m.Root,$false)
     Check ((ReadCodes $m.Root).Count -eq 40 -and (Get-Item $history).Length -lt 32768) 'Background and UI History share the original 40-entry byte bound'
     Check ((Get-FileHash $history).Hash -eq $before) 'Reconciliation does not resurrect events evicted by newer retained activity'
+
+    # Prolonged History unavailability is deliberately bounded rather than
+    # pretending to provide a lossless audit journal. Worker/result state keeps
+    # only current + previous snapshots, so after three completed outcomes while
+    # History is locked, reopening may recover the newest two only. The oldest
+    # must never be resurrected later.
+    $boundedRoot=NewRoot 'bounded-history-gap'
+    $boundedGate=Join-Path $boundedRoot 'health-history.gate'
+    $gateSeed=[IO.File]::Open($boundedGate,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite);$gateSeed.Dispose()
+    $gateHold=[IO.File]::Open($boundedGate,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    try {
+        for($i=0;$i -lt 3;$i++){
+            $stamp=[DateTime]::UtcNow.AddSeconds(-50+$i*10)
+            $done=New-Object Tqr.AutoRepairResult
+            $done.runId=[Guid]::NewGuid().ToString('N')
+            $done.reservedUtc=$stamp.ToString('o')
+            $done.action1='service_started'
+            $done.action1Utc=$stamp.AddSeconds(1).ToString('o')
+            $done.actionsAttempted=1;$done.actionsCompleted=1
+            $done.lastCheckedUtc=$stamp.AddSeconds(2).ToString('o')
+            $done.lastRepairUtc=$done.lastCheckedUtc;$done.lastRepairReason='local_recovery'
+            $done.status='healthy';$done.reason='local_recovery';$done.phase='Complete'
+            $done.service='Running';$done.client='Running';$done.backend='Running';$done.recoveryConfirmed=$true
+            [Tqr.AutoRepairRecords]::Save($boundedRoot,$done)
+        }
+        Check (-not(Test-Path (Join-Path $boundedRoot 'health-history.json'))) 'Three worker outcomes can complete while secondary History remains unavailable'
+    } finally { $gateHold.Dispose() }
+    Check ([Tqr.AutoRepairBackground]::Reconcile($boundedRoot,$false)) 'History reconciliation resumes after the prolonged store lock is released'
+    $boundedCodes=ReadCodes $boundedRoot
+    Check ($boundedCodes.Count -eq 6 -and
+        @($boundedCodes|Where-Object {$_ -eq 'auto_attempt'}).Count -eq 2 -and
+        @($boundedCodes|Where-Object {$_ -eq 'auto_service_started'}).Count -eq 2 -and
+        @($boundedCodes|Where-Object {$_ -eq 'auto_recovered'}).Count -eq 2) 'Bounded replay restores only current and previous outcomes after a longer History gap'
+    $boundedHash=(Get-FileHash (Join-Path $boundedRoot 'health-history.json')).Hash
+    for($i=0;$i -lt 4;$i++){[void][Tqr.AutoRepairBackground]::Reconcile($boundedRoot,$false)}
+    Check ((Get-FileHash (Join-Path $boundedRoot 'health-history.json')).Hash -eq $boundedHash -and (ReadCodes $boundedRoot).Count -eq 6) 'Older outcome beyond the replay window never resurrects after later reconciliation'
+
+    # A persistently damaged History file is also secondary. Preserve those exact
+    # bytes while multiple worker outcomes advance, then prove repair can resume
+    # from the bounded current/previous result snapshots after the known-good
+    # History bytes are restored.
+    $damagedRoot=NewRoot 'prolonged-damaged-history'
+    Check ([Tqr.LocalHistory]::Record($damagedRoot,'check_healthy',-1,-1)) 'Damaged-History fixture starts from one valid typed event'
+    $damagedPath=Join-Path $damagedRoot 'health-history.json'
+    $damagedGood=[IO.File]::ReadAllBytes($damagedPath)
+    [IO.File]::WriteAllText($damagedPath,'{persistently-damaged-history')
+    for($i=0;$i -lt 3;$i++){
+        $stamp=[DateTime]::UtcNow.AddSeconds(-45+$i*10)
+        $done=New-Object Tqr.AutoRepairResult
+        $done.runId=[Guid]::NewGuid().ToString('N')
+        $done.reservedUtc=$stamp.ToString('o')
+        $done.action1='client_opened';$done.action1Utc=$stamp.AddSeconds(1).ToString('o')
+        $done.actionsAttempted=1;$done.actionsCompleted=1
+        $done.lastCheckedUtc=$stamp.AddSeconds(2).ToString('o')
+        $done.lastRepairUtc=$done.lastCheckedUtc;$done.lastRepairReason='local_recovery'
+        $done.status='healthy';$done.reason='local_recovery';$done.phase='Complete'
+        $done.service='Running';$done.client='Running';$done.backend='Running';$done.recoveryConfirmed=$true
+        [Tqr.AutoRepairRecords]::Save($damagedRoot,$done)
+        Check ([IO.File]::ReadAllText($damagedPath) -ceq '{persistently-damaged-history') ('Worker outcome '+($i+1)+' preserves the damaged History bytes exactly')
+    }
+    Check (-not [Tqr.AutoRepairBackground]::Reconcile($damagedRoot,$false) -and
+        [IO.File]::ReadAllText($damagedPath) -ceq '{persistently-damaged-history') 'Repeated reconciliation cannot reset or bless persistently damaged History'
+    [IO.File]::WriteAllBytes($damagedPath,$damagedGood)
+    Check ([Tqr.AutoRepairBackground]::Reconcile($damagedRoot,$false)) 'Restoring known-good History bytes allows bounded background reconciliation to resume'
+    $damagedCodes=ReadCodes $damagedRoot
+    Check ($damagedCodes.Count -eq 7 -and $damagedCodes[0] -eq 'check_healthy' -and
+        @($damagedCodes|Where-Object {$_ -eq 'auto_attempt'}).Count -eq 2 -and
+        @($damagedCodes|Where-Object {$_ -eq 'auto_client_opened'}).Count -eq 2 -and
+        @($damagedCodes|Where-Object {$_ -eq 'auto_recovered'}).Count -eq 2) 'Recovered damaged History keeps its old valid event and only the newest two background outcomes'
+
     # Real separate PowerShell process executes the delivered protected entry.
     $entryRoot=NewRoot 'exited-ui';$entryState=Join-Path $entryRoot 'TailscaleQuickRepair';New-Item -ItemType Directory $entryState|Out-Null
     JsonWrite (Join-Path $entryState 'auto-repair.json') @{enabled=$true}
