@@ -241,13 +241,13 @@ public class NotificationCenter {public NotificationSettings State=new Notificat
     Check ($xml.SelectSingleNode('//t:LogonTrigger/t:UserId',$ns).InnerText -eq $sid -and $xml.SelectSingleNode('//t:LogonTrigger/t:Delay',$ns).InnerText -eq 'PT30S') 'Logon check is scoped to the installed user and delayed for settling'
     Check (@($xml.SelectNodes('//t:EventTrigger/t:Delay',$ns)|Where-Object InnerText -ne 'PT30S').Count -eq 0) 'OS event checks wait thirty seconds rather than mutating immediately'
     Check (@($xml.SelectNodes('//t:EventTrigger/t:Repetition/t:Duration',$ns)|Where-Object InnerText -ne 'PT2M').Count -eq 0) 'Event follow-up repetition is bounded independently of the five-minute fallback'
-    Check (-not $definition.Settings.WakeToRun -and $definition.Settings.StartWhenAvailable -and -not $definition.Settings.RunOnlyIfNetworkAvailable) 'Fallback does not wake the PC or require a remote-network condition'
+    Check (-not $definition.Settings.WakeToRun -and -not $definition.Settings.StartWhenAvailable -and -not $definition.Settings.RunOnlyIfNetworkAvailable) 'Fallback does not wake the PC, require a remote-network condition or replay a missed time occurrence'
     # Register only a uniquely named harmless test task. Production task names,
     # event channels and services are never changed in this acceptance fixture.
     $folderName='TqrFixture-'+[Guid]::NewGuid().ToString('N');$testFolder=$scheduler.GetFolder('\').CreateFolder($folderName,$null)
     $task=$scheduler.NewTask(0);$task.Principal.UserId=$sid;$task.Principal.LogonType=3;$task.Principal.RunLevel=0
     $task.Settings.Enabled=$true;$task.Settings.MultipleInstances=2;$task.Settings.ExecutionTimeLimit='PT1M'
-    [void]$method.Invoke($null,@($task,[DateTime]::Now.AddSeconds(-55),$sid))
+    [void]$method.Invoke($null,@($task,[DateTime]::Now.AddSeconds(2),$sid))
     for($i=1;$i -le $task.Triggers.Count;$i++){if([int]$task.Triggers.Item($i).Type -ne 1){$task.Triggers.Item($i).Enabled=$false}}
     $marker=Join-Path $root 'fallback-fired';$vbs=Join-Path $root 'fallback.vbs'
     [IO.File]::WriteAllText($vbs,('Set f=CreateObject("Scripting.FileSystemObject").CreateTextFile("'+$marker+'",True)'+[Environment]::NewLine+'f.Write "fired"'+[Environment]::NewLine+'f.Close'))
