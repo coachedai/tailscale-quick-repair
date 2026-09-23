@@ -159,6 +159,6 @@ function Test-NativeRecurrenceAttribution($Report) {
         }
     }
     if(@($Report.events|Where-Object {$_.eventId -eq 107}).Count -ne 2 -or
-       @($Report.events|Where-Object {$_.eventId -in @(108,109,110,117,118,119,120,121,122,123,124,125,322)}).Count -gt 0){return $false}
+       @($Report.events|Where-Object {$_.eventId -in @(108,109,110,114,117,118,119,120,121,122,123,124,125,322)}).Count -gt 0){return $false}
     return $true
 }
