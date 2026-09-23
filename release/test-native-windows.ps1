@@ -24,6 +24,7 @@ $timingContext=$null;$timingReport=$null;$timingError=0
 $cases=New-Object 'Collections.Generic.List[object]'
 $observations=New-Object 'Collections.Generic.List[object]'
 $passed=$false;$cleanupOK=$true;$stage='preflight';$failureType='';$failureCode=0;$reflectionBoundary='';$blockedStage='';$blockedBoundary=''
+$cleanupStage='';$cleanupFailureType='';$cleanupFailureCode=0
 $vendorInstalled=$false;$productOwned=$false;$vendorOwned=$false;$setupLease=$false
 $createdTasks=New-Object 'Collections.Generic.List[string]'
 $folderName='';$folder=$null;$scheduler=$null;$setupType=$null;$msi='';$vendorHash='';$repeatDelta=-1;$fallbackScheduledUtc='';$fallbackFirings=@();$firstDelaySeconds=-1
@@ -91,6 +92,18 @@ function Observe($Machine,[string]$Label){
 function WaitTask($Task){
     $clock=[Diagnostics.Stopwatch]::StartNew()
     while([int]$Task.State -in @(2,4)){if($clock.Elapsed.TotalSeconds -gt 120){throw 'Lab task did not finish; no active job is rerun.'};Start-Sleep -Milliseconds 200}
+}
+function Mark-CleanupFailure([string]$Stage,$Exception=$null){
+    $script:cleanupOK=$false
+    if([string]::IsNullOrEmpty($script:cleanupStage)){
+        $script:cleanupStage=$Stage
+        if($Exception){$script:cleanupFailureType=$Exception.GetType().FullName;$script:cleanupFailureCode=$Exception.HResult}
+    }
+}
+function Test-TailscaleServicePresent {
+    $service=$null
+    try{$service=Get-Service 'Tailscale' -ErrorAction SilentlyContinue;return $null -ne $service}
+    finally{if($service){$service.Dispose()}}
 }
 function MarkerTimes([string]$Path){
     if(-not(Test-Path -LiteralPath $Path)){return @()}
@@ -296,28 +309,44 @@ try{
     # Only this empty-runner suite's own installation and tasks are cleaned up.
     # Never reset a policy/ownership marker to make an assertion pass.
     if($timingContext){
-        try{$timingReport=Read-NativeRecurrenceTrace $timingContext $repeat.Task}catch{$timingError=$_.Exception.HResult;$cleanupOK=$false}
-        try{Close-NativeRecurrenceTrace $timingContext}catch{$timingError=$_.Exception.HResult;$cleanupOK=$false}
+        try{$timingReport=Read-NativeRecurrenceTrace $timingContext $repeat.Task}catch{$timingError=$_.Exception.HResult;Mark-CleanupFailure 'read_recurrence_trace' $_.Exception}
+        try{Close-NativeRecurrenceTrace $timingContext}catch{$timingError=$_.Exception.HResult;Mark-CleanupFailure 'restore_scheduler_channel' $_.Exception}
         if($timingReport){$timingReport.channelRestored=$timingContext.Restored;JsonWrite (Join-Path $evidence 'native-recurrence-trace.json') $timingReport}
     }
-    if($setupLease){try{[void](Setup 'ReleaseOperationLock' @())}catch{$cleanupOK=$false}}
+    if($setupLease){try{[void](Setup 'ReleaseOperationLock' @())}catch{Mark-CleanupFailure 'release_setup_lease' $_.Exception}}
     if($scheduler){
-        foreach($name in $createdTasks){try{$task=$scheduler.GetFolder('\').GetTask($name);$task.Enabled=$false;WaitTask $task;$scheduler.GetFolder('\').DeleteTask($name,0)}catch{$cleanupOK=$false}}
+        foreach($name in $createdTasks){
+            try{$task=$scheduler.GetFolder('\').GetTask($name);$task.Enabled=$false;WaitTask $task;$scheduler.GetFolder('\').DeleteTask($name,0)}
+            catch{if($_.Exception.HResult -ne -2147024894){Mark-CleanupFailure ('delete_product_task:'+ $name) $_.Exception}}
+        }
         if($folderName){
-            foreach($name in @('FullFallback','RealServiceEvent')){try{$task=$folder.GetTask($name);$task.Enabled=$false;WaitTask $task;$folder.DeleteTask($name,0)}catch{if($_.Exception.HResult -ne -2147024894){$cleanupOK=$false}}}
-            try{$scheduler.GetFolder('\').DeleteFolder($folderName,0)}catch{$cleanupOK=$false}
+            foreach($name in @('FullFallback','RealServiceEvent')){
+                try{$task=$folder.GetTask($name);$task.Enabled=$false;WaitTask $task;$folder.DeleteTask($name,0)}
+                catch{if($_.Exception.HResult -ne -2147024894){Mark-CleanupFailure ('delete_fixture_task:'+ $name) $_.Exception}}
+            }
+            try{$scheduler.GetFolder('\').DeleteFolder($folderName,0)}catch{if($_.Exception.HResult -ne -2147024894){Mark-CleanupFailure 'delete_fixture_folder' $_.Exception}}
+        }
+        foreach($name in $createdTasks){
+            try{[void]$scheduler.GetFolder('\').GetTask($name);Mark-CleanupFailure ('product_task_still_present:'+ $name)}
+            catch{if($_.Exception.HResult -ne -2147024894){Mark-CleanupFailure ('verify_product_task_absent:'+ $name) $_.Exception}}
         }
     }
     if($vendorOwned -and $vendorInstalled){
-        try{Msi $false;if(Get-Service 'Tailscale' -ErrorAction SilentlyContinue){$cleanupOK=$false}}catch{$cleanupOK=$false}
+        try{
+            Msi $false
+            $removeWait=[Diagnostics.Stopwatch]::StartNew()
+            while((Test-TailscaleServicePresent) -and $removeWait.Elapsed.TotalSeconds -lt 20){Start-Sleep -Milliseconds 250}
+            if(Test-TailscaleServicePresent){Mark-CleanupFailure 'vendor_service_still_registered'}
+        }catch{Mark-CleanupFailure 'uninstall_vendor_msi' $_.Exception}
     }
-    if($vendorOwned -and (Get-Service 'Tailscale' -ErrorAction SilentlyContinue)){$cleanupOK=$false}
+    if($vendorOwned -and (Test-TailscaleServicePresent)){Mark-CleanupFailure 'vendor_service_present_after_cleanup'}
     $cases.Add([pscustomobject]@{name='Only owned native lab tasks and vendor installation are cleaned up';passed=$cleanupOK})
     [pscustomobject]@{
         passed=($passed -and $cleanupOK);source=$env:GITHUB_SHA;scope='Real empty GitHub-hosted Windows machine: unmodified Setup cores, installed worker and official unauthenticated vendor service; real scheduled dispatch and full recurrence';
         vendorVersion='1.102.3';vendorSha256=$vendorHash;recurrenceSeconds=$repeatDelta;fallbackScheduledUtc=$fallbackScheduledUtc;fallbackFirings=$fallbackFirings;firstDelaySeconds=$firstDelaySeconds;cases=@($cases.ToArray());observations=@($observations.ToArray());
         failureStage=$(if($passed){''}else{$blockedStage});failureType=$failureType;failureCode=$failureCode;reflectionBoundary=$blockedBoundary;timingTraceError=$timingError;
+        cleanupStage=$cleanupStage;cleanupFailureType=$cleanupFailureType;cleanupFailureCode=$cleanupFailureCode;
         limits=@('No tailnet login, authentication key or remote peer','Fresh stopped-service policy is an explicitly separate state fixture; observed-intent state is preserved','Real service event uses the exact Setup subscription with a harmless action; actual monitor task dispatch is a separate test','Setup verification/application/registration cores execute natively; interactive UAC, alternate-admin, restart/rollback and full entry are not certified','No actual sleep/resume, logon or VPN transition is induced','No raw vendor logs, host paths, usernames, addresses, private state or MSI is uploaded; transient files remain only on the disposable runner')
     }|ConvertTo-Json -Depth 10|Set-Content (Join-Path $evidence 'native-windows-results.json') -Encoding UTF8
 }
-if(-not $passed -or -not $cleanupOK){throw ('Native Windows acceptance remains blocked: '+$blockedStage)}
+if(-not $passed -or -not $cleanupOK){$why=if(-not $passed){$blockedStage}else{$cleanupStage};throw ('Native Windows acceptance remains blocked: '+$why)}
