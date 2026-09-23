@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('InstallLegacy','ApplyPause','RecoveryPause','Recover')][string]$Phase,
+    [ValidateSet('InstallLegacy','ApplyPause','RecoveryPause','Recover','RecoverRefuse')][string]$Phase,
     [string]$Package,
     [string]$Work,
     [int]$PauseAfter=0,
@@ -59,6 +59,17 @@ try{
             }
         }
         [void](Invoke-Private $type 'RecoverInterruptedFileTransactionCore' @($callback))
+    }
+    elseif($Phase -eq 'RecoverRefuse'){
+        $ownerRefused=$false
+        try{
+            [void](Invoke-Private $type 'RecoverInterruptedFileTransaction')
+        }catch{
+            for($ex=$_.Exception;$ex;$ex=$ex.InnerException){
+                if($ex -is [UnauthorizedAccessException]){$ownerRefused=$true;break}
+            }
+        }
+        if(-not $ownerRefused){throw 'Recovery owner mismatch was not refused by the packaged Setup core.'}
     }
     else{
         $recovered=[bool](Invoke-Private $type 'RecoverInterruptedFileTransaction')
