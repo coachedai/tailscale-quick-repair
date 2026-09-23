@@ -265,13 +265,7 @@ internal static class PublicSetupHost
 
             StopQuickRepair();
             ApplyFiles(files, work);
-            WriteLocalConfig(peer);
-            RegisterRepairTask();
-            RegisterAutoRepairTask();
-            ConfigureStartup(startup);
-            CreateStartMenuShortcut();
-            if (upgradeOnly) WriteRestartPending(package.VersionCode);
-            RemoveProtectedUpdateMarker();
+            CompleteInstalledIntegration(peer, startup, upgradeOnly, package.VersionCode);
             StartQuickRepair();
 
             MessageBox.Show(
@@ -287,6 +281,49 @@ internal static class PublicSetupHost
         {
             try { if (Directory.Exists(work)) Directory.Delete(work, true); } catch { }
         }
+    }
+
+    private static void CompleteInstalledIntegration(string peer, bool startup, bool upgradeOnly, long versionCode)
+    {
+        CompleteInstalledIntegrationCore(peer, startup, upgradeOnly, versionCode, null);
+    }
+
+    // Production uses the wrapper above. The callback is a private acceptance
+    // seam that lets the disposable Windows lab kill Setup at a known completed
+    // integration step, then prove the next process can safely replay the same
+    // fixed sequence to completion.
+    private static void CompleteInstalledIntegrationCore(
+        string peer,
+        bool startup,
+        bool upgradeOnly,
+        long versionCode,
+        Action<int> afterStep)
+    {
+        int step = 0;
+
+        WriteLocalConfig(peer);
+        if (afterStep != null) afterStep(++step); else step++;
+
+        RegisterRepairTask();
+        if (afterStep != null) afterStep(++step); else step++;
+
+        RegisterAutoRepairTask();
+        if (afterStep != null) afterStep(++step); else step++;
+
+        ConfigureStartup(startup);
+        if (afterStep != null) afterStep(++step); else step++;
+
+        CreateStartMenuShortcut();
+        if (afterStep != null) afterStep(++step); else step++;
+
+        if (upgradeOnly)
+        {
+            WriteRestartPending(versionCode);
+            if (afterStep != null) afterStep(++step); else step++;
+        }
+
+        RemoveProtectedUpdateMarker();
+        if (afterStep != null) afterStep(++step);
     }
 
     private static int RepairIntegration(string peer, bool startup)
