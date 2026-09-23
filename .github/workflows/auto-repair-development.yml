@@ -31,6 +31,8 @@ jobs:
         run: .\release\test-release-pipeline.ps1 -EvidenceDirectory .\test-evidence
       - name: Build both existing delivery paths
         shell: powershell
+        env:
+          TQR_UPDATER_SELFTEST_TOKEN: ${{ github.token }}
         run: |
           .\release\build.ps1 -OutputDirectory .\dist
           .\release\finalize-package.ps1 -OutputDirectory .\dist
