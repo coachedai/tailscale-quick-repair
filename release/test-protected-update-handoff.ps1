@@ -19,6 +19,8 @@ $lab=Join-Path $env:RUNNER_TEMP ('TqrProtectedHandoff-'+[Guid]::NewGuid().ToStri
 $app=Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair';$program=Join-Path $env:ProgramData 'TailscaleQuickRepair'
 $cases=New-Object 'Collections.Generic.List[object]';$passed=$false;$failure=$null;$stage='preflight';$child=$null;$cleanup=$true
 $identityScheduler=$null;$identityFolder=$null;$identityFolderName='';$identityRoot=''
+$identityTask=$null;$identityAction=$null;$registeredIdentityTask=$null
+$cleanupFailures=New-Object 'Collections.Generic.List[string]'
 $legacyHash='bad4deb522afd9442e918cacde1f58cc1509635de3be172626846060516df470'
 function Check([bool]$Value,[string]$Name){$script:stage=$Name;$cases.Add([pscustomobject]@{name=$Name;passed=$Value});if(-not $Value){throw 'Protected handoff assertion failed.'};Write-Host ('PASS protected handoff: '+$Name)}
 function Expand-Zip([string]$Zip,[string]$Destination){Expand-Archive -LiteralPath $Zip -DestinationPath $Destination;return (Get-Content (Join-Path $Destination 'package-manifest.json') -Raw|ConvertFrom-Json)}
@@ -162,6 +164,9 @@ if(-not $complete){exit 23}
     Check ($identityResult.complete -is [bool] -and $identityResult.complete -and
         $identityResult.differentAccount -and $identityResult.privilegedForeignIdentity -and $identityResult.refused -and
         [int64]$registeredIdentityTask.LastTaskResult -eq 0) 'A real foreign elevated Windows identity is refused by the requester identity boundary'
+    $identityExitWatch=[Diagnostics.Stopwatch]::StartNew()
+    while([int]$registeredIdentityTask.State -in @(2,4) -and $identityExitWatch.Elapsed.TotalSeconds -lt 30){Start-Sleep -Milliseconds 100}
+    Check ([int]$registeredIdentityTask.State -notin @(2,4)) 'Foreign identity fixture task fully exits before cleanup begins'
     Check ((Get-FileHash (Join-Path $app 'config.json')).Hash -ceq $configBefore -and
         (Get-FileHash (Join-Path $app 'protected-update.json')).Hash -ceq $markerBefore -and
         (Get-FileHash (Join-Path $program 'Repair-Backend.ps1')).Hash -ceq $backendBefore) 'Foreign-identity refusal leaves config, handoff evidence and protected backend bytes unchanged'
@@ -208,15 +213,62 @@ if(-not $complete){exit 23}
     $chain=New-Object 'Collections.Generic.List[object]';for($ex=$_.Exception;$ex;$ex=$ex.InnerException){$chain.Add([pscustomobject]@{type=$ex.GetType().FullName;code=$ex.HResult})}
     $failure=[pscustomobject]@{stage=$stage;line=$_.InvocationInfo.ScriptLineNumber;exceptions=@($chain.ToArray())}
 }finally{
-    if($child){try{if(-not $child.HasExited){$child.Kill();[void]$child.WaitForExit(5000)}}catch{$cleanup=$false};$child.Dispose()}
-    if($identityFolder){try{$identityFolder.DeleteTask('RequesterIdentityCheck',0)}catch{}}
-    if($identityScheduler -and $identityFolderName){try{$identityScheduler.GetFolder('\\').DeleteFolder($identityFolderName,0)}catch{$cleanup=$false}}
-    if($identityRoot -and (Test-Path -LiteralPath $identityRoot)){try{Remove-Item -LiteralPath $identityRoot -Recurse -Force}catch{$cleanup=$false}}
+    if($child){
+        try{if(-not $child.HasExited){$child.Kill();[void]$child.WaitForExit(5000)}}catch{$cleanup=$false;$cleanupFailures.Add('child_stop')}
+        $child.Dispose()
+    }
+
+    if($registeredIdentityTask){
+        try{
+            $identityCleanupWatch=[Diagnostics.Stopwatch]::StartNew()
+            while([int]$registeredIdentityTask.State -in @(2,4) -and $identityCleanupWatch.Elapsed.TotalSeconds -lt 30){Start-Sleep -Milliseconds 100}
+            if([int]$registeredIdentityTask.State -in @(2,4)){throw 'Owned identity task remained active.'}
+            $registeredIdentityTask.Enabled=$false
+        }catch{$cleanup=$false;$cleanupFailures.Add('identity_task_wait')}
+    }
+    if($identityFolder){
+        try{$identityFolder.DeleteTask('RequesterIdentityCheck',0)}catch{$cleanup=$false;$cleanupFailures.Add('identity_task_delete')}
+    }
+    foreach($item in @($registeredIdentityTask,$identityAction,$identityTask,$identityFolder)){
+        if($item){try{[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($item)}catch{}}
+    }
+    $registeredIdentityTask=$null;$identityAction=$null;$identityTask=$null;$identityFolder=$null
+
+    if($identityScheduler -and $identityFolderName){
+        try{$identityScheduler.GetFolder('\').DeleteFolder($identityFolderName,0)}catch{$cleanup=$false;$cleanupFailures.Add('identity_folder_delete')}
+    }
+    if($identityScheduler){try{[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($identityScheduler)}catch{};$identityScheduler=$null}
+    if($identityRoot -and (Test-Path -LiteralPath $identityRoot)){
+        try{Remove-Item -LiteralPath $identityRoot -Recurse -Force}catch{$cleanup=$false;$cleanupFailures.Add('identity_root_remove')}
+    }
+
     Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name 'PendingRestartVersionCode' -ErrorAction SilentlyContinue
-    $scheduler=$null
-    try{$scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();$folder=$scheduler.GetFolder('\');foreach($name in @('Tailscale Quick Repair','Tailscale Quick Repair Auto Monitor')){try{$t=$folder.GetTask($name);$t.Enabled=$false;$folder.DeleteTask($name,0)}catch{}}}catch{$cleanup=$false}
+    $scheduler=$null;$folder=$null
+    try{
+        $scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();$folder=$scheduler.GetFolder('\')
+        foreach($name in @('Tailscale Quick Repair','Tailscale Quick Repair Auto Monitor')){
+            $t=$null
+            try{
+                $t=$folder.GetTask($name)
+                $taskCleanupWatch=[Diagnostics.Stopwatch]::StartNew()
+                while([int]$t.State -in @(2,4) -and $taskCleanupWatch.Elapsed.TotalSeconds -lt 30){Start-Sleep -Milliseconds 100}
+                if([int]$t.State -in @(2,4)){throw 'Owned product task remained active.'}
+                $t.Enabled=$false
+                $folder.DeleteTask($name,0)
+            }catch{
+                if($_.Exception.HResult -ne -2147024894){$cleanup=$false;$cleanupFailures.Add('product_task_cleanup')}
+            }finally{
+                if($t){try{[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($t)}catch{}}
+            }
+        }
+    }catch{$cleanup=$false;$cleanupFailures.Add('product_scheduler_cleanup')}
+    finally{
+        foreach($item in @($folder,$scheduler)){if($item){try{[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($item)}catch{}}}
+    }
+
     $cases.Add([pscustomobject]@{name='Only fixture-owned scheduled tasks are removed after the handoff test';passed=$cleanup})
     [pscustomobject]@{passed=($passed -and $cleanup);source=$env:GITHUB_SHA;fromVersion='3.0.0-phase5.2.1';cases=@($cases.ToArray());failure=$failure;
+      cleanupFailures=@($cleanupFailures.ToArray());
       scope='Published updater applies only the user-level bridge; refreshed Setup marker and route are verified separately';
       limits=@('No live update manifest is changed','The final protected package is not applied through the public channel in this test','Physical UAC visuals and credential-prompt interaction remain separate field acceptance','A real foreign elevated Windows identity is tested for safe refusal; separate-administrator credential-prompt support remains outside automated acceptance','Existing protected files are compared and left untouched by the old updater')}|ConvertTo-Json -Depth 9|Set-Content (Join-Path $evidence 'protected-handoff-results.json') -Encoding UTF8
 }
