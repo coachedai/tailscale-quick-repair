@@ -8,6 +8,7 @@ $root=Join-Path $env:TEMP ('TQR-Background-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root|Out-Null
 $cases=New-Object 'Collections.Generic.List[object]';$passed=$false
 $scheduler=$null;$testFolder=$null;$registered=$null;$folderName='';$child=$null
+$fixtureTaskNames=New-Object 'Collections.Generic.List[string]'
 function Check([bool]$Value,[string]$Name){
     $cases.Add([pscustomobject]@{name=$Name;passed=$Value})
     if(-not $Value){throw "FAILED background: $Name"}
@@ -242,22 +243,41 @@ public class NotificationCenter {public NotificationSettings State=new Notificat
     Check (@($xml.SelectNodes('//t:EventTrigger/t:Delay',$ns)|Where-Object InnerText -ne 'PT30S').Count -eq 0) 'OS event checks wait thirty seconds rather than mutating immediately'
     Check (@($xml.SelectNodes('//t:EventTrigger/t:Repetition/t:Duration',$ns)|Where-Object InnerText -ne 'PT2M').Count -eq 0) 'Event follow-up repetition is bounded independently of the five-minute fallback'
     Check (-not $definition.Settings.WakeToRun -and -not $definition.Settings.StartWhenAvailable -and -not $definition.Settings.RunOnlyIfNetworkAvailable) 'Fallback does not wake the PC, require a remote-network condition or replay a missed time occurrence'
-    # Register only a uniquely named harmless test task. Production task names,
+    # Register only uniquely named harmless test tasks. Production task names,
     # event channels and services are never changed in this acceptance fixture.
     $folderName='TqrFixture-'+[Guid]::NewGuid().ToString('N');$testFolder=$scheduler.GetFolder('\').CreateFolder($folderName,$null)
+
+    # First prove that a time occurrence already missed before registration is
+    # NOT replayed. Its next normal PT5M occurrence remains several minutes away.
+    $missedTask=$scheduler.NewTask(0);$missedTask.Principal.UserId=$sid;$missedTask.Principal.LogonType=3;$missedTask.Principal.RunLevel=0
+    $missedTask.Settings.Enabled=$true;$missedTask.Settings.MultipleInstances=2;$missedTask.Settings.ExecutionTimeLimit='PT1M'
+    [void]$method.Invoke($null,@($missedTask,[DateTime]::Now.AddMinutes(-2),$sid))
+    for($i=1;$i -le $missedTask.Triggers.Count;$i++){if([int]$missedTask.Triggers.Item($i).Type -ne 1){$missedTask.Triggers.Item($i).Enabled=$false}}
+    $missedMarker=Join-Path $root 'missed-fallback-fired';$missedVbs=Join-Path $root 'missed-fallback.vbs'
+    [IO.File]::WriteAllText($missedVbs,('Set f=CreateObject("Scripting.FileSystemObject").CreateTextFile("'+$missedMarker+'",True)'+[Environment]::NewLine+'f.Write "fired"'+[Environment]::NewLine+'f.Close'))
+    $missedAction=$missedTask.Actions.Create(0);$missedAction.Path=Join-Path $env:WINDIR 'System32\wscript.exe';$missedAction.Arguments='"'+$missedVbs+'"';$missedAction.WorkingDirectory=$root
+    $registered=$testFolder.RegisterTaskDefinition('MissedFallback',$missedTask,2,$null,$null,3,$null);$fixtureTaskNames.Add('MissedFallback')
+    Check ($null -ne $registered) 'Native Task Scheduler accepts the no-catch-up fallback definition'
+    Start-Sleep -Seconds 8
+    Check (-not(Test-Path $missedMarker)) 'A missed fallback occurrence is not replayed after registration'
+    $registered.Enabled=$false;$testFolder.DeleteTask('MissedFallback',0);[void]$fixtureTaskNames.Remove('MissedFallback')
+
+    # Then prove the same schedule still executes a genuinely future occurrence.
+    # ConfigureAutoMonitorSchedule adds one minute, so -45 seconds yields a start
+    # boundary about fifteen seconds in the future without changing PT5M.
     $task=$scheduler.NewTask(0);$task.Principal.UserId=$sid;$task.Principal.LogonType=3;$task.Principal.RunLevel=0
     $task.Settings.Enabled=$true;$task.Settings.MultipleInstances=2;$task.Settings.ExecutionTimeLimit='PT1M'
-    [void]$method.Invoke($null,@($task,[DateTime]::Now.AddSeconds(2),$sid))
+    [void]$method.Invoke($null,@($task,[DateTime]::Now.AddSeconds(-45),$sid))
     for($i=1;$i -le $task.Triggers.Count;$i++){if([int]$task.Triggers.Item($i).Type -ne 1){$task.Triggers.Item($i).Enabled=$false}}
     $marker=Join-Path $root 'fallback-fired';$vbs=Join-Path $root 'fallback.vbs'
     [IO.File]::WriteAllText($vbs,('Set f=CreateObject("Scripting.FileSystemObject").CreateTextFile("'+$marker+'",True)'+[Environment]::NewLine+'f.Write "fired"'+[Environment]::NewLine+'f.Close'))
     $action=$task.Actions.Create(0);$action.Path=Join-Path $env:WINDIR 'System32\wscript.exe';$action.Arguments='"'+$vbs+'"';$action.WorkingDirectory=$root
-    $registered=$testFolder.RegisterTaskDefinition('HarmlessFallback',$task,2,$null,$null,3,$null)
-    Check ($null -ne $registered) 'Native Task Scheduler accepts and registers the exact trigger construction with a harmless action'
-    $limit=[DateTime]::UtcNow.AddSeconds(30)
+    $registered=$testFolder.RegisterTaskDefinition('HarmlessFallback',$task,2,$null,$null,3,$null);$fixtureTaskNames.Add('HarmlessFallback')
+    Check ($null -ne $registered) 'Native Task Scheduler accepts and registers the exact future fallback construction with a harmless action'
+    $limit=[DateTime]::UtcNow.AddSeconds(45)
     while(-not(Test-Path $marker) -and [DateTime]::UtcNow -lt $limit){Start-Sleep -Milliseconds 200}
-    Check ((Test-Path $marker) -and (Get-Content $marker -Raw) -eq 'fired') 'Real fallback time trigger fires its harmless action with no Quick Repair UI'
-    $registered.Enabled=$false;$testFolder.DeleteTask('HarmlessFallback',0)
+    Check ((Test-Path $marker) -and (Get-Content $marker -Raw) -eq 'fired') 'A normally scheduled future fallback fires its harmless action with no Quick Repair UI'
+    $registered.Enabled=$false;$testFolder.DeleteTask('HarmlessFallback',0);[void]$fixtureTaskNames.Remove('HarmlessFallback')
     $removedFolder=$folderName
     $scheduler.GetFolder('\').DeleteFolder($folderName,0);$folderName=''
     $stillExists=$false
@@ -268,6 +288,9 @@ public class NotificationCenter {public NotificationSettings State=new Notificat
 finally {
     if($script:autoRepairTriggerTimer){$script:autoRepairTriggerTimer.Stop()}
     if($child){try{if(-not $child.HasExited){$child.Kill();[void]$child.WaitForExit(1000)}}catch{};$child.Dispose()}
-    if($folderName -and $scheduler){try{$testFolder.DeleteTask('HarmlessFallback',0)}catch{};try{$scheduler.GetFolder('\').DeleteFolder($folderName,0)}catch{}}
+    if($folderName -and $scheduler){
+        foreach($name in @($fixtureTaskNames.ToArray())){try{$testFolder.DeleteTask($name,0)}catch{}}
+        try{$scheduler.GetFolder('\').DeleteFolder($folderName,0)}catch{}
+    }
     [pscustomobject]@{passed=$passed;scope='Actual packaged background worker History, monotonic event queue, WPF timer and native Setup trigger construction; harmless native fallback task';cases=@($cases.ToArray());limits=@('Service and client actions are fixtures','No real OS sleep, network or service event is deliberately generated','Timer fixture advances initial start time, not the five-minute repetition interval','No elevated Setup, alternate-admin, whole-PC power loss or guaranteed notification delivery claim','Reconciliation is bounded to current and previous worker snapshots, not an unlimited outage journal')}|ConvertTo-Json -Depth 10|Set-Content (Join-Path $evidence 'auto-background-results.json') -Encoding UTF8
 }
