@@ -267,6 +267,7 @@ try{
     # process setup can delay the first marker. Keep the full interval assertion.
     $repeat=HarmlessTask 'FullFallback' 'LocalFallback'
     Check ($repeat.Task.Definition.Triggers.Item(1).Repetition.Interval -eq 'PT5M') 'Real fallback task retains the full five-minute repetition interval'
+    Check (-not [bool]$repeat.Task.Definition.Settings.StartWhenAvailable) 'Real fallback does not queue a separate catch-up run after a missed time occurrence'
     $fallbackScheduledUtc=[DateTime]::Parse([string]$repeat.Task.Definition.Triggers.Item(1).StartBoundary).ToUniversalTime().ToString('o')
     Stage 'observe second real fallback firing after a full five minutes'
     $recurrenceWait=[Diagnostics.Stopwatch]::StartNew()
