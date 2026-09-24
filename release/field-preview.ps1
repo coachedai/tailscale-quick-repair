@@ -5,7 +5,9 @@ param(
     [switch]$ElevatedApply,
     [string]$RequesterSid = '',
     [switch]$CiNoElevation,
-    [switch]$CiNoRelaunch
+    [switch]$CiNoRelaunch,
+    [switch]$CiCancelBeforeProtected,
+    [switch]$CiPrivacyFailureProbe
 )
 
 $ErrorActionPreference = 'Stop'
@@ -155,7 +157,12 @@ function Expand-Candidate([string]$Zip,[bool]$AllowProgram,[bool]$RequireMarker)
 function Invoke-Private([Type]$Type,[string]$Name,[object[]]$Arguments=@()) {
     $method = $Type.GetMethod($Name,[Reflection.BindingFlags]'NonPublic,Static')
     if (-not $method) { Fail "Required preview boundary is missing: $Name" }
-    try { return $method.Invoke($null,$Arguments) }
+    $native = New-Object object[] $Arguments.Count
+    for ($i = 0; $i -lt $Arguments.Count; $i++) {
+        if ($null -eq $Arguments[$i]) { $native[$i] = $null }
+        else { $native[$i] = $Arguments[$i].PSObject.BaseObject }
+    }
+    try { return ,($method.Invoke($null,$native)) }
     catch {
         $ex = $_.Exception
         while ($ex.InnerException) { $ex = $ex.InnerException }
@@ -198,24 +205,35 @@ function Assert-NoQuickRepairUi {
 }
 
 function Get-ProtectedBaselineHashes {
+    $required = @('Repair-Backend.ps1','Auto-Repair-Monitor.ps1','TailscaleQuickRepair.Operations.dll')
     $hashes = [ordered]@{}
-    foreach ($name in @('Repair-Backend.ps1','Auto-Repair-Monitor.ps1','TailscaleQuickRepair.Operations.dll')) {
+    foreach ($name in $required) {
         $path = Join-Path $ProgramDir $name
-        if (Test-Path -LiteralPath $path -PathType Leaf) {
-            $hashes[$name] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            Fail 'The installed protected 5.2.1 baseline is incomplete. No field upgrade was started.'
         }
+        $hashes[$name] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     }
+    if ($hashes.Count -ne $required.Count) { Fail 'The protected baseline could not be captured completely.' }
     return $hashes
 }
 
 function Assert-ProtectedHashesUnchanged($Before) {
-    if (-not $Before) { return $true }
-    foreach ($name in $Before.Keys) {
+    $required = @('Repair-Backend.ps1','Auto-Repair-Monitor.ps1','TailscaleQuickRepair.Operations.dll')
+    if (-not $Before -or $Before.Count -ne $required.Count) { return $false }
+    foreach ($name in $required) {
+        if ($Before.Keys -notcontains $name) { return $false }
         $path = Join-Path $ProgramDir $name
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$Before[$name]) { return $false }
     }
     return $true
+}
+
+function Assert-CiFieldMode {
+    if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-quick-repair') {
+        Fail 'CI field mode is restricted to the disposable GitHub acceptance runner.'
+    }
 }
 
 function Read-InstalledVersion {
@@ -303,6 +321,10 @@ function Apply-Protected($protected,[string]$ExpectedRequesterSid) {
 
 try {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
+    if ($CiPrivacyFailureProbe) {
+        Assert-CiFieldMode
+        throw [InvalidOperationException]::new(('CI privacy probe local path: ' + $env:USERPROFILE))
+    }
     if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) { Fail 'The validated candidate folder was not found.' }
     $OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
     $ordinaryZip = Get-OneCandidate 'TailscaleQuickRepair-3.0.0-phase6.4.0-preview.zip'
@@ -326,10 +348,23 @@ try {
     $protectedBefore = Get-ProtectedBaselineHashes
     Stage-Bridge $ordinary
 
-    if ($CiNoElevation) {
-        if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-quick-repair') {
-            Fail 'No-elevation mode is restricted to the disposable GitHub acceptance runner.'
+    if ($CiCancelBeforeProtected) {
+        if ($CiNoElevation) { Fail 'Only one CI protected-stage mode may be selected.' }
+        Assert-CiFieldMode
+        $result.stage = 'ci_uac_cancel'
+        $result.elevationRequested = $true
+        $result.elevationCancelled = $true
+        $result.protectedUnchangedOnCancel = Assert-ProtectedHashesUnchanged $protectedBefore
+        if (-not $result.protectedUnchangedOnCancel) {
+            Fail 'The simulated approval cancellation did not preserve the complete protected baseline.'
         }
+        $result.error = ''
+        Save-Result
+        exit 2
+    }
+
+    if ($CiNoElevation) {
+        Assert-CiFieldMode
         $result.stage = 'ci_protected_apply'
         Apply-Protected $protected $sid
     } else {
@@ -384,7 +419,9 @@ try {
     exit 0
 }
 catch {
-    if ([string]::IsNullOrWhiteSpace([string]$result.error)) { $result.error = $_.Exception.Message }
+    if ([string]::IsNullOrWhiteSpace([string]$result.error)) {
+        $result.error = 'Unexpected field-preview failure. No raw exception details were saved.'
+    }
     Save-Result
     Write-Error $_.Exception.Message
     exit 1

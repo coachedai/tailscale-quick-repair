@@ -47,16 +47,54 @@ try{
     $installed=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
     Check ($installed.version -ceq '3.0.0-phase5.2.1' -and [int64]$installed.versionCode -eq 30000621) 'Field harness sees the genuine 5.2.1 installed baseline'
 
+    $protectedBaseline=[ordered]@{}
+    foreach($name in @('Repair-Backend.ps1','Auto-Repair-Monitor.ps1','TailscaleQuickRepair.Operations.dll')){
+        $path=Join-Path $program $name
+        Check (Test-Path -LiteralPath $path -PathType Leaf) ('Published 5.2.1 protected baseline contains '+$name)
+        $protectedBaseline[$name]=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+
+    $privacyReport=Join-Path $evidence 'field-preview-privacy-probe.json'
+    $privacyPsi=New-Object Diagnostics.ProcessStartInfo
+    $privacyPsi.FileName=Join-Path $PSHOME 'powershell.exe';$privacyPsi.UseShellExecute=$false;$privacyPsi.CreateNoWindow=$true
+    $privacyPsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath "'+$privacyReport+'" -CiPrivacyFailureProbe'
+    $child=[Diagnostics.Process]::Start($privacyPsi)
+    Check ($child.WaitForExit(30000) -and $child.ExitCode -eq 1 -and (Test-Path -LiteralPath $privacyReport -PathType Leaf)) 'Field preview privacy probe fails before mutation'
+    $child.Dispose();$child=$null
+    $privacyRaw=Get-Content -LiteralPath $privacyReport -Raw
+    $privacy=$privacyRaw|ConvertFrom-Json
+    Check ($privacy.passed -is [bool] -and -not $privacy.passed -and $privacy.error -ceq 'Unexpected field-preview failure. No raw exception details were saved.') 'Unexpected field failure persists only a curated error'
+    Check ([string]::IsNullOrEmpty($env:USERPROFILE) -or -not $privacyRaw.Contains($env:USERPROFILE)) 'Field result does not persist the local user profile path'
+    $stillBaseline=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
+    Check ([int64]$stillBaseline.versionCode -eq 30000621 -and -not(Test-Path (Join-Path $app 'protected-update.json'))) 'Privacy probe cannot stage or mutate the installed baseline'
+
+    $cancelReport=Join-Path $evidence 'field-preview-cancel-results.json'
+    $cancelPsi=New-Object Diagnostics.ProcessStartInfo
+    $cancelPsi.FileName=Join-Path $PSHOME 'powershell.exe';$cancelPsi.UseShellExecute=$false;$cancelPsi.CreateNoWindow=$true
+    $cancelPsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath "'+$cancelReport+'" -CiCancelBeforeProtected -CiNoRelaunch'
+    $child=[Diagnostics.Process]::Start($cancelPsi)
+    Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 2 -and (Test-Path -LiteralPath $cancelReport -PathType Leaf)) 'Field preview simulates UAC cancellation only after the verified bridge is staged'
+    $child.Dispose();$child=$null
+    $cancel=Get-Content -LiteralPath $cancelReport -Raw|ConvertFrom-Json
+    Check ($cancel.baselineVerified -and $cancel.bridgeVerified -and $cancel.bridgeApplied -and $cancel.elevationRequested -and $cancel.elevationCancelled -and $cancel.protectedUnchangedOnCancel -and -not $cancel.protectedApplied) 'Cancellation result records the complete pre-protected boundary'
+    foreach($name in $protectedBaseline.Keys){
+        $path=Join-Path $program $name
+        $expectedHash=[string]$protectedBaseline[$name]
+        Check ((Test-Path -LiteralPath $path -PathType Leaf) -and (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $expectedHash) ('Cancellation preserves protected 5.2.1 hash for '+$name)
+    }
+    $staged=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
+    Check ([int64]$staged.versionCode -eq 30000740 -and (Test-Path (Join-Path $app 'protected-update.json') -PathType Leaf)) 'Cancellation leaves only the verified 6.4 bridge staged for retry'
+
     $report=Join-Path $evidence 'field-preview-results.json'
     $fieldPsi=New-Object Diagnostics.ProcessStartInfo
     $fieldPsi.FileName=Join-Path $PSHOME 'powershell.exe';$fieldPsi.UseShellExecute=$false;$fieldPsi.CreateNoWindow=$true
     $fieldPsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath "'+$report+'" -CiNoElevation -CiNoRelaunch'
     $child=[Diagnostics.Process]::Start($fieldPsi)
-    Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 0 -and (Test-Path -LiteralPath $report -PathType Leaf)) 'Field preview harness completes its disposable no-UAC core path'
+    Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 0 -and (Test-Path -LiteralPath $report -PathType Leaf)) 'Field preview retry completes its disposable no-UAC protected core path'
     $child.Dispose();$child=$null
     $field=Get-Content -LiteralPath $report -Raw|ConvertFrom-Json
-    Check ($field.passed -is [bool] -and $field.passed -and $field.baselineVerified -and $field.bridgeVerified -and $field.bridgeApplied) 'Field preview records the verified 5.2.1 bridge transition'
-    Check ($field.requesterIdentityVerified -and $field.protectedPackageVerified -and $field.protectedApplied) 'Field preview records same-user protected package completion'
+    Check ($field.passed -is [bool] -and $field.passed -and -not $field.baselineVerified -and $field.bridgeVerified -and $field.bridgeApplied) 'Field preview retry reuses the staged bridge without pretending the baseline was reverified'
+    Check ($field.requesterIdentityVerified -and $field.protectedPackageVerified -and $field.protectedApplied) 'Field preview retry records same-user protected package completion'
     Check (-not $field.restartAcknowledged) 'CI no-relaunch mode never manufactures physical restart acknowledgement'
     Check (-not(Test-Path (Join-Path $app 'protected-update.json'))) 'Protected completion removes the exact bridge marker'
     $candidate=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json

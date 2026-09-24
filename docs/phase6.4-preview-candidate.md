@@ -30,4 +30,4 @@ The development workflow validates a separate field helper on a disposable hoste
 
 The helper is explicitly checked to be absent from both shipping packages. It does not add a local-package mode to the production updater or Setup executable, does not alter `main` or the live update manifest, and does not publish a GitHub Release.
 
-Hosted acceptance exercises the same released-5.2.1 updater core and refreshed protected Setup core without displaying a UAC prompt. It does not claim the physical UAC approve/cancel/retry or real desktop lifecycle checks; those remain field acceptance.
+Hosted acceptance exercises the same released-5.2.1 updater core and refreshed protected Setup core without displaying a UAC prompt. It also simulates the pre-protected cancellation boundary, verifies the complete protected baseline remains byte-for-byte unchanged, and then retries from the staged bridge. This certifies cancellation/retry state handling, not the physical Windows UAC screen itself. Physical UAC presentation/interaction and real desktop lifecycle checks remain field acceptance.

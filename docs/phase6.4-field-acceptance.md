@@ -30,9 +30,9 @@ Keep these files together in one folder:
 
 Open Windows PowerShell in that folder and run:
 
-powershell
+```powershell
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\field-preview.ps1 -OutputDirectory .
-
+```
 
 The helper verifies both outer SHA-256 sidecars, every inner package-manifest entry, the fixed 6.4 version/code, bridge/protected file boundaries, and the current Windows account before mutation.
 
@@ -40,13 +40,13 @@ The first stage uses the **installed released 5.2.1 updater core** to apply only
 
 The field helper itself is developer test tooling and is launched from Windows PowerShell. Any console belonging to the helper is therefore **not** evidence of a product console flash. The no-console requirement applies to normal Quick Repair, updater and Setup operation outside this helper path.
 
-A small phase6.4-field-result.json file is written beside the helper. It contains only typed booleans, the preview version/code, the current acceptance stage and an error message when applicable. It does not record the configured peer, Windows SID, usernames, IP addresses, device names or local paths.
+A small phase6.4-field-result.json file is written beside the helper. It contains only typed booleans, the preview version/code, the current acceptance stage and a curated error message when applicable. Unexpected PowerShell exception text is never copied into that file. It does not record the configured peer, Windows SID, usernames, IP addresses, device names or local paths.
 
 ## UAC cancellation test
 
-Cancelling the Windows approval prompt is a valid test. The helper reports that approval was cancelled, verifies the protected baseline hashes are unchanged, and leaves the verified bridge plus its protected-update marker staged. If that protected-file check fails, the field run fails closed.
+Cancelling the Windows approval prompt is a valid test. Before staging anything, the helper requires the complete published protected baseline to be present. After cancellation it verifies every expected protected baseline file is still present with the same SHA-256, then leaves only the verified user-level bridge plus its protected-update marker staged. If the baseline is incomplete or any protected hash changes, the field run fails closed.
 
-Run the same command again and approve the prompt. The helper recognises the already-staged bridge and continues at the protected boundary instead of trying to reapply 5.2.1 -> 6.4.
+Run the same command again and approve the prompt. The helper recognises the already-staged bridge and continues at the protected boundary instead of trying to reapply 5.2.1 -> 6.4. Hosted acceptance also exercises this cancel/stage/retry state transition without claiming to reproduce the physical Windows UAC screen.
 
 ## Passing first field upgrade
 
