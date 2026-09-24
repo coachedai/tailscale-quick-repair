@@ -23,3 +23,11 @@ The preview is intended to close the few behaviors that hosted Windows runners c
 The approving administrator must currently be the same Windows account that launched Quick Repair. Using separate administrator credentials is intentionally refused so per-user state is never written into the wrong profile.
 
 Automatic repair should remain off during the initial field-upgrade check. Enable it only after the installed version, local status and protected-update completion are confirmed.
+
+## Developer-only field artifact
+
+The development workflow validates a separate field helper on a disposable hosted Windows runner before it emits a `phase6.4-field-preview` artifact. The artifact contains the helper, the field instructions, and only the exact validated ordinary and protected candidate ZIPs with their SHA-256 sidecars plus the exact source commit identifier.
+
+The helper is explicitly checked to be absent from both shipping packages. It does not add a local-package mode to the production updater or Setup executable, does not alter `main` or the live update manifest, and does not publish a GitHub Release.
+
+Hosted acceptance exercises the same released-5.2.1 updater core and refreshed protected Setup core without displaying a UAC prompt. It does not claim the physical UAC approve/cancel/retry or real desktop lifecycle checks; those remain field acceptance.

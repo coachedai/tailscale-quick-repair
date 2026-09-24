@@ -120,6 +120,11 @@ jobs:
       - name: Recheck source privacy and isolation
         shell: powershell
         run: .\release\privacy-scan.ps1 -Root .
+      - name: Validate unpublished field preview path
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-field-preview.ps1 -OutputDirectory .\upgrade-dist -EvidenceDirectory .\upgrade-evidence
       - name: Upgrade genuine released files and existing tasks with the new Setup core
         shell: powershell
         env:
@@ -142,6 +147,55 @@ jobs:
           if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Publication forbidden.' }
           git diff --exit-code
           if ($LASTEXITCODE -ne 0) { throw 'Unexpected source change.' }
+      - name: Prove field helper is not shipped
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $packages = @(
+            @(Get-ChildItem .\upgrade-dist -Filter 'TailscaleQuickRepair-3.0.0-phase6.4.0-preview.zip' -File),
+            @(Get-ChildItem .\upgrade-dist -Filter 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.0-preview.zip' -File)
+          )
+          $packages = @($packages | ForEach-Object { $_ })
+          if ($packages.Count -ne 2) { throw 'Exact preview packages are required for field-helper isolation.' }
+          foreach ($package in $packages) {
+            $archive = [IO.Compression.ZipFile]::OpenRead($package.FullName)
+            try {
+              foreach ($entry in $archive.Entries) {
+                $name = $entry.FullName.Replace('\','/')
+                if ($name -match '(^|/)(field-preview|test-field-preview)\.ps1$' -or $name -match 'phase6\.4-field-acceptance\.md$') {
+                  throw ('Developer-only field tooling leaked into shipping package: ' + $name)
+                }
+              }
+            } finally { $archive.Dispose() }
+          }
+      - name: Assemble Phase 6.4 field preview pack
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pack = Join-Path $PWD 'field-preview-pack'
+          if (Test-Path $pack) { Remove-Item $pack -Recurse -Force }
+          New-Item -ItemType Directory -Path $pack | Out-Null
+          Copy-Item .\release\field-preview.ps1 $pack
+          Copy-Item .\docs\phase6.4-field-acceptance.md $pack
+          foreach ($pattern in @(
+            'TailscaleQuickRepair-3.0.0-phase6.4.0-preview.zip',
+            'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.0-preview.zip'
+          )) {
+            $item = @(Get-ChildItem .\upgrade-dist -Filter $pattern -File)
+            if ($item.Count -ne 1) { throw ('Expected one validated field candidate: ' + $pattern) }
+            $sidecar = $item[0].FullName + '.sha256'
+            if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) { throw ('Missing validated sidecar: ' + $pattern) }
+            Copy-Item -LiteralPath $item[0].FullName -Destination $pack
+            Copy-Item -LiteralPath $sidecar -Destination $pack
+          }
+          Set-Content -LiteralPath (Join-Path $pack 'candidate-source.txt') -Value '${{ github.sha }}' -Encoding ASCII
+      - name: Preserve Phase 6.4 field preview pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase6.4-field-preview
+          path: field-preview-pack/*
+          if-no-files-found: error
       - name: Preserve released-upgrade evidence including failures
         if: always()
         uses: actions/upload-artifact@v4

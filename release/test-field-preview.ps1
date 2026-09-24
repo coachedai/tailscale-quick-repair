@@ -1,0 +1,111 @@
+param(
+    [Parameter(Mandatory=$true)][string]$OutputDirectory,
+    [string]$EvidenceDirectory='.\upgrade-evidence'
+)
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+$EvidenceDirectory=$EvidenceDirectory.Trim()
+$development=($env:GITHUB_REF_NAME -ceq 'work/6.1-auto-repair-safety')
+$release=($env:GITHUB_REF_NAME -ceq 'main' -and $env:TQR_RELEASE_VALIDATION -ceq $env:GITHUB_RUN_ID -and -not [string]::IsNullOrEmpty($env:GITHUB_RUN_ID))
+if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
+   $env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-quick-repair' -or -not($development -or $release) -or
+   $env:TQR_NATIVE_LAB_RUN -cne $env:GITHUB_RUN_ID -or $PSVersionTable.PSVersion.Major -ne 5){throw 'Field preview acceptance refused this environment.'}
+$repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+if((git -C $repo rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){throw 'Exact source required.'}
+New-Item -ItemType Directory -Path $EvidenceDirectory -Force|Out-Null
+$evidence=(Resolve-Path $EvidenceDirectory).Path
+$lab=Join-Path $env:RUNNER_TEMP ('TqrFieldPreview-'+[Guid]::NewGuid().ToString('N'));[void][IO.Directory]::CreateDirectory($lab)
+$app=Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair';$program=Join-Path $env:ProgramData 'TailscaleQuickRepair'
+$recovery=Join-Path $env:ProgramData 'TailscaleQuickRepair.SetupRecovery'
+$cases=New-Object 'Collections.Generic.List[object]';$passed=$false;$failure=$null;$stage='preflight';$child=$null;$cleanup=$true
+function Check([bool]$Value,[string]$Name){$script:stage=$Name;$cases.Add([pscustomobject]@{name=$Name;passed=$Value});if(-not $Value){throw 'Field preview assertion failed.'};Write-Host ('PASS field preview: '+$Name)}
+try{
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    Check (-not(Test-Path $app) -and -not(Test-Path $program)) 'Field preview starts from an empty disposable Quick Repair installation'
+    Check (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) 'Hosted acceptance process has administrator rights for the no-UAC core path'
+
+    $legacyUrl='https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase5.2.1/TailscaleQuickRepair-SetupPackage-3.0.0-phase5.2.1.zip'
+    $legacyHash='bad4deb522afd9442e918cacde1f58cc1509635de3be172626846060516df470'
+    $legacyZip=Join-Path $lab 'legacy.zip'
+    $wc=New-Object Net.WebClient;$wc.Headers.Add('User-Agent','TqrFieldPreviewAcceptance');$wc.DownloadFile($legacyUrl,$legacyZip);$wc.Dispose()
+    Check ((Get-Item $legacyZip).Length -eq 140164 -and (Get-FileHash $legacyZip).Hash -ieq $legacyHash) 'Pinned published 5.2.1 package is unchanged'
+    $legacy=Join-Path $lab 'legacy';Expand-Archive -LiteralPath $legacyZip -DestinationPath $legacy
+    $legacyManifest=Get-Content (Join-Path $legacy 'package-manifest.json') -Raw|ConvertFrom-Json
+    Check ($legacyManifest.version -ceq '3.0.0-phase5.2.1' -and [int64]$legacyManifest.versionCode -eq 30000621) 'Fixture starts from genuine released 5.2.1 metadata'
+
+    $ordinary=@(Get-ChildItem -LiteralPath $OutputDirectory -Filter 'TailscaleQuickRepair-3.0.0-phase6.4.0-preview.zip' -File)
+    $protected=@(Get-ChildItem -LiteralPath $OutputDirectory -Filter 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.0-preview.zip' -File)
+    Check ($ordinary.Count -eq 1 -and $protected.Count -eq 1) 'Exact 6.4 ordinary and protected packages are present'
+
+    $installReport=Join-Path $lab 'InstallLegacy.json'
+    $psi=New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName=Join-Path $PSHOME 'powershell.exe';$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
+    $psi.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -STA -File "'+(Join-Path $PSScriptRoot 'protected-handoff-child.ps1')+'" -Phase InstallLegacy -LegacyPackage "'+$legacy+'" -CurrentPackage "'+$legacy+'" -Report "'+$installReport+'"'
+    $child=[Diagnostics.Process]::Start($psi)
+    Check ($child.WaitForExit(120000) -and $child.ExitCode -eq 0) 'Genuine released Setup core installs the 5.2.1 baseline'
+    $child.Dispose();$child=$null
+    $installed=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
+    Check ($installed.version -ceq '3.0.0-phase5.2.1' -and [int64]$installed.versionCode -eq 30000621) 'Field harness sees the genuine 5.2.1 installed baseline'
+
+    $report=Join-Path $evidence 'field-preview-results.json'
+    $fieldPsi=New-Object Diagnostics.ProcessStartInfo
+    $fieldPsi.FileName=Join-Path $PSHOME 'powershell.exe';$fieldPsi.UseShellExecute=$false;$fieldPsi.CreateNoWindow=$true
+    $fieldPsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath "'+$report+'" -CiNoElevation -CiNoRelaunch'
+    $child=[Diagnostics.Process]::Start($fieldPsi)
+    Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 0 -and (Test-Path -LiteralPath $report -PathType Leaf)) 'Field preview harness completes its disposable no-UAC core path'
+    $child.Dispose();$child=$null
+    $field=Get-Content -LiteralPath $report -Raw|ConvertFrom-Json
+    Check ($field.passed -is [bool] -and $field.passed -and $field.baselineVerified -and $field.bridgeVerified -and $field.bridgeApplied) 'Field preview records the verified 5.2.1 bridge transition'
+    Check ($field.requesterIdentityVerified -and $field.protectedPackageVerified -and $field.protectedApplied) 'Field preview records same-user protected package completion'
+    Check (-not $field.restartAcknowledged) 'CI no-relaunch mode never manufactures physical restart acknowledgement'
+    Check (-not(Test-Path (Join-Path $app 'protected-update.json'))) 'Protected completion removes the exact bridge marker'
+    $candidate=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
+    Check ($candidate.version -ceq '3.0.0-phase6.4.0-preview' -and [int64]$candidate.versionCode -eq 30000740) 'Field preview leaves the exact candidate version installed'
+    $pending=Get-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction Stop
+    Check ([int64]$pending.PendingRestartVersionCode -eq 30000740) 'Protected completion persists the exact restart acknowledgement boundary'
+
+    $setupRoot=Join-Path $lab 'candidate-setup';Expand-Archive -LiteralPath $protected[0].FullName -DestinationPath $setupRoot
+    $manifest=Get-Content (Join-Path $setupRoot 'package-manifest.json') -Raw|ConvertFrom-Json
+    foreach($entry in @($manifest.files)){
+        $relative=([string]$entry.path).Replace('\\','/')
+        if($relative -eq 'version.json'){$target=Join-Path $app 'version.user.json'}
+        elseif($relative.StartsWith('app/')){$target=Join-Path $app $relative.Substring(4)}
+        elseif($relative.StartsWith('program/')){$target=Join-Path $program $relative.Substring(8)}
+        else{throw 'Unexpected setup path in acceptance fixture.'}
+        Check ((Test-Path $target -PathType Leaf) -and (Get-FileHash $target).Hash.ToLowerInvariant() -ceq ([string]$entry.sha256).ToLowerInvariant()) ('Installed candidate hash matches '+$relative)
+    }
+    $passed=$true
+}catch{
+    $chain=New-Object 'Collections.Generic.List[object]';for($ex=$_.Exception;$ex;$ex=$ex.InnerException){$chain.Add([pscustomobject]@{type=$ex.GetType().FullName;code=$ex.HResult})}
+    $failure=[pscustomobject]@{stage=$stage;line=$_.InvocationInfo.ScriptLineNumber;exceptions=@($chain.ToArray())}
+}finally{
+    if($child){try{if(-not $child.HasExited){$child.Kill();[void]$child.WaitForExit(5000)}}catch{$cleanup=$false};$child.Dispose()}
+    Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction SilentlyContinue
+    Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'Tailscale Quick Repair' -ErrorAction SilentlyContinue
+    foreach($shortcut in @(
+        (Join-Path ([Environment]::GetFolderPath('Programs')) 'Tailscale Quick Repair.lnk'),
+        (Join-Path $app 'Launch-Tailscale-Quick-Repair-Startup.vbs')
+    )){try{Remove-Item -LiteralPath $shortcut -Force -ErrorAction SilentlyContinue}catch{$cleanup=$false}}
+    $scheduler=$null;$folder=$null
+    try{
+        $scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();$folder=$scheduler.GetFolder('\')
+        foreach($name in @('Tailscale Quick Repair','Tailscale Quick Repair Auto Monitor')){
+            $task=$null
+            try{$task=$folder.GetTask($name);$task.Enabled=$false;$folder.DeleteTask($name,0)}catch{if($_.Exception.HResult -ne -2147024894){$cleanup=$false}}
+            finally{if($task){try{[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($task)}catch{}}}
+        }
+    }catch{$cleanup=$false}
+    finally{foreach($item in @($folder,$scheduler)){if($item){try{[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($item)}catch{}}}}
+    foreach($path in @($app,$program,$recovery,$lab)){try{if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path -Recurse -Force}}catch{$cleanup=$false}}
+    $cases.Add([pscustomobject]@{name='Field preview acceptance removes only fixture-owned Quick Repair state';passed=$cleanup})
+    [pscustomobject]@{
+        passed=($passed -and $cleanup)
+        source=$env:GITHUB_SHA
+        candidate='3.0.0-phase6.4.0-preview'
+        cases=@($cases.ToArray())
+        failure=$failure
+        scope='Developer-only local-package field path; production manifest and trust policy remain unchanged'
+        limits=@('Hosted CI bypasses the visual UAC prompt but uses the same protected core','Physical UAC approve/cancel/retry remains field acceptance','The field helper is not included in public update or Setup packages')
+    }|ConvertTo-Json -Depth 8|Set-Content (Join-Path $evidence 'field-preview-acceptance.json') -Encoding UTF8
+}
+if(-not $passed -or -not $cleanup){throw 'Field preview acceptance failed; inspect preserved evidence.'}
