@@ -118,12 +118,35 @@ function Expand-Candidate([string]$Zip,[bool]$AllowProgram,[bool]$RequireMarker)
             Fail "Candidate package file hash mismatch: $relative"
         }
     }
-    $actual = @(Get-ChildItem -LiteralPath $root -Recurse -File | ForEach-Object {
-        $relative = $_.FullName.Substring($root.Length).TrimStart('\').Replace('\','/')
-        if ($relative -cne 'package-manifest.json') { $relative }
-    })
-    if ($actual.Count -ne $seen.Count) { Fail 'Candidate package contains undeclared or missing payload files.' }
-    foreach ($relative in $actual) { if (-not $seen.Contains($relative)) { Fail "Candidate package contains an undeclared payload file: $relative" } }
+    $archive = [IO.Compression.ZipFile]::OpenRead($Zip)
+    try {
+        $members = New-Object 'Collections.Generic.List[string]'
+        $manifestMembers = 0
+        foreach ($zipEntry in $archive.Entries) {
+            $name = ([string]$zipEntry.FullName).Replace('\','/')
+            if ([string]::IsNullOrWhiteSpace($name) -or $name.Contains('..') -or $name.StartsWith('/') -or $name.Contains(':')) {
+                Fail 'Candidate archive contains an unsafe member path.'
+            }
+            if ([string]::IsNullOrEmpty([string]$zipEntry.Name)) {
+                continue
+            }
+            if ($name -ceq 'package-manifest.json') {
+                $manifestMembers++
+                continue
+            }
+            $members.Add($name)
+        }
+        if ($manifestMembers -ne 1) { Fail 'Candidate archive must contain exactly one package manifest.' }
+        if ($members.Count -ne $seen.Count) {
+            Fail "Candidate archive membership count does not match its manifest ($($members.Count) archive files / $($seen.Count) declared)."
+        }
+        foreach ($relative in $members) {
+            if (-not $seen.Contains($relative)) { Fail "Candidate archive contains an undeclared payload file: $relative" }
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
     if ($RequireMarker -and $markerCount -ne 1) { Fail 'The ordinary preview package must contain exactly one protected-update marker.' }
     if (-not $RequireMarker -and $markerCount -ne 0) { Fail 'The protected Setup package must not contain the bridge-only marker.' }
     return [pscustomobject]@{ root=$root; manifest=$manifest }

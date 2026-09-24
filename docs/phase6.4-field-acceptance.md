@@ -38,6 +38,8 @@ The helper verifies both outer SHA-256 sidecars, every inner package-manifest en
 
 The first stage uses the **installed released 5.2.1 updater core** to apply only the user-level bridge. The second stage requests normal Windows administrator approval and uses the **refreshed Setup core** to apply the local protected package.
 
+The field helper itself is developer test tooling and is launched from Windows PowerShell. Any console belonging to the helper is therefore **not** evidence of a product console flash. The no-console requirement applies to normal Quick Repair, updater and Setup operation outside this helper path.
+
 A small phase6.4-field-result.json file is written beside the helper. It contains only typed booleans, the preview version/code, the current acceptance stage and an error message when applicable. It does not record the configured peer, Windows SID, usernames, IP addresses, device names or local paths.
 
 ## UAC cancellation test
