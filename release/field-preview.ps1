@@ -293,8 +293,19 @@ function Apply-Protected($protected,[string]$ExpectedRequesterSid) {
     }
     $result.requesterIdentityVerified = $true
 
-    $setup = Join-Path $StateDir 'TailscaleQuickRepairSetup.exe'
-    if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { Fail 'The refreshed Setup host is missing after bridge staging.' }
+    $installedSetup = Join-Path $StateDir 'TailscaleQuickRepairSetup.exe'
+    if (-not (Test-Path -LiteralPath $installedSetup -PathType Leaf)) { Fail 'The refreshed Setup host is missing after bridge staging.' }
+
+    # Production Setup relocates itself before replacing the installed Setup
+    # executable. The developer-only field harness invokes the protected core
+    # by reflection, so mirror that same lock boundary with a detached copy.
+    $detachedRoot = New-WorkRoot 'TqrFieldSetupHost'
+    $setup = Join-Path $detachedRoot 'TailscaleQuickRepairSetup.exe'
+    Copy-Item -LiteralPath $installedSetup -Destination $setup -Force
+    if ((Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $installedSetup -Algorithm SHA256).Hash) {
+        Fail 'The detached Setup host did not match the staged installed Setup.'
+    }
+
     $type = [Reflection.Assembly]::LoadFile($setup).GetType('PublicSetupHost')
     if (-not $type) { Fail 'The refreshed Setup host is invalid.' }
     [void](Invoke-Private $type 'RequireRequesterIdentity' @($ExpectedRequesterSid))
