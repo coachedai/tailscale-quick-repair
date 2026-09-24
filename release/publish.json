@@ -1,10 +1,10 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase6.3.0-dev",
-  "versionCode": 30000730,
+  "version": "3.0.0-phase6.4.0-preview",
+  "versionCode": 30000740,
   "requiresSetup": false,
   "publicInstaller": true,
-  "notes": "Development only: protected files and scheduled tasks use the verified Setup handoff. Existing installations first receive the user-level update, then the refreshed Setup completes protected changes.",
+  "notes": "Preview candidate: local-only automatic repair, protected update handoff, truthful background checks, restart acknowledgement and interrupted-Setup recovery.",
   "protectedHandoff": true
 }
