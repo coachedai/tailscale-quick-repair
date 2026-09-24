@@ -281,38 +281,66 @@ function Stage-Bridge($ordinary) {
 }
 
 function Apply-Protected($protected,[string]$ExpectedRequesterSid) {
+    $result.stage = 'protected_admin'
     if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         Fail 'The protected field stage is not running with administrator approval.'
     }
+
+    $result.stage = 'protected_identity'
     $currentSid = Current-Sid
     if ([string]::IsNullOrWhiteSpace($ExpectedRequesterSid) -or $currentSid -cne $ExpectedRequesterSid) {
         Fail 'Administrator approval used a different Windows account. Protected changes were refused.'
     }
     $result.requesterIdentityVerified = $true
+
     $setup = Join-Path $StateDir 'TailscaleQuickRepairSetup.exe'
     if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { Fail 'The refreshed Setup host is missing after bridge staging.' }
     $type = [Reflection.Assembly]::LoadFile($setup).GetType('PublicSetupHost')
     if (-not $type) { Fail 'The refreshed Setup host is invalid.' }
     [void](Invoke-Private $type 'RequireRequesterIdentity' @($ExpectedRequesterSid))
+
+    $result.stage = 'protected_recovery'
     [void](Invoke-Private $type 'RecoverInterruptedFileTransaction')
+
+    $result.stage = 'protected_package_read'
     $manifest = Invoke-Private $type 'ReadPackageManifest' @($protected.root)
     if ([string]$manifest.Version -cne $ExpectedVersion -or [int64]$manifest.VersionCode -ne $ExpectedCode) { Fail 'The protected package identity is wrong.' }
+
+    $result.stage = 'protected_package_verify'
     $files = Invoke-Private $type 'VerifyPackage' @($protected.root,$manifest)
+
+    $result.stage = 'protected_marker'
     [void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @([int64]$manifest.VersionCode))
     $result.protectedPackageVerified = $true
+
+    $result.stage = 'protected_context'
     $peer = [string](Invoke-Private $type 'ReadConfiguredPeer')
     $startup = [bool](Invoke-Private $type 'IsStartupEnabled')
+
+    $result.stage = 'protected_lease'
     $lease = [bool](Invoke-Private $type 'TryAcquireUpgradeOperationLock')
     if (-not $lease) { Fail 'Another Quick Repair operation is active. Protected changes were not started.' }
     $script:LeaseType = $type
     $script:LeaseHeld = $true
     $work = New-WorkRoot 'TqrFieldProtected'
+
     try {
+        $result.stage = 'protected_stop_ui'
         [void](Invoke-Private $type 'StopQuickRepair')
+
+        $result.stage = 'protected_files'
         [void](Invoke-Private $type 'ApplyFiles' @($files,$work))
+
+        $result.stage = 'protected_integration'
         [void](Invoke-Private $type 'CompleteInstalledIntegration' @($peer,$startup,$true,[int64]$manifest.VersionCode))
         $result.protectedApplied = $true
-        if (-not $CiNoRelaunch) { [void](Invoke-Private $type 'StartQuickRepair') }
+
+        if (-not $CiNoRelaunch) {
+            $result.stage = 'protected_relaunch'
+            [void](Invoke-Private $type 'StartQuickRepair')
+        }
+
+        $result.stage = 'protected_complete'
     } finally {
         [void](Invoke-Private $type 'ReleaseOperationLock')
         $script:LeaseHeld = $false
