@@ -208,6 +208,19 @@ try {
         }
 
         if ($requiresSetup) {
+            $selectedChannel = Get-UpdateChannel
+            if (
+                [string]::IsNullOrWhiteSpace([string]$script:updateManifestChannel) -or
+                $script:updateManifestChannel -notin @('stable','preview') -or
+                $script:updateManifestChannel -cne $selectedChannel
+            ) {
+                $script:updateManifest = $null
+                $script:updateManifestChannel = ''
+                $UpdateNowButton.Visibility = [System.Windows.Visibility]::Collapsed
+                Start-UpdateCheck
+                return
+            }
+
             if (-not (Test-Path -LiteralPath $SetupHostPath)) {
                 $UpdateStatusText.Text = 'Setup component is missing'
                 $UpdateStatusText.Foreground = Get-Brush 'Amber'
@@ -219,7 +232,7 @@ try {
             try {
                 $psi = New-Object System.Diagnostics.ProcessStartInfo
                 $psi.FileName = $SetupHostPath
-                $psi.Arguments = '--upgrade'
+                $psi.Arguments = '--upgrade --channel "' + $selectedChannel + '" --target-code ' + [string][int64]$script:updateManifest.versionCode
                 $psi.UseShellExecute = $true
                 $setupProcess = [System.Diagnostics.Process]::Start($psi)
 
@@ -315,7 +328,8 @@ try {
     foreach ($required in @(
         '$SetupHostPath',
         '$requiresSetup = $false',
-        "$psi.Arguments = '--upgrade'",
+        '--channel "',
+        '--target-code ',
         "$psi.Arguments = '--repair'"
     )) {
         if ($ui -notmatch [regex]::Escape($required)) {
@@ -364,6 +378,11 @@ try {
         throw 'Protected update metadata does not match version.json.'
     }
 
+    $deliveryChannel = [string]$publish.channel
+    if ($deliveryChannel -notin @('stable','preview')) {
+        throw 'publish.channel must be stable or preview.'
+    }
+
     $protectedHandoff = $false
     if ($publish.PSObject.Properties.Name -contains 'protectedHandoff') {
         if ($publish.protectedHandoff -isnot [bool]) {
@@ -387,8 +406,11 @@ try {
     & (Join-Path $PSScriptRoot 'write-integrity-manifest.ps1') -AppDirectory $appDir -VersionPath $versionPath -Profile 'update'
 
     if ($requiresSetup -or $protectedHandoff) {
-        [ordered]@{ schema = 1; versionCode = [int64]$version.versionCode } |
-            ConvertTo-Json -Compress |
+        [ordered]@{
+            schema = 2
+            versionCode = [int64]$version.versionCode
+            channel = $deliveryChannel
+        } | ConvertTo-Json -Compress |
             Set-Content -LiteralPath $protectedMarkerPath -Encoding UTF8
     }
 

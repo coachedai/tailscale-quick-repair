@@ -13,6 +13,7 @@ try{
     Check ((Count '  release_compatibility:') -eq 1) 'One clean-runner release compatibility job'
     Check ([regex]::IsMatch($workflow,"(?m)^  release_compatibility:\r?\n    name: Release compatibility\r?\n    if: github\.ref == 'refs/heads/main'$")) 'Compatibility job is main-only'
     foreach($name in @(
+        'Update channel trust and preference gates',
         'Real installed Windows service and recurrence gates',
         'Require independent clock and exact trigger attribution',
         'Ordinary-user protected file and task gates',

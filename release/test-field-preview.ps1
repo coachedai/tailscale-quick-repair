@@ -33,9 +33,9 @@ try{
     $legacyManifest=Get-Content (Join-Path $legacy 'package-manifest.json') -Raw|ConvertFrom-Json
     Check ($legacyManifest.version -ceq '3.0.0-phase5.2.1' -and [int64]$legacyManifest.versionCode -eq 30000621) 'Fixture starts from genuine released 5.2.1 metadata'
 
-    $ordinary=@(Get-ChildItem -LiteralPath $OutputDirectory -Filter 'TailscaleQuickRepair-3.0.0-phase6.4.2-preview.zip' -File)
-    $protected=@(Get-ChildItem -LiteralPath $OutputDirectory -Filter 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.2-preview.zip' -File)
-    Check ($ordinary.Count -eq 1 -and $protected.Count -eq 1) 'Exact 6.4.2 ordinary and protected packages are present'
+    $ordinary=@(Get-ChildItem -LiteralPath $OutputDirectory -Filter 'TailscaleQuickRepair-3.0.0-phase6.4.3-preview.zip' -File)
+    $protected=@(Get-ChildItem -LiteralPath $OutputDirectory -Filter 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.3-preview.zip' -File)
+    Check ($ordinary.Count -eq 1 -and $protected.Count -eq 1) 'Exact 6.4.3 ordinary and protected packages are present'
 
     $fieldSource=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'field-preview.ps1'))
     [void][scriptblock]::Create($fieldSource)
@@ -95,7 +95,9 @@ try{
         Check ((Test-Path -LiteralPath $path -PathType Leaf) -and (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $expectedHash) ('Cancellation preserves protected 5.2.1 hash for '+$name)
     }
     $staged=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
-    Check ([int64]$staged.versionCode -eq 30000742 -and (Test-Path (Join-Path $app 'protected-update.json') -PathType Leaf)) 'Cancellation leaves only the verified 6.4.2 bridge staged for retry'
+    Check ([int64]$staged.versionCode -eq 30000743 -and (Test-Path (Join-Path $app 'protected-update.json') -PathType Leaf)) 'Cancellation leaves only the verified 6.4.3 bridge staged for retry'
+    $cancelMarker=Get-Content (Join-Path $app 'protected-update.json') -Raw|ConvertFrom-Json
+    Check ([int]$cancelMarker.schema -eq 2 -and [int64]$cancelMarker.versionCode -eq 30000743 -and [string]$cancelMarker.channel -ceq 'preview') 'Cancellation preserves the exact schema-2 Preview handoff marker'
 
     $installedSetup=Join-Path $app 'TailscaleQuickRepairSetup.exe'
     Check ((Get-FileHash -LiteralPath $installedSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $candidateSetupHash) 'Initial bridge stages the exact candidate Setup host'
@@ -137,9 +139,9 @@ try{
     Check (-not $field.restartAcknowledged) 'CI no-relaunch mode never manufactures physical restart acknowledgement'
     Check (-not(Test-Path (Join-Path $app 'protected-update.json'))) 'Protected completion removes the exact bridge marker'
     $candidate=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
-    Check ($candidate.version -ceq '3.0.0-phase6.4.2-preview' -and [int64]$candidate.versionCode -eq 30000742) 'Field preview leaves the exact candidate version installed'
+    Check ($candidate.version -ceq '3.0.0-phase6.4.3-preview' -and [int64]$candidate.versionCode -eq 30000743) 'Field preview leaves the exact candidate version installed'
     $pending=Get-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction Stop
-    Check ([int64]$pending.PendingRestartVersionCode -eq 30000742) 'Protected completion persists the exact restart acknowledgement boundary'
+    Check ([int64]$pending.PendingRestartVersionCode -eq 30000743) 'Protected completion persists the exact restart acknowledgement boundary'
 
     $setupRoot=Join-Path $lab 'candidate-setup';Expand-Archive -LiteralPath $protected[0].FullName -DestinationPath $setupRoot
     $manifest=Get-Content (Join-Path $setupRoot 'package-manifest.json') -Raw|ConvertFrom-Json
@@ -163,7 +165,7 @@ try{
     Check ($staleGuardianHash -cne $candidateIntegrityHash -and $olderGuardianHash -cne $candidateIntegrityHash) 'Fixture Guardian hashes differ from the exact candidate manifest'
     [ordered]@{
         schema=1
-        versionCode=30000742
+        versionCode=30000743
         integrityManifestSha256=$staleGuardianHash
         verifiedReleaseFiles=1
         startupEnabled=$true
@@ -237,12 +239,14 @@ try{
     $previewCancelPsi.CreateNoWindow=$true
     $previewCancelPsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath "'+$previewCancelReport+'" -CiCancelBeforeProtected -CiNoRelaunch'
     $child=[Diagnostics.Process]::Start($previewCancelPsi)
-    Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 2 -and (Test-Path -LiteralPath $previewCancelReport -PathType Leaf)) 'Accepted 6.4.1 preview can stage the uniquely versioned 6.4.2 bridge before simulated UAC cancellation'
+    Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 2 -and (Test-Path -LiteralPath $previewCancelReport -PathType Leaf)) 'Accepted 6.4.1 preview can stage the uniquely versioned 6.4.3 bridge before simulated UAC cancellation'
     $child.Dispose();$child=$null
     $previewCancel=Get-Content -LiteralPath $previewCancelReport -Raw|ConvertFrom-Json
     Check ($previewCancel.baselineVerified -and $previewCancel.bridgeApplied -and $previewCancel.elevationCancelled -and $previewCancel.protectedUnchangedOnCancel) 'Previous-preview transition records the verified pre-protected boundary'
     $previewStaged=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
-    Check ([string]$previewStaged.version -ceq '3.0.0-phase6.4.2-preview' -and [int64]$previewStaged.versionCode -eq 30000742 -and (Test-Path (Join-Path $app 'protected-update.json') -PathType Leaf)) 'Previous-preview transition stages only the new 6.4.1 user bridge'
+    Check ([string]$previewStaged.version -ceq '3.0.0-phase6.4.3-preview' -and [int64]$previewStaged.versionCode -eq 30000743 -and (Test-Path (Join-Path $app 'protected-update.json') -PathType Leaf)) 'Previous-preview transition stages only the new 6.4.3 user bridge'
+    $previewMarker=Get-Content (Join-Path $app 'protected-update.json') -Raw|ConvertFrom-Json
+    Check ([int]$previewMarker.schema -eq 2 -and [int64]$previewMarker.versionCode -eq 30000743 -and [string]$previewMarker.channel -ceq 'preview') 'Previous-preview staging carries the exact Preview channel into the protected handoff'
     foreach($name in $previewBaselineHashes.Keys){
         $path=Join-Path $program $name
         Check ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ceq [string]$previewBaselineHashes[$name]) ('Previous-preview cancellation preserves protected hash for '+$name)
@@ -255,14 +259,14 @@ try{
     $previewCompletePsi.CreateNoWindow=$true
     $previewCompletePsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath "'+$previewCompleteReport+'" -CiNoElevation -CiNoRelaunch'
     $child=[Diagnostics.Process]::Start($previewCompletePsi)
-    Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 0 -and (Test-Path -LiteralPath $previewCompleteReport -PathType Leaf)) 'Staged 6.4.2 bridge can complete protected Setup from the previous-preview transition'
+    Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 0 -and (Test-Path -LiteralPath $previewCompleteReport -PathType Leaf)) 'Staged 6.4.3 bridge can complete protected Setup from the previous-preview transition'
     $child.Dispose();$child=$null
     $previewComplete=Get-Content -LiteralPath $previewCompleteReport -Raw|ConvertFrom-Json
     Check ($previewComplete.passed -and $previewComplete.bridgeRefreshed -and $previewComplete.protectedApplied) 'Previous-preview retry completes through the same protected candidate path'
     $previewFinal=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
-    Check ([string]$previewFinal.version -ceq '3.0.0-phase6.4.2-preview' -and [int64]$previewFinal.versionCode -eq 30000742 -and -not(Test-Path (Join-Path $app 'protected-update.json'))) 'Previous-preview transition finishes at the unique 6.4.2 identity'
+    Check ([string]$previewFinal.version -ceq '3.0.0-phase6.4.3-preview' -and [int64]$previewFinal.versionCode -eq 30000743 -and -not(Test-Path (Join-Path $app 'protected-update.json'))) 'Previous-preview transition finishes at the unique 6.4.3 identity'
     $previewPending=Get-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction Stop
-    Check ([int64]$previewPending.PendingRestartVersionCode -eq 30000742) 'Previous-preview protected completion writes the unique 6.4.2 restart acknowledgement'
+    Check ([int64]$previewPending.PendingRestartVersionCode -eq 30000743) 'Previous-preview protected completion writes the unique 6.4.3 restart acknowledgement'
     Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction Stop
 
     $passed=$true
@@ -292,7 +296,7 @@ try{
     [pscustomobject]@{
         passed=($passed -and $cleanup)
         source=$env:GITHUB_SHA
-        candidate='3.0.0-phase6.4.2-preview'
+        candidate='3.0.0-phase6.4.3-preview'
         cases=@($cases.ToArray())
         failure=$failure
         scope='Developer-only local-package field path; production manifest and trust policy remain unchanged'

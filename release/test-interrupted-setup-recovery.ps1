@@ -16,6 +16,9 @@ if((git -C $repo rev-parse HEAD).Trim() -cne $env:GITHUB_SHA -or
    ((Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json).publish -and -not $releaseValidation)){
     throw 'Exact isolated source is required.'
 }
+$publishMetadata=Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json
+$candidateChannel=[string]$publishMetadata.channel
+if($candidateChannel -notin @('stable','preview')){throw 'Interrupted Setup candidate channel is invalid.'}
 New-Item -ItemType Directory -Path $EvidenceDirectory -Force|Out-Null
 $evidence=(Resolve-Path $EvidenceDirectory).Path
 $lab=Join-Path $env:RUNNER_TEMP ('TqrInterruptedSetup-'+[Guid]::NewGuid().ToString('N'));[void][IO.Directory]::CreateDirectory($lab)
@@ -65,7 +68,7 @@ function Run-Child(
     $psi.Arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -STA -File "'+(Join-Path $PSScriptRoot 'interrupted-setup-child.ps1')+
         '" -Phase '+$Phase+' -Package "'+$Package+'" -Work "'+$work+'" -PauseAfter '+$PauseAfter+
         ' -Ready "'+$Ready+'" -Peer "'+$Peer+'" -Startup '+$Startup.ToString().ToLowerInvariant()+
-        ' -VersionCode '+$VersionCode+' -Report "'+$report+'"'
+        ' -VersionCode '+$VersionCode+' -Channel '+$candidateChannel+' -Report "'+$report+'"'
     $script:child=[Diagnostics.Process]::Start($psi)
     if($ExpectKill){
         $deadline=[DateTime]::UtcNow.AddSeconds(45)
@@ -218,7 +221,7 @@ try{
     # from a fresh Setup process without rolling the payload backwards.
     $integrationPeer='integration-replay.invalid'
     $markerPath=Join-Path $app 'protected-update.json'
-    $markerText=(@{schema=1;versionCode=[int64]$candidateManifest.versionCode}|ConvertTo-Json -Compress)
+    $markerText=([ordered]@{schema=2;versionCode=[int64]$candidateManifest.versionCode;channel=$candidateChannel}|ConvertTo-Json -Compress)
     [IO.File]::WriteAllText($markerPath,$markerText,(New-Object Text.UTF8Encoding($false)))
     Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name 'PendingRestartVersionCode' -ErrorAction SilentlyContinue
 

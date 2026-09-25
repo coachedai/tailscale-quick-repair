@@ -7,6 +7,7 @@ param(
     [string]$Peer='integration-replay.invalid',
     [string]$Startup='true',
     [long]$VersionCode=0,
+    [ValidateSet('stable','preview')][string]$Channel='stable',
     [string]$Report=''
 )
 $ErrorActionPreference='Stop'
@@ -50,7 +51,7 @@ try{
     }
     elseif($Phase -eq 'IntegrationPause'){
         if($VersionCode -le 0){throw 'Candidate version code is required.'}
-        [void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @($VersionCode))
+        [void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @($VersionCode,$Channel))
         $startupValue=[bool]::Parse($Startup)
         $callback=[Action[int]]{
             param([int]$index)
@@ -63,7 +64,7 @@ try{
     }
     elseif($Phase -eq 'IntegrationComplete'){
         if($VersionCode -le 0){throw 'Candidate version code is required.'}
-        [void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @($VersionCode))
+        [void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @($VersionCode,$Channel))
         [void](Invoke-Private $type 'CompleteInstalledIntegration' @($Peer,[bool]::Parse($Startup),$true,$VersionCode))
     }
     elseif($Phase -eq 'ApplyPause'){

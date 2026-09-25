@@ -42,6 +42,9 @@ jobs:
       - name: Preserve every existing native packaged gate
         shell: powershell
         run: .\release\test-packaged-runtime.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Update channel trust and preference gates
+        shell: powershell
+        run: .\release\test-update-channels.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
       - name: Native Auto Repair policy and state gates
         shell: powershell
         run: .\release\test-auto-repair-policy.ps1 -EvidenceDirectory .\test-evidence
@@ -153,8 +156,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $packages = @(
-            @(Get-ChildItem .\upgrade-dist -Filter 'TailscaleQuickRepair-3.0.0-phase6.4.2-preview.zip' -File),
-            @(Get-ChildItem .\upgrade-dist -Filter 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.2-preview.zip' -File)
+            @(Get-ChildItem .\upgrade-dist -Filter 'TailscaleQuickRepair-3.0.0-phase6.4.3-preview.zip' -File),
+            @(Get-ChildItem .\upgrade-dist -Filter 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.3-preview.zip' -File)
           )
           $packages = @($packages | ForEach-Object { $_ })
           if ($packages.Count -ne 2) { throw 'Exact preview packages are required for field-helper isolation.' }
@@ -169,7 +172,7 @@ jobs:
               }
             } finally { $archive.Dispose() }
           }
-      - name: Assemble Phase 6.4.2 field preview pack
+      - name: Assemble Phase 6.4.3 field preview pack
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -179,8 +182,8 @@ jobs:
           Copy-Item .\release\field-preview.ps1 $pack
           Copy-Item .\docs\phase6.4-field-acceptance.md $pack
           foreach ($pattern in @(
-            'TailscaleQuickRepair-3.0.0-phase6.4.2-preview.zip',
-            'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.2-preview.zip'
+            'TailscaleQuickRepair-3.0.0-phase6.4.3-preview.zip',
+            'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.3-preview.zip'
           )) {
             $item = @(Get-ChildItem .\upgrade-dist -Filter $pattern -File)
             if ($item.Count -ne 1) { throw ('Expected one validated field candidate: ' + $pattern) }
@@ -190,10 +193,10 @@ jobs:
             Copy-Item -LiteralPath $sidecar -Destination $pack
           }
           Set-Content -LiteralPath (Join-Path $pack 'candidate-source.txt') -Value '${{ github.sha }}' -Encoding ASCII
-      - name: Preserve Phase 6.4.2 field preview pack
+      - name: Preserve Phase 6.4.3 field preview pack
         uses: actions/upload-artifact@v4
         with:
-          name: phase6.4.2-field-preview
+          name: phase6.4.3-field-preview
           path: field-preview-pack/*
           if-no-files-found: error
       - name: Preserve released-upgrade evidence including failures

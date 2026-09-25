@@ -7,8 +7,6 @@ using System.Threading;
 
 internal static class UpdaterEntry
 {
-    private const string NetworkTestUrl =
-        "https://api.github.com/repos/coachedai/tailscale-quick-repair/contents/updates/latest.json?ref=main";
 
     [STAThread]
     private static int Main(string[] args)
@@ -17,7 +15,15 @@ internal static class UpdaterEntry
 
         if (HasSwitch(args, "--network-self-test"))
         {
-            return RunNetworkSelfTest();
+            try
+            {
+                string channel = Program.NormalizeChannel(ReadArg(args, "--channel"));
+                return RunNetworkSelfTest(channel);
+            }
+            catch (InvalidDataException)
+            {
+                return 26;
+            }
         }
 
         try
@@ -67,10 +73,10 @@ internal static class UpdaterEntry
         ServicePointManager.Expect100Continue = false;
     }
 
-    private static int RunNetworkSelfTest()
+    private static int RunNetworkSelfTest(string channel)
     {
         bool rateLimited;
-        int result = RunNetworkSelfTestCore(null, out rateLimited);
+        int result = RunNetworkSelfTestCore(channel, null, out rateLimited);
 
         if (result == 0 || result == 25 || !rateLimited)
         {
@@ -88,12 +94,13 @@ internal static class UpdaterEntry
         }
 
         bool authenticatedRateLimit;
-        return RunNetworkSelfTestCore(token.Trim(), out authenticatedRateLimit);
+        return RunNetworkSelfTestCore(channel, token.Trim(), out authenticatedRateLimit);
     }
 
-    private static int RunNetworkSelfTestCore(string bearerToken, out bool rateLimited)
+    private static int RunNetworkSelfTestCore(string channel, string bearerToken, out bool rateLimited)
     {
         int lastFailure = 24;
+        string networkTestUrl = Program.GetManifestApiUrl(channel);
         bool endpointWasReachable = false;
         rateLimited = false;
 
@@ -103,7 +110,7 @@ internal static class UpdaterEntry
             {
                 ConfigureTls12();
 
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(NetworkTestUrl);
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(networkTestUrl);
                 request.Method = "GET";
                 request.UserAgent = "TailscaleQuickRepairUpdater-SelfTest/3.0";
                 request.Accept = "application/vnd.github+json";
@@ -225,6 +232,19 @@ internal static class UpdaterEntry
         // That is not evidence of a TLS regression in this executable. If the
         // endpoint was reachable and the response was invalid, keep failing.
         return endpointWasReachable ? lastFailure : 0;
+    }
+
+    private static string ReadArg(string[] args, string name)
+    {
+        for (int i = 0; i < args.Length - 1; i++)
+        {
+            if (String.Equals(args[i], name, StringComparison.OrdinalIgnoreCase))
+            {
+                return args[i + 1];
+            }
+        }
+
+        return String.Empty;
     }
 
     private static bool HasSwitch(string[] args, string name)

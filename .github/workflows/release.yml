@@ -106,6 +106,9 @@ jobs:
       - name: Native packaged runtime regression gates
         shell: powershell
         run: .\release\test-packaged-runtime.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Update channel trust and preference gates
+        shell: powershell
+        run: .\release\test-update-channels.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
       - name: Native Auto Repair policy and state gates
         shell: powershell
         run: .\release\test-auto-repair-policy.ps1 -EvidenceDirectory .\test-evidence

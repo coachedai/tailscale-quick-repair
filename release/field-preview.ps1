@@ -16,8 +16,9 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version 2
 
-$ExpectedVersion = '3.0.0-phase6.4.2-preview'
-$ExpectedCode = [int64]30000742
+$ExpectedVersion = '3.0.0-phase6.4.3-preview'
+$ExpectedCode = [int64]30000743
+$ExpectedChannel = 'preview'
 $BaselineVersion = '3.0.0-phase5.2.1'
 $BaselineCode = [int64]30000621
 $PreviousPreviewVersion = '3.0.0-phase6.4.1-preview'
@@ -113,7 +114,7 @@ function Expand-Candidate([string]$Zip,[bool]$AllowProgram,[bool]$RequireMarker)
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { Fail 'Candidate package manifest is missing.' }
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
     if ($manifest.schema -ne 1 -or [string]$manifest.version -cne $ExpectedVersion -or [int64]$manifest.versionCode -ne $ExpectedCode) {
-        Fail 'Candidate package identity does not match the Phase 6.4 preview.'
+        Fail 'Candidate package identity does not match the Phase 6.4.3 preview.'
     }
     $declared = @($manifest.files)
     if ($declared.Count -lt 1) { Fail 'Candidate package contains no declared files.' }
@@ -165,7 +166,27 @@ function Expand-Candidate([string]$Zip,[bool]$AllowProgram,[bool]$RequireMarker)
     finally {
         $archive.Dispose()
     }
-    if ($RequireMarker -and $markerCount -ne 1) { Fail 'The ordinary preview package must contain exactly one protected-update marker.' }
+    if ($RequireMarker -and $markerCount -ne 1) {
+        Fail 'The ordinary preview package must contain exactly one protected-update marker.'
+    }
+    if ($RequireMarker) {
+        $markerPath = Join-Path $root 'app\protected-update.json'
+        try { $marker = Get-Content -LiteralPath $markerPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+        catch { Fail 'The protected-update marker is unreadable.' }
+        $markerNames = @($marker.PSObject.Properties.Name)
+        if (
+            $markerNames.Count -ne 3 -or
+            'schema' -notin $markerNames -or
+            'versionCode' -notin $markerNames -or
+            'channel' -notin $markerNames -or
+            $marker.schema -isnot [int] -or
+            [int]$marker.schema -ne 2 -or
+            [int64]$marker.versionCode -ne $ExpectedCode -or
+            [string]$marker.channel -cne $ExpectedChannel
+        ) {
+            Fail 'The ordinary preview package has the wrong protected-update channel binding.'
+        }
+    }
     if (-not $RequireMarker -and $markerCount -ne 0) { Fail 'The protected Setup package must not contain the bridge-only marker.' }
     return [pscustomobject]@{ root=$root; manifest=$manifest }
 }
@@ -308,7 +329,7 @@ function Get-InstalledCandidateTarget([string]$Relative) {
 function Assert-ExactInstalledCandidate($protected) {
     $installed = Read-InstalledVersion
     if ([string]$installed.version -cne $ExpectedVersion -or [int64]$installed.versionCode -ne $ExpectedCode) {
-        Fail 'Field reconciliation requires the exact installed Phase 6.4.2 preview.'
+        Fail 'Field reconciliation requires the exact installed Phase 6.4.3 preview.'
     }
     if (Test-Path -LiteralPath $MarkerPath -PathType Leaf) {
         Fail 'Field reconciliation refused an unfinished protected-update marker.'
@@ -520,7 +541,7 @@ function Apply-Protected($protected,[string]$ExpectedRequesterSid) {
     $files = Invoke-Private $type 'VerifyPackage' @($protected.root,$manifest)
 
     $result.stage = 'protected_marker'
-    [void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @([int64]$manifest.VersionCode))
+    [void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @([int64]$manifest.VersionCode,$ExpectedChannel))
     $result.protectedPackageVerified = $true
 
     $result.stage = 'protected_context'
@@ -753,7 +774,7 @@ try {
     $result.passed = $true
     $result.stage = 'complete'
     Save-Result
-    Write-Host 'Phase 6.4.2 field preview completed successfully.'
+    Write-Host 'Phase 6.4.3 field preview completed successfully.'
     exit 0
 }
 catch {

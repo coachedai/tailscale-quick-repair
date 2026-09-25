@@ -41,6 +41,7 @@ try{
     Add-Type -AssemblyName System.IO.Compression.FileSystem,PresentationFramework
     $publish=Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json
     Check ($publish.PSObject.Properties.Name -contains 'protectedHandoff' -and $publish.protectedHandoff -is [bool] -and [bool]$publish.protectedHandoff) 'Candidate explicitly uses the protected update handoff'
+    Check ([string]$publish.channel -ceq 'preview') 'Development protected handoff is explicitly bound to the Preview channel'
     Check ($publish.requiresSetup -is [bool] -and -not [bool]$publish.requiresSetup) 'Legacy-compatible bridge is not blocked by the 5.2.1 direct-Setup gate'
     Check (-not(Test-Path $app) -and -not(Test-Path $program) -and -not(Get-Service Tailscale -ErrorAction SilentlyContinue)) 'Handoff starts on an empty disposable installation'
     $url='https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-phase5.2.1/TailscaleQuickRepair-SetupPackage-3.0.0-phase5.2.1.zip'
@@ -59,7 +60,7 @@ try{
     $markerEntry=@($bridgeManifest.files|Where-Object {[string]$_.path -ceq 'app/protected-update.json'})
     Check ($markerEntry.Count -eq 1) 'Bridge package carries one protected-update marker'
     $marker=Get-Content (Join-Path $bridge 'app\protected-update.json') -Raw|ConvertFrom-Json
-    Check ($marker.schema -eq 1 -and $marker.versionCode -eq $bridgeManifest.versionCode) 'Bridge marker targets exactly the package version'
+    Check ($marker.schema -eq 2 -and $marker.versionCode -eq $bridgeManifest.versionCode -and [string]$marker.channel -ceq 'preview') 'Bridge marker targets exactly the package version and Preview channel'
     $integrity=Get-Content (Join-Path $bridge 'app\integrity-manifest.json') -Raw|ConvertFrom-Json
     Check (@($integrity.files|Where-Object {[string]$_.path -ceq 'protected-update.json'}).Count -eq 0) 'Transient handoff marker is not required by the permanent app integrity manifest'
     Check ($markerEntry[0].sha256 -ceq (Get-FileHash (Join-Path $bridge 'app\protected-update.json')).Hash.ToLowerInvariant()) 'Outer package manifest protects the exact transient marker bytes'
@@ -78,11 +79,14 @@ try{
     $source=$fn[0].Extent.Text
     Check ($source.Contains('$psi.FileName = $SetupHostPath') -and
         $source.Contains('$psi.Arguments = ') -and
-        $source.Contains('--upgrade --requester-sid "') -and
+        $source.Contains('--upgrade --channel "') -and
+        $source.Contains('--target-code ') -and
+        $source.Contains('--requester-sid "') -and
+        $source.Contains('$markerChannel') -and
         $source.Contains('$requesterSid') -and
         $source.Contains("$psi.Verb = 'runas'") -and
-        $source.Contains('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value')) 'Handoff launches only the installed Setup host in elevated upgrade mode for the initiating Windows account'
-    Check ($source.Contains('$ProtectedUpdateMarkerPath') -and -not $source.Contains('Repair-Backend.ps1')) 'Handoff uses the version marker and never runs a protected script directly'
+        $source.Contains('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value')) 'Handoff launches only the installed Setup host for the exact channel, version and initiating Windows account'
+    Check ($source.Contains('$ProtectedUpdateMarkerPath') -and $source.Contains('[int]$marker.schema -eq 2') -and -not $source.Contains('Repair-Backend.ps1')) 'Handoff uses the channel-bound version marker and never runs a protected script directly'
     Check ($resultFn[0].Extent.Text.Contains('Update downloaded · finishing setup') -and
         $resultFn[0].Extent.Text.Contains('Windows approval is needed to finish the protected part of this update.')) 'Bridge success remains provisional until protected Setup completes'
 

@@ -139,10 +139,14 @@ try{
 
         $marker=Get-Content (Join-Path $app 'protected-update.json') -Raw|ConvertFrom-Json
         $wrong=$false
-        try{[void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @([int64]$marker.versionCode+1))}catch{$wrong=$true}
+        try{[void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @([int64]$marker.versionCode+1,[string]$marker.channel))}catch{$wrong=$true}
         Check $wrong 'Refreshed Setup rejects a handoff marker for another release'
-        [void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @([int64]$marker.versionCode))
-        Check $true 'Refreshed Setup accepts the exact staged release marker'
+        $wrongChannel=$false
+        $otherChannel=if([string]$marker.channel -ceq 'preview'){'stable'}else{'preview'}
+        try{[void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @([int64]$marker.versionCode,$otherChannel))}catch{$wrongChannel=$true}
+        Check $wrongChannel 'Refreshed Setup rejects a handoff marker from another update channel'
+        [void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @([int64]$marker.versionCode,[string]$marker.channel))
+        Check $true 'Refreshed Setup accepts the exact staged release and channel marker'
         Check (([string](Invoke-Private $type 'ReadConfiguredPeer')).Trim() -ceq 'handoff-fixture.invalid') 'Upgrade mode can reuse the existing configured target'
         [void](Invoke-Private $type 'WriteRestartPending' @([int64]$marker.versionCode))
         $restartKey=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\TailscaleQuickRepair',$false)

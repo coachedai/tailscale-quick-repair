@@ -27,7 +27,10 @@ catch {}
 $TaskName = 'Tailscale Quick Repair'
 $ProductVersion = '3.0.0-phase2.2.1'
 $ProductVersionCode = [int64]30000211
-$UpdateManifestApiUrl = 'https://api.github.com/repos/coachedai/tailscale-quick-repair/contents/updates/latest.json?ref=main'
+$StableUpdateManifestApiUrl = 'https://api.github.com/repos/coachedai/tailscale-quick-repair/contents/updates/latest.json?ref=main'
+$PreviewUpdateManifestApiUrl = 'https://api.github.com/repos/coachedai/tailscale-quick-repair/contents/updates/preview.json?ref=preview'
+$UpdateChannelRegistryPath = 'HKCU:\Software\TailscaleQuickRepair'
+$UpdateChannelRegistryName = 'UpdateChannel'
 $BackendPath = Join-Path $env:ProgramData 'TailscaleQuickRepair\Repair-Backend.ps1'
 $BackendLauncherPath = Join-Path $env:ProgramData 'TailscaleQuickRepair\Launch-Tailscale-Backend.vbs'
 $RepairInstallPath = Join-Path $env:ProgramData 'TailscaleQuickRepair\Repair-Installation.ps1'
@@ -1018,6 +1021,23 @@ try {
                                             Text="Rebuilds Quick Repair's Windows integration. Administrator approval required."
                                             TextWrapping="Wrap"/>
 
+                                        <CheckBox
+                                            x:Name="EarlyAccessUpdatesCheckBox"
+                                            AutomationProperties.Name="Early-access updates"
+                                            AutomationProperties.HelpText="Checks the trusted Early-access channel for release candidates before public release."
+                                            Margin="0,18,0,0"
+                                            Foreground="{StaticResource Value}"
+                                            FontSize="12"
+                                            VerticalContentAlignment="Center"
+                                            Content="Early-access updates"/>
+
+                                        <TextBlock
+                                            Margin="22,5,0,0"
+                                            FontSize="10.5"
+                                            Foreground="{StaticResource Faint}"
+                                            Text="Release candidates before the public channel. Opt-in only."
+                                            TextWrapping="Wrap"/>
+
                                         <Border
                                             Margin="0,20,0,0"
                                             Height="1"
@@ -1046,7 +1066,7 @@ try {
                                             <Button
                                                 x:Name="CheckForUpdatesButton"
                                                 AutomationProperties.Name="Check for Quick Repair updates"
-                                                AutomationProperties.HelpText="Checks the trusted public Quick Repair update manifest on GitHub."
+                                                AutomationProperties.HelpText="Checks the selected trusted Quick Repair update channel on GitHub."
                                                 Style="{StaticResource GhostButtonStyle}"
                                                 Content="Check for updates"/>
 
@@ -1266,6 +1286,7 @@ try {
     $UpdateDetailText = $window.FindName('UpdateDetailText')
     $CheckForUpdatesButton = $window.FindName('CheckForUpdatesButton')
     $UpdateNowButton = $window.FindName('UpdateNowButton')
+    $EarlyAccessUpdatesCheckBox = $window.FindName('EarlyAccessUpdatesCheckBox')
     $AdvancedDiagnosticsButton = $window.FindName('AdvancedDiagnosticsButton')
     $AdvancedCopyButton = $window.FindName('AdvancedCopyButton')
     $AdvancedDiagnosticsPanel = $window.FindName('AdvancedDiagnosticsPanel')
@@ -1364,6 +1385,10 @@ try {
     $script:updateCheckTimer = $null
     $script:updateCheckStartedAt = [DateTime]::MinValue
     $script:updateManifest = $null
+    $script:updateChannel = 'stable'
+    $script:updateCheckChannel = ''
+    $script:updateManifestChannel = ''
+    $script:initializingUpdateChannel = $false
 
     $script:updateDownloadActive = $false
     $script:updateDownloadClient = $null
@@ -3455,6 +3480,58 @@ try {
         }
     }
 
+    function Get-UpdateChannel {
+        try {
+            $value = (Get-ItemProperty -LiteralPath $UpdateChannelRegistryPath -Name $UpdateChannelRegistryName -ErrorAction Stop).$UpdateChannelRegistryName
+            if ([string]$value -ceq 'preview') { return 'preview' }
+        }
+        catch {}
+        return 'stable'
+    }
+
+    function Set-UpdateChannel {
+        param([string]$Channel)
+
+        if ($Channel -ceq 'preview') {
+            try {
+                New-Item -Path $UpdateChannelRegistryPath -Force | Out-Null
+                New-ItemProperty -LiteralPath $UpdateChannelRegistryPath -Name $UpdateChannelRegistryName -Value 'preview' -PropertyType String -Force | Out-Null
+                return $true
+            }
+            catch { return $false }
+        }
+
+        if ($Channel -ceq 'stable') {
+            try {
+                Remove-ItemProperty -LiteralPath $UpdateChannelRegistryPath -Name $UpdateChannelRegistryName -ErrorAction SilentlyContinue
+                return $true
+            }
+            catch { return $false }
+        }
+
+        return $false
+    }
+
+    function Get-UpdateManifestApiUrl {
+        param([string]$Channel)
+
+        switch ($Channel) {
+            'stable' { return $StableUpdateManifestApiUrl }
+            'preview' { return $PreviewUpdateManifestApiUrl }
+            default { throw 'Unsupported Quick Repair update channel.' }
+        }
+    }
+
+    function Clear-UpdateSelectionForChannelChange {
+        $script:updateManifest = $null
+        $script:updateManifestChannel = ''
+        $UpdateNowButton.Visibility = [System.Windows.Visibility]::Collapsed
+        $UpdateStatusText.Text = if ((Get-UpdateChannel) -ceq 'preview') { 'Early-access updates enabled' } else { 'Stable updates enabled' }
+        $UpdateStatusText.Foreground = Get-Brush 'Muted'
+        $UpdateDetailText.Text = 'Check for updates to refresh this channel.'
+        $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
+    }
+
     function Reset-UpdateInstallState {
         try {
             if ($script:updateDownloadTimer) {
@@ -3520,6 +3597,7 @@ try {
 
         $CheckForUpdatesButton.Content = 'Check again'
         $CheckForUpdatesButton.IsEnabled = $true
+        if ($EarlyAccessUpdatesCheckBox) { $EarlyAccessUpdatesCheckBox.IsEnabled = $true }
     }
 
     function Start-UpdateCheck {
@@ -3530,6 +3608,10 @@ try {
         $script:updateCheckActive = $true
         $script:updateCheckStartedAt = Get-Date
         $script:updateManifest = $null
+        $script:updateManifestChannel = ''
+        $script:updateCheckChannel = Get-UpdateChannel
+        $script:updateChannel = $script:updateCheckChannel
+        $manifestApiUrl = Get-UpdateManifestApiUrl $script:updateCheckChannel
 
         $UpdateNowButton.Visibility = [System.Windows.Visibility]::Collapsed
         $UpdateStatusText.Text = 'Checking for updates…'
@@ -3537,6 +3619,7 @@ try {
         $UpdateDetailText.Visibility = [System.Windows.Visibility]::Collapsed
         $CheckForUpdatesButton.Content = 'Checking…'
         $CheckForUpdatesButton.IsEnabled = $false
+        if ($EarlyAccessUpdatesCheckBox) { $EarlyAccessUpdatesCheckBox.IsEnabled = $false }
 
         try {
             [Net.ServicePointManager]::SecurityProtocol =
@@ -3575,7 +3658,7 @@ try {
 
             $script:updateCheckTask =
                 $script:updateWebClient.DownloadStringTaskAsync(
-                    [Uri]$UpdateManifestApiUrl
+                    [Uri]$manifestApiUrl
                 )
 
             if (-not $script:updateCheckTask) {
@@ -3646,9 +3729,11 @@ try {
 
                     $apiRaw = [string]$script:updateCheckTask.Result
                     $apiFile = $apiRaw | ConvertFrom-Json -ErrorAction Stop
+                    $expectedApiPath = if ($script:updateCheckChannel -ceq 'preview') { 'updates/preview.json' } else { 'updates/latest.json' }
 
                     if (
                         [string]$apiFile.encoding -ne 'base64' -or
+                        [string]$apiFile.path -cne $expectedApiPath -or
                         [string]::IsNullOrWhiteSpace([string]$apiFile.content)
                     ) {
                         throw 'GitHub returned an unexpected update-channel response.'
@@ -3667,10 +3752,15 @@ try {
                         throw 'The update manifest is not valid.'
                     }
 
+                    if ($script:updateCheckChannel -ceq 'preview' -and [string]$manifest.channel -cne 'preview') {
+                        throw 'The Early-access manifest channel is invalid.'
+                    }
+
                     if (-not [bool]$manifest.published) {
+                        $noReleaseDetail = if ($script:updateCheckChannel -ceq 'preview') { 'No newer Early-access release is published right now.' } else { 'No newer public release is published right now.' }
                         Complete-UpdateCheck `
                             -Status 'Update channel connected' `
-                            -Detail 'No newer release is published right now.' `
+                            -Detail $noReleaseDetail `
                             -Tone 'good'
                         return
                     }
@@ -3701,6 +3791,7 @@ try {
                         }
 
                         $script:updateManifest = $manifest
+                        $script:updateManifestChannel = $script:updateCheckChannel
                         $UpdateNowButton.Visibility = [System.Windows.Visibility]::Visible
 
                         $notes = [string]$manifest.notes
@@ -3722,6 +3813,7 @@ try {
                 }
                 catch {
                     $script:updateManifest = $null
+                    $script:updateManifestChannel = ''
                     $UpdateNowButton.Visibility = [System.Windows.Visibility]::Collapsed
 
                     Complete-UpdateCheck `
@@ -4637,6 +4729,32 @@ try {
         Start-UpdateInstall
     })
 
+    $EarlyAccessUpdatesCheckBox.Add_Checked({
+        if ($script:initializingUpdateChannel) { return }
+        if (Set-UpdateChannel 'preview') {
+            $script:updateChannel = 'preview'
+            Clear-UpdateSelectionForChannelChange
+        }
+        else {
+            $script:initializingUpdateChannel = $true
+            try { $EarlyAccessUpdatesCheckBox.IsChecked = $false }
+            finally { $script:initializingUpdateChannel = $false }
+        }
+    })
+
+    $EarlyAccessUpdatesCheckBox.Add_Unchecked({
+        if ($script:initializingUpdateChannel) { return }
+        if (Set-UpdateChannel 'stable') {
+            $script:updateChannel = 'stable'
+            Clear-UpdateSelectionForChannelChange
+        }
+        else {
+            $script:initializingUpdateChannel = $true
+            try { $EarlyAccessUpdatesCheckBox.IsChecked = $true }
+            finally { $script:initializingUpdateChannel = $false }
+        }
+    })
+
     $PrimaryButton.Add_Click({
         switch ($script:actionMode) {
             'open' { Open-TailscaleContextually }
@@ -4870,6 +4988,12 @@ try {
     # Init
     # --------------------------------------------------------------
     $StartWithWindowsCheckBox.IsChecked = Test-StartWithWindows
+    $script:initializingUpdateChannel = $true
+    try {
+        $script:updateChannel = Get-UpdateChannel
+        $EarlyAccessUpdatesCheckBox.IsChecked = ($script:updateChannel -ceq 'preview')
+    }
+    finally { $script:initializingUpdateChannel = $false }
 
     Initialize-TrayIcon
     Update-TrayStatus $null

@@ -22,8 +22,12 @@ using Microsoft.Win32;
 
 internal static class PublicSetupHost
 {
-    private const string ManifestApiUrl =
+    private const string StableManifestApiUrl =
         "https://api.github.com/repos/coachedai/tailscale-quick-repair/contents/updates/latest.json?ref=main";
+    private const string PreviewManifestApiUrl =
+        "https://api.github.com/repos/coachedai/tailscale-quick-repair/contents/updates/preview.json?ref=preview";
+    private const string StableManifestPath = "updates/latest.json";
+    private const string PreviewManifestPath = "updates/preview.json";
     private const string TrustedHost = "github.com";
     private const string TrustedReleasePrefix = "/coachedai/tailscale-quick-repair/releases/download/";
     private const string RepairTaskName = "Tailscale Quick Repair";
@@ -94,6 +98,8 @@ internal static class PublicSetupHost
 
             bool repairOnly = HasSwitch(args, "--repair");
             bool upgradeOnly = HasSwitch(args, "--upgrade");
+            string channel = NormalizeChannel(ReadArg(args, "--channel"));
+            long targetCode = ReadLongArg(args, "--target-code", 0);
 
             if (repairOnly && upgradeOnly)
                 throw new InvalidDataException("Setup mode is invalid.");
@@ -119,7 +125,7 @@ internal static class PublicSetupHost
 
             if (!IsAdministrator())
             {
-                return RelaunchElevated(peer, startup, repairOnly, upgradeOnly, CurrentUserSid());
+                return RelaunchElevated(peer, startup, repairOnly, upgradeOnly, CurrentUserSid(), channel, targetCode);
             }
 
             bool acquired = upgradeOnly
@@ -133,7 +139,7 @@ internal static class PublicSetupHost
 
             return repairOnly
                 ? RepairIntegration(peer, startup)
-                : Install(peer, startup, upgradeOnly);
+                : Install(peer, startup, upgradeOnly, channel, targetCode);
         }
         catch (Exception ex)
         {
@@ -153,11 +159,23 @@ internal static class PublicSetupHost
 
     private static int RunInstallerSelfTest()
     {
-        Uri uri;
-        if (!Uri.TryCreate(ManifestApiUrl, UriKind.Absolute, out uri) || uri.Scheme != "https")
+        foreach (string channel in new string[] { "stable", "preview" })
         {
-            return 2;
+            Uri uri;
+            if (!Uri.TryCreate(GetManifestApiUrl(channel), UriKind.Absolute, out uri) ||
+                !String.Equals(uri.Scheme, "https", StringComparison.OrdinalIgnoreCase) ||
+                !String.Equals(uri.Host, "api.github.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return 2;
+            }
         }
+
+        try
+        {
+            NormalizeChannel("arbitrary-url");
+            return 3;
+        }
+        catch (InvalidDataException) { }
 
         string root = Path.Combine(
             Path.GetTempPath(),
@@ -230,7 +248,7 @@ internal static class PublicSetupHost
             catch { }
         }
     }
-    private static int Install(string peer, bool startup, bool upgradeOnly)
+    private static int Install(string peer, bool startup, bool upgradeOnly, string channel, long targetCode)
     {
         // Restore any payload transaction that was interrupted by a killed
         // Setup process before downloading or applying another release.
@@ -241,7 +259,7 @@ internal static class PublicSetupHost
 
         try
         {
-            SetupManifest manifest = FetchSetupManifest();
+            SetupManifest manifest = FetchSetupManifest(channel, targetCode);
             string zip = Path.Combine(work, "setup.zip");
             DownloadFile(manifest.Url, zip);
 
@@ -261,7 +279,7 @@ internal static class PublicSetupHost
                 throw new InvalidDataException("Setup package metadata does not match the trusted channel.");
 
             List<InstallFile> files = VerifyPackage(extract, package);
-            ValidateProtectedUpdateMarker(package.VersionCode);
+            ValidateProtectedUpdateMarker(package.VersionCode, channel);
 
             StopQuickRepair();
             ApplyFiles(files, work);
@@ -350,19 +368,51 @@ internal static class PublicSetupHost
         return 0;
     }
 
-    private static SetupManifest FetchSetupManifest()
+    internal static string NormalizeChannel(string value)
     {
-        string apiJson = DownloadString(ManifestApiUrl, true);
+        if (String.IsNullOrWhiteSpace(value) ||
+            String.Equals(value, "stable", StringComparison.OrdinalIgnoreCase))
+            return "stable";
+
+        if (String.Equals(value, "preview", StringComparison.OrdinalIgnoreCase))
+            return "preview";
+
+        throw new InvalidDataException("Unsupported Quick Repair update channel.");
+    }
+
+    internal static string GetManifestApiUrl(string channel)
+    {
+        return NormalizeChannel(channel) == "preview"
+            ? PreviewManifestApiUrl
+            : StableManifestApiUrl;
+    }
+
+    private static string GetExpectedManifestPath(string channel)
+    {
+        return NormalizeChannel(channel) == "preview"
+            ? PreviewManifestPath
+            : StableManifestPath;
+    }
+
+    private static SetupManifest FetchSetupManifest(string channel, long targetCode)
+    {
+        channel = NormalizeChannel(channel);
+        string apiJson = DownloadString(GetManifestApiUrl(channel), true);
         Dictionary<string, object> api = Deserialize(apiJson);
         string encoding = ReadString(api, "encoding");
+        string apiPath = ReadString(api, "path");
         string content = ReadString(api, "content").Replace("\r", "").Replace("\n", "");
 
-        if (!String.Equals(encoding, "base64", StringComparison.OrdinalIgnoreCase) || String.IsNullOrWhiteSpace(content))
+        if (!String.Equals(encoding, "base64", StringComparison.OrdinalIgnoreCase) ||
+            !String.Equals(apiPath, GetExpectedManifestPath(channel), StringComparison.Ordinal) ||
+            String.IsNullOrWhiteSpace(content))
             throw new InvalidDataException("GitHub returned an unexpected setup-channel response.");
 
         Dictionary<string, object> root = Deserialize(Encoding.UTF8.GetString(Convert.FromBase64String(content)));
         if (ReadInt(root, "schema") != 1 || !ReadBool(root, "published"))
             throw new InvalidDataException("No installable Quick Repair release is currently published.");
+        if (channel == "preview" && !String.Equals(ReadString(root, "channel"), "preview", StringComparison.Ordinal))
+            throw new InvalidDataException("The Early-access setup manifest channel is invalid.");
 
         Dictionary<string, object> setup = ReadDictionary(root, "setup");
         SetupManifest result = new SetupManifest();
@@ -372,13 +422,15 @@ internal static class PublicSetupHost
         result.Sha256 = ReadString(setup, "sha256").ToLowerInvariant();
         result.Size = ReadLong(setup, "size");
 
+        if (targetCode > 0 && result.VersionCode != targetCode)
+            throw new InvalidDataException("The selected setup release changed. Check for updates again.");
+
         if (String.IsNullOrWhiteSpace(result.Version) || result.VersionCode <= 0 || result.Size <= 0 ||
             !IsSha256(result.Sha256) || !IsTrustedReleaseUrl(result.Url))
             throw new InvalidDataException("The setup manifest failed trust validation.");
 
         return result;
     }
-
     private static PackageManifest ReadPackageManifest(string root)
     {
         string path = Path.Combine(root, "package-manifest.json");
@@ -1697,20 +1749,34 @@ internal static class PublicSetupHost
         return Path.Combine(GetAppDir(), "protected-update.json");
     }
 
-    private static void ValidateProtectedUpdateMarker(long versionCode)
+    private static void ValidateProtectedUpdateMarker(long versionCode, string channel)
     {
         string path = GetProtectedUpdateMarkerPath();
         if (!File.Exists(path)) return;
 
-        FileInfo info = new FileInfo(path);
-        if (info.Length <= 0 || info.Length > 4096)
-            throw new InvalidDataException("Protected update marker is invalid.");
-
         Dictionary<string, object> marker = Deserialize(File.ReadAllText(path, Encoding.UTF8));
-        if (marker.Count != 2 || ReadInt(marker, "schema") != 1 || ReadLong(marker, "versionCode") != versionCode)
-            throw new InvalidDataException("Protected update marker does not match this release.");
-    }
+        int schema = ReadInt(marker, "schema");
+        string normalizedChannel = NormalizeChannel(channel);
 
+        if (schema == 1)
+        {
+            if (marker.Count != 2 || ReadLong(marker, "versionCode") != versionCode ||
+                !String.Equals(normalizedChannel, "stable", StringComparison.Ordinal))
+                throw new InvalidDataException("Protected update marker does not match this release.");
+            return;
+        }
+
+        if (schema == 2)
+        {
+            string markerChannel = NormalizeChannel(ReadString(marker, "channel"));
+            if (marker.Count != 3 || ReadLong(marker, "versionCode") != versionCode ||
+                !String.Equals(markerChannel, normalizedChannel, StringComparison.Ordinal))
+                throw new InvalidDataException("Protected update marker does not match this release.");
+            return;
+        }
+
+        throw new InvalidDataException("Protected update marker is invalid.");
+    }
     private static void RemoveProtectedUpdateMarker()
     {
         string path = GetProtectedUpdateMarkerPath();
@@ -1922,7 +1988,7 @@ internal static class PublicSetupHost
         return candidate;
     }
 
-    private static int RelaunchElevated(string peer, bool startup, bool repairOnly, bool upgradeOnly, string requesterSid)
+    private static int RelaunchElevated(string peer, bool startup, bool repairOnly, bool upgradeOnly, string requesterSid, string channel, long targetCode)
     {
         try
         {
@@ -1931,6 +1997,8 @@ internal static class PublicSetupHost
             string mode = repairOnly ? "--repair " : upgradeOnly ? "--upgrade " : "";
             psi.Arguments = mode + "--peer " + Quote(peer) +
                 " --startup " + (startup ? "true" : "false") +
+                " --channel " + Quote(NormalizeChannel(channel)) +
+                " --target-code " + targetCode.ToString(CultureInfo.InvariantCulture) +
                 " --requester-sid " + Quote(NormalizeSid(requesterSid));
             psi.Verb = "runas";
             psi.UseShellExecute = true;

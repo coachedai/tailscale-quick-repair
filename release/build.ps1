@@ -190,6 +190,18 @@ function Convert-UiToNativeUpdater {
 
         try {
             $targetCode = [int64]$script:updateManifest.versionCode
+            $selectedChannel = Get-UpdateChannel
+            if (
+                [string]::IsNullOrWhiteSpace([string]$script:updateManifestChannel) -or
+                $script:updateManifestChannel -notin @('stable','preview') -or
+                $script:updateManifestChannel -cne $selectedChannel
+            ) {
+                $script:updateManifest = $null
+                $script:updateManifestChannel = ''
+                $UpdateNowButton.Visibility = [System.Windows.Visibility]::Collapsed
+                Start-UpdateCheck
+                return
+            }
 
             if ($targetCode -le $ProductVersionCode) {
                 Start-UpdateCheck
@@ -210,6 +222,10 @@ function Convert-UiToNativeUpdater {
                 ([string]$PID)
                 '--current-code'
                 ([string]$ProductVersionCode)
+                '--target-code'
+                ([string]$targetCode)
+                '--channel'
+                ('"' + [string]$script:updateManifestChannel + '"')
             ) -join ' '
             $psi.UseShellExecute = $true
 
@@ -428,19 +444,30 @@ try {
         throw 'Native updater does not explicitly force TLS 1.2.'
     }
 
-    # Execute the exact compiled EXE against the same GitHub API endpoint the
-    # updater uses. A release cannot pass CI if TLS/HTTPS negotiation fails.
-    $selfTest = Start-Process `
+    # Execute the exact compiled EXE against both fixed GitHub API update channels.
+    foreach ($channel in @('stable','preview')) {
+        $selfTest = Start-Process `
+            -FilePath $updaterExe `
+            -ArgumentList ('--network-self-test --channel ' + $channel) `
+            -WindowStyle Hidden `
+            -Wait `
+            -PassThru
+
+        if ($selfTest.ExitCode -ne 0) {
+            throw "Native updater HTTPS self-test failed for $channel with exit code $($selfTest.ExitCode)."
+        }
+    }
+
+    $invalidChannelTest = Start-Process `
         -FilePath $updaterExe `
-        -ArgumentList '--network-self-test' `
+        -ArgumentList '--network-self-test --channel arbitrary-url' `
         -WindowStyle Hidden `
         -Wait `
         -PassThru
 
-    if ($selfTest.ExitCode -ne 0) {
-        throw "Native updater HTTPS self-test failed with exit code $($selfTest.ExitCode)."
+    if ($invalidChannelTest.ExitCode -ne 26) {
+        throw "Native updater accepted an unsupported channel: $($invalidChannelTest.ExitCode)."
     }
-
     $utf8Bom = New-Object System.Text.UTF8Encoding($true)
 
     [IO.File]::WriteAllText(

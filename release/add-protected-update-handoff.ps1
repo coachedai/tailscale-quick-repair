@@ -57,16 +57,27 @@ $functionBlock = @'
                 ConvertFrom-Json -ErrorAction Stop
             $names = @($marker.PSObject.Properties.Name)
             $validCodeType = $marker.versionCode -is [int] -or $marker.versionCode -is [long]
+            $markerChannel = 'stable'
 
-            if (
-                $names.Count -ne 2 -or
-                'schema' -notin $names -or
-                'versionCode' -notin $names -or
-                $marker.schema -isnot [int] -or
-                [int]$marker.schema -ne 1 -or
-                -not $validCodeType -or
-                [int64]$marker.versionCode -ne $ProductVersionCode
-            ) {
+            if ($marker.schema -isnot [int] -or -not $validCodeType -or [int64]$marker.versionCode -ne $ProductVersionCode) {
+                throw 'The protected update marker is invalid.'
+            }
+
+            if ([int]$marker.schema -eq 1) {
+                if ($names.Count -ne 2 -or 'schema' -notin $names -or 'versionCode' -notin $names) {
+                    throw 'The protected update marker is invalid.'
+                }
+            }
+            elseif ([int]$marker.schema -eq 2) {
+                if ($names.Count -ne 3 -or 'schema' -notin $names -or 'versionCode' -notin $names -or 'channel' -notin $names) {
+                    throw 'The protected update marker is invalid.'
+                }
+                $markerChannel = [string]$marker.channel
+                if ($markerChannel -notin @('stable','preview')) {
+                    throw 'The protected update marker is invalid.'
+                }
+            }
+            else {
                 throw 'The protected update marker is invalid.'
             }
 
@@ -81,7 +92,7 @@ $functionBlock = @'
 
             $psi = New-Object System.Diagnostics.ProcessStartInfo
             $psi.FileName = $SetupHostPath
-            $psi.Arguments = '--upgrade --requester-sid "' + $requesterSid + '"'
+            $psi.Arguments = '--upgrade --channel "' + $markerChannel + '" --target-code ' + [string][int64]$marker.versionCode + ' --requester-sid "' + $requesterSid + '"'
             $psi.Verb = 'runas'
             $psi.UseShellExecute = $true
 
@@ -237,6 +248,8 @@ foreach ($required in @(
     'function Invoke-PendingProtectedUpdate',
     'function Acknowledge-ProtectedRestart',
     '--requester-sid',
+    '--channel "',
+    '--target-code ',
     '$psi.Verb = ''runas''',
     'Update downloaded · finishing setup',
     'Acknowledge-ProtectedRestart'
