@@ -5,6 +5,14 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
+$diagnosticsSource = Join-Path $PSScriptRoot '..\src\app\Advanced-Diagnostics.ps1'
+if (Test-Path -LiteralPath $diagnosticsSource -PathType Leaf) {
+    $tokens = $null
+    $parseErrors = $null
+    [void][Management.Automation.Language.Parser]::ParseFile($diagnosticsSource,[ref]$tokens,[ref]$parseErrors)
+    if ($parseErrors.Count -ne 0) { throw 'Advanced diagnostics source does not parse on Windows PowerShell 5.1.' }
+}
+
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $versionPath = Join-Path $repo 'version.json'
 $packageSpecPath = Join-Path $repo 'release\package.json'
