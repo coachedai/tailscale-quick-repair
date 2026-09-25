@@ -12,7 +12,7 @@ The preview version bump does not change repair permissions, network behavior or
 
 Automatic repair is local-only. Policy inputs are limited to the Tailscale service, service startup mode, the local Tailscale client and local backend state. Peer reachability, latency, routes, diagnostics and arbitrary error text cannot authorise automatic recovery.
 
-Intentional disconnect, sign-in, device approval and another-user states require attention and are preserved across later service loss. A disabled service is left disabled. Missing or uncertain installation state cannot mutate Windows. Automatic repair does not run `tailscale up`, reset adapters, alter DNS/routes, perform broad Windows network resets or change unrelated VPN settings. VPN brand or protocol is not a policy input.
+Intentional disconnect, sign-in, device approval and another-user states require attention and are preserved across later service loss. A disabled service is left disabled. Missing or uncertain installation state cannot mutate Windows. Automatic repair does not run `tailscale up`, reset adapters, alter DNS/routes, perform broad Windows network resets or change unrelated VPN settings. VPN brand or protocol is not a policy input. The separate manual adapter-recovery boundary is fail-closed to the exact Tailscale tunnel interface and passes the selected adapter object directly to Windows; friendly-name matching cannot widen that scope.
 
 Candidate faults require repeated comparable observations before action. Retry reservations use increasing cooldowns and stop after the incident retry limit. Recovery is reported only after explicit healthy local evidence; starting a task or completing a service action is not labelled as recovery.
 

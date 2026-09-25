@@ -26,7 +26,7 @@ The release pipeline performs repository-isolation and privacy scans before vali
 
 The repair engine is intentionally narrow. Quick Repair checks local Tailscale health and the configured remote peer. It may recycle the Tailscale service when the peer is reported online by Tailscale but cannot actually be reached. An offline peer does not trigger that recovery.
 
-The product does not perform broad Windows network resets as part of normal repair. It does not reconfigure unrelated VPN clients, adapters, routes or DNS. VPN software shown by Advanced diagnostics is best-effort, read-only context only; recognised or unrecognised VPN software never becomes a repair trigger.
+The product does not perform broad Windows network resets as part of normal repair. It does not reconfigure unrelated VPN clients, adapters, routes or DNS. The manual adapter-recovery step is fail-closed to the exact Tailscale tunnel interface; if that interface cannot be identified safely, Quick Repair falls back to Tailscale service recovery rather than touching another adapter. VPN software shown by Advanced diagnostics is best-effort, read-only context only; recognised or unrecognised VPN software never becomes a repair trigger.
 
 ## Updates and verification
 
