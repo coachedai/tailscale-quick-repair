@@ -23,6 +23,7 @@ $BaselineVersion = '3.0.0-phase5.2.1'
 $BaselineCode = [int64]30000621
 $AcceptedPreviousPreviews = @(
     [pscustomobject]@{ version = '3.0.0-phase6.4.0-preview'; versionCode = [int64]30000740 },
+    [pscustomobject]@{ version = '3.0.0-phase6.4.1-preview'; versionCode = [int64]30000741 },
     [pscustomobject]@{ version = '3.0.0-phase6.4.3-preview'; versionCode = [int64]30000743 }
 )
 $GuardianSnapshotPath = Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair\guardian-known-good.json'

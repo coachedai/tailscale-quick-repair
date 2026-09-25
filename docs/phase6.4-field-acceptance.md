@@ -12,7 +12,7 @@ The helper never changes the product trust policy, never adds a local-package sw
 
 ## Before running
 
-- Start from the genuine installed 5.2.1 release, an explicitly allowlisted accepted preview (**3.0.0-phase6.4.0-preview / 30000740** or **3.0.0-phase6.4.3-preview / 30000743**) with a matching Guardian known-good integrity record, or an already-staged RC1 bridge left after intentionally cancelling the UAC prompt.
+- Start from the genuine installed 5.2.1 release, an explicitly allowlisted accepted preview (**3.0.0-phase6.4.0-preview / 30000740**, **3.0.0-phase6.4.1-preview / 30000741**, or **3.0.0-phase6.4.3-preview / 30000743**) with a matching Guardian known-good integrity record, or an already-staged RC1 bridge left after intentionally cancelling the UAC prompt.
 - Exit Quick Repair from the tray menu before the first run.
 - Leave **Auto Repair off** for the initial upgrade acceptance.
 - Keep Tailscale signed in normally. Do not deliberately break networking for the first pass.

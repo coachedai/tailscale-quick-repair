@@ -6,7 +6,7 @@
 
 The frozen RC1 release target is **2555bf4af30845d2c722964e289cfdfe15a412bf**. Workflow **36186476031** passed the full native Windows verification, genuine released-5.2.1 upgrade, interrupted-Setup recovery and protected-handoff gates before the publisher created the prerelease and dedicated Preview manifest. Publication then disarmed itself.
 
-Post-publication compatibility commit **d16c8107aa1cf2403e52fe66a6c82b221b2918d5** passed workflow **36189240040**. Its developer field helper exact-allows the physically accepted **3.0.0-phase6.4.0-preview / 30000740** and **3.0.0-phase6.4.3-preview / 30000743** identities only, and still requires a Guardian known-good record matching the installed integrity manifest. The accepted 6.4.0 path now has explicit cancel/retry/protected-completion acceptance.
+Post-publication compatibility commit **d16c8107aa1cf2403e52fe66a6c82b221b2918d5** passed workflow **36189240040**. Its developer field helper exact-allows the physically accepted **3.0.0-phase6.4.0-preview / 30000740**, **3.0.0-phase6.4.1-preview / 30000741** and **3.0.0-phase6.4.3-preview / 30000743** identities only, and still requires a Guardian known-good record matching the installed integrity manifest. The 6.4.1 identity is historically grounded by the 6.4.2 field-acceptance path, which explicitly required a physically accepted 6.4.1 preview with a healthy known-good baseline.
 
 CI also pins the already-published RC1 package assets by tag, release target, size and SHA-256 before privacy-scanning and rerunning field acceptance. This guards the field pack against same-version rebuilt bytes.
 ## What Phase 6 now includes
@@ -74,4 +74,4 @@ The development workflow has a separate Early-access publication gate controlled
 
 The publisher reuses the exact validated package artifact, rechecks SHA-256 sidecars and privacy, creates a GitHub **prerelease**, then disarms its own publication intent before making `preview/updates/preview.json` live. Both branch pushes are non-force. If the development branch moves before publication/disarm, the job refuses. The Preview job has no code path to `main` or `updates/latest.json`.
 
-This makes the release-candidate loop: trusted 5.2.1, 6.4.0 or 6.4.3 field baselines may use the one-time developer bridge to RC1; once RC1 is installed, enable **Early-access updates** and install later 3.0 RCs through the normal in-app updater.
+This makes the release-candidate loop: trusted 5.2.1, 6.4.0, 6.4.1 or 6.4.3 field baselines may use the one-time developer bridge to RC1; once RC1 is installed, enable **Early-access updates** and install later 3.0 RCs through the normal in-app updater.

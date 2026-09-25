@@ -208,6 +208,7 @@ try{
     # recreate either historical preview package byte-for-byte.
     foreach($previousPreview in @(
         [pscustomobject]@{label='6.4.0';version='3.0.0-phase6.4.0-preview';code=[int64]30000740},
+        [pscustomobject]@{label='6.4.1';version='3.0.0-phase6.4.1-preview';code=[int64]30000741},
         [pscustomobject]@{label='6.4.3';version='3.0.0-phase6.4.3-preview';code=[int64]30000743}
     )){
         Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction SilentlyContinue

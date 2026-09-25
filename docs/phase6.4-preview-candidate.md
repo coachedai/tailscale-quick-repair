@@ -9,9 +9,10 @@ Workflow **36186476031** passed both Windows jobs before Preview publication. Th
 Post-publication compatibility commit **d16c8107aa1cf2403e52fe66a6c82b221b2918d5** passed workflow **36189240040**. The developer-only field helper now exact-allows these trusted previous-preview identities:
 
 - **3.0.0-phase6.4.0-preview / 30000740**
+- **3.0.0-phase6.4.1-preview / 30000741**
 - **3.0.0-phase6.4.3-preview / 30000743**
 
-A previous preview is accepted only when its Guardian known-good record matches the installed integrity manifest. Arbitrary versions, version ranges, local package URLs and mismatched integrity records remain refused.
+The 6.4.1 identity is not inferred from the user's machine: the historical 6.4.2 field-acceptance instructions explicitly named the physically accepted **3.0.0-phase6.4.1-preview / 30000741** as the allowed previous-preview baseline. A previous preview is accepted only when its Guardian known-good record matches the installed integrity manifest. Arbitrary versions, version ranges, local package URLs and mismatched integrity records remain refused.
 
 The post-publication pipeline also verifies the exact public RC1 release assets by frozen tag, target commit, size and SHA-256, privacy-scans the downloaded archives, and reruns the field acceptance against those already-published bytes. This is intentionally stronger than testing a freshly rebuilt package that merely shares the same version number.
 
