@@ -40,7 +40,7 @@ The first stage uses the **installed released 5.2.1 updater core** to apply only
 
 The field helper itself is developer test tooling and is launched from Windows PowerShell. Any console belonging to the helper is therefore **not** evidence of a product console flash. The no-console requirement applies to normal Quick Repair, updater and Setup operation outside this helper path.
 
-A small phase6.4-field-result.json file is written beside the helper. It contains only typed booleans, the preview version/code, the current acceptance stage and a curated error message when applicable. Unexpected PowerShell exception text is never copied into that file. If the administrator-approved child process fails, the unelevated parent preserves the child's privacy-safe protected-stage name instead of replacing it with a generic UAC-stage result. It does not record the configured peer, Windows SID, usernames, IP addresses, device names or local paths.
+A small phase6.4-field-result.json file is written beside the helper. Its path is converted to an absolute path before UAC so the elevated child cannot redirect the result by starting in a different Windows working directory. It contains only typed booleans, the preview version/code, the current acceptance stage and a curated error message when applicable. Unexpected PowerShell exception text is never copied into that file. If the administrator-approved child process fails, the unelevated parent preserves the child's privacy-safe protected-stage name instead of replacing it with a generic UAC-stage result. It does not record the configured peer, Windows SID, usernames, IP addresses, device names or local paths.
 
 ## UAC cancellation test
 

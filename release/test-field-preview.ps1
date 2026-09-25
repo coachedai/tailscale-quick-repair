@@ -85,12 +85,14 @@ try{
     $staged=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
     Check ([int64]$staged.versionCode -eq 30000740 -and (Test-Path (Join-Path $app 'protected-update.json') -PathType Leaf)) 'Cancellation leaves only the verified 6.4 bridge staged for retry'
 
-    $childFailureReport=Join-Path $evidence 'field-preview-protected-child-failure.json'
+    $childFailureName='field-preview-protected-child-failure.json'
+    $childFailureReport=Join-Path $evidence $childFailureName
     $childFailurePsi=New-Object Diagnostics.ProcessStartInfo
     $childFailurePsi.FileName=Join-Path $PSHOME 'powershell.exe';$childFailurePsi.UseShellExecute=$false;$childFailurePsi.CreateNoWindow=$true
-    $childFailurePsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath "'+$childFailureReport+'" -CiProtectedChildFailureProbe -CiNoRelaunch'
+    $childFailurePsi.WorkingDirectory=$evidence
+    $childFailurePsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath ".\'+$childFailureName+'" -CiProtectedChildFailureProbe -CiNoRelaunch'
     $child=[Diagnostics.Process]::Start($childFailurePsi)
-    Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 1 -and (Test-Path -LiteralPath $childFailureReport -PathType Leaf)) 'Field preview preserves a protected child failure through the parent boundary'
+    Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 1 -and (Test-Path -LiteralPath $childFailureReport -PathType Leaf)) 'Field preview preserves a protected child failure when parent and protected child working directories differ'
     $child.Dispose();$child=$null
     $childFailureRaw=Get-Content -LiteralPath $childFailureReport -Raw
     $childFailure=$childFailureRaw|ConvertFrom-Json

@@ -33,6 +33,14 @@ $script:LeaseHeld = $false
 if ([string]::IsNullOrWhiteSpace($ResultPath)) {
     $ResultPath = Join-Path $OutputDirectory 'phase6.4-field-result.json'
 }
+try {
+    # UAC can launch the elevated child with a different current directory.
+    # Freeze the result location before any child process starts so both
+    # processes always read and write the same privacy-safe result file.
+    $ResultPath = [IO.Path]::GetFullPath($ResultPath)
+} catch {
+    throw 'The Phase 6.4 field result path could not be resolved safely.'
+}
 
 $result = [ordered]@{
     schema = 1
@@ -429,9 +437,10 @@ try {
         }
         try {
             if ($CiProtectedChildFailureProbe) {
-                $process = Start-Process -FilePath $powershell -ArgumentList $args -PassThru -Wait -ErrorAction Stop
+                $probeWorkingDirectory = Join-Path $env:WINDIR 'System32'
+                $process = Start-Process -FilePath $powershell -ArgumentList $args -WorkingDirectory $probeWorkingDirectory -PassThru -Wait -ErrorAction Stop
             } else {
-                $process = Start-Process -FilePath $powershell -ArgumentList $args -Verb RunAs -PassThru -Wait -ErrorAction Stop
+                $process = Start-Process -FilePath $powershell -ArgumentList $args -WorkingDirectory $OutputDirectory -Verb RunAs -PassThru -Wait -ErrorAction Stop
             }
         } catch {
             if (-not $CiProtectedChildFailureProbe -and ($_.Exception.HResult -eq -2147467259 -or $_.Exception.Message -match 'cancel')) {
