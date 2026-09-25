@@ -16,10 +16,13 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version 2
 
-$ExpectedVersion = '3.0.0-phase6.4.0-preview'
-$ExpectedCode = [int64]30000740
+$ExpectedVersion = '3.0.0-phase6.4.1-preview'
+$ExpectedCode = [int64]30000741
 $BaselineVersion = '3.0.0-phase5.2.1'
 $BaselineCode = [int64]30000621
+$PreviousPreviewVersion = '3.0.0-phase6.4.0-preview'
+$PreviousPreviewCode = [int64]30000740
+$GuardianSnapshotPath = Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair\guardian-known-good.json'
 $StateDir = Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair'
 $ProgramDir = Join-Path $env:ProgramData 'TailscaleQuickRepair'
 $VersionPath = Join-Path $StateDir 'version.user.json'
@@ -223,7 +226,7 @@ function Get-ProtectedBaselineHashes {
     foreach ($name in $required) {
         $path = Join-Path $ProgramDir $name
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-            Fail 'The installed protected 5.2.1 baseline is incomplete. No field upgrade was started.'
+            Fail 'The installed protected field baseline is incomplete. No field upgrade was started.'
         }
         $hashes[$name] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     }
@@ -255,6 +258,41 @@ function Read-InstalledVersion {
     catch { Fail 'The installed Quick Repair version record is invalid.' }
 }
 
+function Assert-PreviousPreviewKnownGood {
+    if (-not (Test-Path -LiteralPath $GuardianSnapshotPath -PathType Leaf)) {
+        Fail 'The installed previous preview has no established known-good integrity baseline.'
+    }
+    if (((Get-Item -LiteralPath $GuardianSnapshotPath).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Fail 'The previous preview known-good record is redirected.'
+    }
+
+    $installedManifest = Join-Path $StateDir 'integrity-manifest.json'
+    if (-not (Test-Path -LiteralPath $installedManifest -PathType Leaf)) {
+        Fail 'The installed previous preview has no integrity manifest.'
+    }
+    if (((Get-Item -LiteralPath $installedManifest).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Fail 'The installed previous preview integrity manifest is redirected.'
+    }
+
+    try {
+        $snapshot = Get-Content -LiteralPath $GuardianSnapshotPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        Fail 'The previous preview known-good record is unreadable.'
+    }
+
+    $recordedHash = ([string]$snapshot.integrityManifestSha256).ToLowerInvariant()
+    if ([int]$snapshot.schema -ne 1 -or [int64]$snapshot.versionCode -ne $PreviousPreviewCode -or
+        $recordedHash -notmatch '^[0-9a-f]{64}$') {
+        Fail 'The previous preview known-good record does not match the accepted preview identity.'
+    }
+
+    $actualHash = (Get-FileHash -LiteralPath $installedManifest -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualHash -cne $recordedHash) {
+        Fail 'The previous preview integrity manifest does not match its known-good record.'
+    }
+}
+
 function Get-InstalledCandidateTarget([string]$Relative) {
     $relativePath = $Relative.Replace('\','/')
     if ($relativePath -ceq 'version.json') { return $VersionPath }
@@ -270,7 +308,7 @@ function Get-InstalledCandidateTarget([string]$Relative) {
 function Assert-ExactInstalledCandidate($protected) {
     $installed = Read-InstalledVersion
     if ([string]$installed.version -cne $ExpectedVersion -or [int64]$installed.versionCode -ne $ExpectedCode) {
-        Fail 'Field reconciliation requires the exact installed Phase 6.4 preview.'
+        Fail 'Field reconciliation requires the exact installed Phase 6.4.1 preview.'
     }
     if (Test-Path -LiteralPath $MarkerPath -PathType Leaf) {
         Fail 'Field reconciliation refused an unfinished protected-update marker.'
@@ -404,22 +442,35 @@ function Stage-Bridge($ordinary) {
 
     if ([int64]$installed.versionCode -eq $ExpectedCode -and [string]$installed.version -ceq $ExpectedVersion -and
         (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
-        # A field retry may be using a newer build of the same unpublished
-        # preview version. Refresh every verified user-level bridge byte from
-        # the current candidate before protected Setup is allowed to continue.
+        # A retry of the same unpublished candidate refreshes every verified
+        # user-level bridge byte before protected Setup continues.
         $candidateUpdater = Join-Path $ordinary.root 'app\TailscaleQuickRepairUpdater.exe'
         Apply-BridgePackage $ordinary $candidateUpdater 'The verified candidate updater is missing.'
         $result.bridgeRefreshed = $true
         return
     }
 
-    if ([int64]$installed.versionCode -ne $BaselineCode -or [string]$installed.version -cne $BaselineVersion) {
-        Fail 'Field preview staging requires the genuine 5.2.1 starting version, or an already-staged 6.4 bridge.'
+    if (Test-Path -LiteralPath $MarkerPath -PathType Leaf) {
+        Fail 'A different protected field update is still unfinished. Complete that handoff before staging this candidate.'
+    }
+    $pending = Get-ItemProperty -LiteralPath $RestartRegistryPath -Name $RestartRegistryName -ErrorAction SilentlyContinue
+    if ($pending -and $null -ne $pending.$RestartRegistryName) {
+        Fail 'A previous protected update is still awaiting restart acknowledgement.'
+    }
+
+    $isPublicBaseline = ([int64]$installed.versionCode -eq $BaselineCode -and [string]$installed.version -ceq $BaselineVersion)
+    $isPreviousPreview = ([int64]$installed.versionCode -eq $PreviousPreviewCode -and [string]$installed.version -ceq $PreviousPreviewVersion)
+    if (-not $isPublicBaseline -and -not $isPreviousPreview) {
+        Fail 'Field preview staging requires the genuine public baseline, the accepted previous preview, or an already-staged current bridge.'
+    }
+
+    if ($isPreviousPreview) {
+        Assert-PreviousPreviewKnownGood
     }
 
     $result.baselineVerified = $true
     $installedUpdater = Join-Path $StateDir 'TailscaleQuickRepairUpdater.exe'
-    Apply-BridgePackage $ordinary $installedUpdater 'The installed 5.2.1 updater is missing.'
+    Apply-BridgePackage $ordinary $installedUpdater 'The installed updater for the accepted field baseline is missing.'
 }
 
 function Apply-Protected($protected,[string]$ExpectedRequesterSid) {
@@ -535,8 +586,8 @@ try {
     }
     if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) { Fail 'The validated candidate folder was not found.' }
     $OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
-    $ordinaryZip = Get-OneCandidate 'TailscaleQuickRepair-3.0.0-phase6.4.0-preview.zip'
-    $setupZip = Get-OneCandidate 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.0-preview.zip'
+    $ordinaryZip = Get-OneCandidate 'TailscaleQuickRepair-3.0.0-phase6.4.1-preview.zip'
+    $setupZip = Get-OneCandidate 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.1-preview.zip'
     $ordinary = Expand-Candidate $ordinaryZip $false $true
     $protected = Expand-Candidate $setupZip $true $false
     $result.bridgeVerified = $true
@@ -702,7 +753,7 @@ try {
     $result.passed = $true
     $result.stage = 'complete'
     Save-Result
-    Write-Host 'Phase 6.4 field preview completed successfully.'
+    Write-Host 'Phase 6.4.1 field preview completed successfully.'
     exit 0
 }
 catch {

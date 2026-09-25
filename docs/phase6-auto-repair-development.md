@@ -2,11 +2,11 @@
 
 ## Current candidate
 
-Development has advanced to **3.0.0-phase6.4.0-preview**, code **30000740**. It remains **unpublished** (`publish:false`) on the preview channel. The live public release remains **3.0.0-phase5.2.1**.
+Development has advanced to **3.0.0-phase6.4.1-preview**, code **30000741**. It remains **unpublished** (`publish:false`) on the preview channel. The live public release remains **3.0.0-phase5.2.1**.
 
 The source immediately before this version-only candidate was verified at **1b897e6da2cf69042274d52feed1a22ded064764** in workflow **35930299174**. Both Windows jobs completed successfully. The retained reports contain **1,107 passing assertions across 19 aggregate suites**: 836 native/package/Windows assertions, 135 genuine 5.2.1 upgrade assertions, 67 interrupted-Setup/integration assertions and 69 protected-handoff assertions. Nested child reports are evidence only and are not counted again.
 
-The preview version bump does not change repair permissions, network behavior or the protected backend. Its purpose is to produce one clearly named installable candidate for final field acceptance.
+The 6.4.1 preview identity is unique to the VPN-neutral coexistence and exact-adapter-scope candidate. New installable preview payloads must advance the version code rather than reusing trusted identity across different bytes.
 
 ## What Phase 6 now includes
 

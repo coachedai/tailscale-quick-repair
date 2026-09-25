@@ -1,10 +1,10 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase6.4.0-preview",
-  "versionCode": 30000740,
+  "version": "3.0.0-phase6.4.1-preview",
+  "versionCode": 30000741,
   "requiresSetup": false,
   "publicInstaller": true,
-  "notes": "Preview candidate: local-only automatic repair, protected update handoff, truthful background checks, restart acknowledgement and interrupted-Setup recovery.",
+  "notes": "Preview candidate: vendor-neutral VPN coexistence, exact Tailscale-adapter recovery scope, local-only automatic repair, protected update handoff and interruption recovery.",
   "protectedHandoff": true
 }
