@@ -1,4 +1,4 @@
-# 3.0.0 Phase 6.4.1 preview candidate
+# 3.0.0 Phase 6.4.2 preview candidate
 
 This candidate packages the Phase 6 engineering work into a uniquely versioned preview for final field acceptance. It is not the public stable release and is not published to the live update channel.
 
@@ -26,7 +26,7 @@ Automatic repair should remain off during the initial field-upgrade check. Enabl
 
 ## Developer-only field artifact
 
-The development workflow validates a separate field helper on a disposable hosted Windows runner before it emits a `phase6.4.1-field-preview` artifact. The artifact contains the helper, the field instructions, and only the exact validated ordinary and protected candidate ZIPs with their SHA-256 sidecars plus the exact source commit identifier.
+The development workflow validates a separate field helper on a disposable hosted Windows runner before it emits a `phase6.4.2-field-preview` artifact. The artifact contains the helper, the field instructions, and only the exact validated ordinary and protected candidate ZIPs with their SHA-256 sidecars plus the exact source commit identifier.
 
 The helper is explicitly checked to be absent from both shipping packages. It does not add a local-package mode to the production updater or Setup executable, does not alter `main` or the live update manifest, and does not publish a GitHub Release.
 
@@ -35,4 +35,9 @@ Hosted acceptance exercises the same released-5.2.1 updater core and refreshed p
 
 ## Preview-to-preview field transition
 
-The physically accepted 3.0.0-phase6.4.0-preview / 30000740 build is an allowed developer field baseline for 3.0.0-phase6.4.1-preview / 30000741 only when its protected handoff and restart acknowledgement are complete and its Guardian known-good record matches the installed integrity manifest. The field helper refuses arbitrary, stale or half-finished preview state. New installable preview payloads advance the version code rather than reusing trusted identity across different bytes.
+The physically accepted 3.0.0-phase6.4.1-preview / 30000741 build is an allowed developer field baseline for 3.0.0-phase6.4.2-preview / 30000742 only when its protected handoff and restart acknowledgement are complete and its Guardian known-good record matches the installed integrity manifest. The field helper refuses arbitrary, stale or half-finished preview state. New installable preview payloads advance the version code rather than reusing trusted identity across different bytes.
+
+
+## Quiet startup hardening
+
+The 6.4.2 candidate changes the native startup-in-tray path so the WPF main window is never shown merely to hide it. Resident timers and deferred initialization start against the hidden window, while the dispatcher runs without `Application.Run(window)`. The window becomes visible only after an explicit tray-open or activation action. Hosted Windows acceptance samples the exact packaged process for visible top-level windows during startup.

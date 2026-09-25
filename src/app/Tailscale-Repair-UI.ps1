@@ -1375,6 +1375,7 @@ try {
     $script:actionMode = 'repair'
     $script:engineHealthy = $false
     $script:lastEngineCheckAt = [DateTime]::MinValue
+    $script:residentRuntimeStarted = $false
     $script:startupInitializationDone = $false
 
     function Get-LatencyMilliseconds {
@@ -4350,6 +4351,7 @@ try {
 
     function Restore-FromTray {
         try {
+            $window.Opacity = 1
             $window.ShowInTaskbar = $true
             $window.Show()
             $window.WindowState = [System.Windows.WindowState]::Maximized
@@ -4730,29 +4732,22 @@ try {
         }
     })
 
-    $window.Add_Loaded({
-        # Render the dark app immediately. Everything that can wait until after
-        # first paint is moved to ContentRendered.
+    function Start-ResidentRuntime {
+        if ($script:residentRuntimeStarted) {
+            return
+        }
+
+        $script:residentRuntimeStarted = $true
         Reset-Ui -SkipEngineCheck
-        $window.Opacity = 1
 
         $stateTimer.Start()
         $script:autoRepairLocalWatchTimer.Start()
         $script:autoRepairUiTimer.Start()
         $freshnessTimer.Start()
         $activationTimer.Start()
+    }
 
-        if ($StartInTray) {
-            $window.Dispatcher.BeginInvoke(
-                [System.Windows.Threading.DispatcherPriority]::Background,
-                [Action]{
-                    Move-ToTray
-                }
-            ) | Out-Null
-        }
-    })
-
-    $window.Add_ContentRendered({
+    function Queue-StartupInitialization {
         if ($script:startupInitializationDone) {
             return
         }
@@ -4773,6 +4768,15 @@ try {
                 }
             }
         ) | Out-Null
+    }
+
+    $window.Add_Loaded({
+        Start-ResidentRuntime
+        $window.Opacity = 1
+    })
+
+    $window.Add_ContentRendered({
+        Queue-StartupInitialization
     })
 
     $window.Add_StateChanged({
@@ -4914,11 +4918,31 @@ try {
     $wpfApp.MainWindow = $window
 
     if ($StartInTray) {
+        # Application.Run(window) makes the WPF main window visible before
+        # Loaded can move it to the tray. Start resident state against the
+        # hidden Window and enter the dispatcher without showing that Window.
         $window.ShowInTaskbar = $false
+        $script:hiddenToTray = $true
+        Start-ResidentRuntime
+        Queue-StartupInitialization
     }
 
     if ($ownsWpfApp) {
-        [void]$wpfApp.Run($window)
+        if ($StartInTray) {
+            [void]$wpfApp.Run()
+        }
+        else {
+            [void]$wpfApp.Run($window)
+        }
+    }
+    elseif ($StartInTray) {
+        # NativeHost normally owns the WPF Application. Preserve a hidden
+        # startup path if hosted inside an already-running WPF dispatcher.
+        $frame = New-Object System.Windows.Threading.DispatcherFrame
+        $window.Add_Closed({
+            try { $frame.Continue = $false } catch {}
+        })
+        [System.Windows.Threading.Dispatcher]::PushFrame($frame)
     }
     else {
         [void]$window.ShowDialog()

@@ -2,11 +2,11 @@
 
 ## Current candidate
 
-Development has advanced to **3.0.0-phase6.4.1-preview**, code **30000741**. It remains **unpublished** (`publish:false`) on the preview channel. The live public release remains **3.0.0-phase5.2.1**.
+Development has advanced to **3.0.0-phase6.4.2-preview**, code **30000742**. It remains **unpublished** (`publish:false`) on the preview channel. The live public release remains **3.0.0-phase5.2.1**.
 
 The source immediately before this version-only candidate was verified at **1b897e6da2cf69042274d52feed1a22ded064764** in workflow **35930299174**. Both Windows jobs completed successfully. The retained reports contain **1,107 passing assertions across 19 aggregate suites**: 836 native/package/Windows assertions, 135 genuine 5.2.1 upgrade assertions, 67 interrupted-Setup/integration assertions and 69 protected-handoff assertions. Nested child reports are evidence only and are not counted again.
 
-The 6.4.1 preview identity is unique to the VPN-neutral coexistence and exact-adapter-scope candidate. New installable preview payloads must advance the version code rather than reusing trusted identity across different bytes.
+The 6.4.2 preview identity is unique to the VPN-neutral coexistence and exact-adapter-scope candidate. New installable preview payloads must advance the version code rather than reusing trusted identity across different bytes.
 
 ## What Phase 6 now includes
 
@@ -60,3 +60,8 @@ These are field/real-environment gates, not permission to weaken the existing Wi
 ## Roadmap retained
 
 After Phase 6: **Phase 7 Startup / Passive Health**, **Phase 8 Update Guardian 2.0**, **Phase 9 UI / Product Polish**, **Phase 10 Failure Lab / 3.0 Acceptance**, then **Phase 11 3.0 Stable**. Advancing the preview version does not mark those phases complete.
+
+
+### Quiet startup checkpoint
+
+The 6.4.2 candidate hardens `--start-in-tray` so the WPF main window is not passed to `Application.Run(window)` and therefore does not need to appear before being hidden. Hosted native acceptance launches the exact packaged executable, samples visible top-level windows, and requires no console/script-host child. Real reboot/logon remains a deferred physical gate.
