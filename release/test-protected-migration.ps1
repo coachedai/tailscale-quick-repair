@@ -193,7 +193,7 @@ try{
     $noMarkerLegacy=Join-Path $program 'Repair-Tailscale.ps1'
     [IO.File]::WriteAllText($noMarkerLegacy,'legacy evidence without a handoff marker')
     $noMarkerHash=FileHash $noMarkerLegacy
-    $noMarkerApply=Join-Path $work 'legacy-without-marker';[void][IO.Directory]::CreateDirectory($noMarkerApply)
+    $noMarkerApply=Join-Path $work 'legacy-without-marker-apply';[void][IO.Directory]::CreateDirectory($noMarkerApply)
     $refused=$false
     try{[void](Invoke-Setup 'ApplyFiles' @($verified,$noMarkerApply))}catch{
         $ex=$_.Exception;while($ex.InnerException){$ex=$ex.InnerException}
