@@ -105,17 +105,6 @@ try{
     [IO.File]::WriteAllText($installedSetup,'stale same-version field bridge')
     Check ((Get-FileHash -LiteralPath $installedSetup -Algorithm SHA256).Hash.ToLowerInvariant() -cne $candidateSetupHash) 'Fixture simulates an older build of the same 6.4 bridge'
 
-    $guardianSnapshot=Join-Path $app 'guardian-known-good.json'
-    $guardianPrevious=Join-Path $app 'guardian-known-good.previous.json'
-    $staleGuardianHash=('0' * 64) -join ''
-    if($staleGuardianHash -ceq $candidateIntegrityHash){throw 'Fixture stale Guardian hash unexpectedly matches candidate.'}
-    [ordered]@{
-        schema=1;versionCode=30000740;integrityManifestSha256=$staleGuardianHash;
-        verifiedReleaseFiles=1;startupEnabled=$true;repairEngineReady=$true;autoRepairAvailable=$true;
-        verifiedUtc=[DateTime]::UtcNow.ToString('o')
-    }|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $guardianSnapshot -Encoding UTF8
-    Check (Test-Path -LiteralPath $guardianSnapshot -PathType Leaf) 'Fixture seeds an older same-version Guardian baseline'
-
     $childFailureName='field-preview-protected-child-failure.json'
     $childFailureReport=Join-Path $evidence $childFailureName
     $childFailurePsi=New-Object Diagnostics.ProcessStartInfo
@@ -129,9 +118,6 @@ try{
     $childFailure=$childFailureRaw|ConvertFrom-Json
     Check ($childFailure.stage -ceq 'protected_ci_failure_probe' -and $childFailure.requesterIdentityVerified -and -not $childFailure.protectedApplied) 'Parent retains the exact privacy-safe protected child stage'
     Check ($childFailure.bridgeRefreshed -and (Get-FileHash -LiteralPath $installedSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $candidateSetupHash) 'Same-version field retry refreshes the exact candidate bridge before protected Setup'
-    Check ($childFailure.integrityBaselineRetired -and -not(Test-Path -LiteralPath $guardianSnapshot) -and (Test-Path -LiteralPath $guardianPrevious -PathType Leaf)) 'Same-version field retry retires the stale Guardian baseline before protected Setup'
-    $retiredGuardian=Get-Content -LiteralPath $guardianPrevious -Raw|ConvertFrom-Json
-    Check ([string]$retiredGuardian.integrityManifestSha256 -ceq $staleGuardianHash) 'Retired Guardian predecessor preserves the prior same-version release record'
     Check ($childFailure.error -ceq 'The elevated protected field stage failed. The recorded stage identifies the boundary.') 'Parent replaces elevated child failure text with a curated field error'
     Check ([string]::IsNullOrEmpty($env:USERPROFILE) -or -not $childFailureRaw.Contains($env:USERPROFILE)) 'Protected child failure result does not persist the local user profile path'
     foreach($name in $protectedBaseline.Keys){
@@ -170,21 +156,36 @@ try{
     }
 
     Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction Stop
+    $guardianSnapshot=Join-Path $app 'guardian-known-good.json'
+    $guardianPrevious=Join-Path $app 'guardian-known-good.previous.json'
+    $staleGuardianHash=('0' * 64) -join ''
+    Check ($staleGuardianHash -cne $candidateIntegrityHash) 'Fixture stale Guardian hash differs from the exact candidate manifest'
     [ordered]@{
-        schema=1;versionCode=30000740;integrityManifestSha256=$staleGuardianHash;
-        verifiedReleaseFiles=1;startupEnabled=$true;repairEngineReady=$true;autoRepairAvailable=$true;
+        schema=1
+        versionCode=30000740
+        integrityManifestSha256=$staleGuardianHash
+        verifiedReleaseFiles=1
+        startupEnabled=$true
+        repairEngineReady=$true
+        autoRepairAvailable=$true
         verifiedUtc=[DateTime]::UtcNow.ToString('o')
     }|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $guardianSnapshot -Encoding UTF8
+
     $reconcileReport=Join-Path $evidence 'field-preview-baseline-reconcile.json'
     $reconcilePsi=New-Object Diagnostics.ProcessStartInfo
-    $reconcilePsi.FileName=Join-Path $PSHOME 'powershell.exe';$reconcilePsi.UseShellExecute=$false;$reconcilePsi.CreateNoWindow=$true
+    $reconcilePsi.FileName=Join-Path $PSHOME 'powershell.exe'
+    $reconcilePsi.UseShellExecute=$false
+    $reconcilePsi.CreateNoWindow=$true
     $reconcilePsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath "'+$reconcileReport+'" -ReconcileFieldBaselineOnly'
     $child=[Diagnostics.Process]::Start($reconcilePsi)
     Check ($child.WaitForExit(60000) -and $child.ExitCode -eq 0 -and (Test-Path -LiteralPath $reconcileReport -PathType Leaf)) 'Field post-install reconciliation completes without replaying Setup'
     $child.Dispose();$child=$null
+
     $reconcile=Get-Content -LiteralPath $reconcileReport -Raw|ConvertFrom-Json
     Check ($reconcile.passed -and $reconcile.installedCandidateVerified -and $reconcile.integrityBaselineRetired -and $reconcile.restartAcknowledged) 'Field post-install reconciliation verifies exact installed bytes and retires only the stale preview baseline'
     Check (-not(Test-Path -LiteralPath $guardianSnapshot) -and (Test-Path -LiteralPath $guardianPrevious -PathType Leaf)) 'Post-install reconciliation leaves Guardian ready to establish the exact candidate baseline'
+    $retiredGuardian=Get-Content -LiteralPath $guardianPrevious -Raw|ConvertFrom-Json
+    Check ([string]$retiredGuardian.integrityManifestSha256 -ceq $staleGuardianHash) 'Reconciliation preserves the previous same-version Guardian record'
 
     $passed=$true
 }catch{
