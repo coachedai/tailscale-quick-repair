@@ -4083,7 +4083,7 @@ try {
             Remove-Item -LiteralPath $UpdateResultPath -Force -ErrorAction SilentlyContinue
 
             if ([bool]$result.success) {
-                $UpdateStatusText.Text = "Updated successfully · $([string]$result.version)"
+                $UpdateStatusText.Text = "Updated successfully - $([string]$result.version)"
                 $UpdateStatusText.Foreground = Get-Brush 'Green'
                 $UpdateDetailText.Text = 'The verified update was installed and Quick Repair restarted normally.'
                 $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible

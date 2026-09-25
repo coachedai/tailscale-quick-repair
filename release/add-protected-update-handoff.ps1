@@ -125,7 +125,7 @@ $functionBlock = @'
             $script:pendingProtectedUpdateStarted = $true
             $script:allowFullExit = $true
             $global:TqrUiShutdownRequested = $true
-            $UpdateStatusText.Text = 'Finishing protected update…'
+            $UpdateStatusText.Text = 'Finishing protected update...'
             $UpdateStatusText.Foreground = Get-Brush 'Blue'
             $UpdateDetailText.Text = 'Approve the Windows prompt. Quick Repair will reopen when the update is complete.'
             $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
@@ -180,7 +180,7 @@ $functionBlock = @'
                 [void](Request-SmartNotification 'update_installed' ([DateTime]::UtcNow.ToString('o')))
             }
 
-            $UpdateStatusText.Text = "Updated successfully · $ProductVersion"
+            $UpdateStatusText.Text = "Updated successfully - $ProductVersion"
             $UpdateStatusText.Foreground = Get-Brush 'Green'
             $UpdateDetailText.Text = 'The protected update finished and Quick Repair restarted normally.'
             $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
@@ -214,7 +214,7 @@ $showUpdateResult = @'
 
             if ([bool]$result.success) {
                 if (Test-Path -LiteralPath $ProtectedUpdateMarkerPath) {
-                    $UpdateStatusText.Text = 'Update downloaded · finishing setup'
+                    $UpdateStatusText.Text = 'Update downloaded - finishing setup'
                     $UpdateStatusText.Foreground = Get-Brush 'Blue'
                     $UpdateDetailText.Text = 'Windows approval is needed to finish the protected part of this update.'
                     $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
@@ -222,7 +222,7 @@ $showUpdateResult = @'
                 else {
                     Write-LocalHistoryEvent 'update_installed'
                     [void](Request-SmartNotification 'update_installed' $notificationResultStamp)
-                    $UpdateStatusText.Text = "Updated successfully · $([string]$result.version)"
+                    $UpdateStatusText.Text = "Updated successfully - $([string]$result.version)"
                     $UpdateStatusText.Foreground = Get-Brush 'Green'
                     $UpdateDetailText.Text = 'The verified update was installed and Quick Repair restarted normally.'
                     $UpdateDetailText.Visibility = [System.Windows.Visibility]::Visible
@@ -266,7 +266,7 @@ foreach ($required in @(
     '--channel "',
     '--target-code ',
     '$psi.Verb = ''runas''',
-    'Update downloaded · finishing setup',
+    'Update downloaded - finishing setup',
     'Acknowledge-ProtectedRestart'
 )) {
     if ($text -notmatch [regex]::Escape($required)) {

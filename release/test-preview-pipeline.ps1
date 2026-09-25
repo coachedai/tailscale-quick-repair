@@ -16,6 +16,10 @@ try{
     Check ($workflow.Contains('needs: [verify, released-upgrade]') -and
            $workflow.Contains("needs.verify.outputs.preview_publish == 'true'") -and
            $workflow.Contains("needs.released-upgrade.result == 'success'")) 'Preview publication is blocked on both exact development jobs'
+    Check ($workflow.Contains('Validate published RC1 to current Early-access candidate') -and
+           $workflow.Contains('test-preview-upgrade.ps1')) 'Preview publication is gated by the normal published-RC1 to current-candidate upgrade path'
+    Check (-not $workflow.Contains('Assemble current candidate field pack') -and
+           -not $workflow.Contains('name: development-field-preview')) 'Current RC candidates are not distributed through the retired developer field-pack path'
     Check ((Count 'contents: write') -eq 1) 'Only one development job receives contents write permission'
     Check ($workflow.Contains('name: auto-repair-regression-packages') -and
            $workflow.Contains('Preview publisher reuses the exact validated package artifact')) 'Preview publisher consumes the exact upstream-tested product artifact'

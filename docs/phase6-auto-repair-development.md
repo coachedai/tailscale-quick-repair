@@ -2,13 +2,13 @@
 
 ## Current candidate
 
-**3.0.0-rc.1 / 30001001** is now published only as the opt-in GitHub **prerelease / Early-access** release. Stable remains **3.0.0-phase5.2.1** on `main` and `updates/latest.json`.
+**3.0.0-rc.2 / 30001002** is the current **unpublished** Early-access candidate. The live Early-access release remains **3.0.0-rc.1** and Stable remains **3.0.0-phase5.2.1**.
 
-The frozen RC1 release target is **2555bf4af30845d2c722964e289cfdfe15a412bf**. Workflow **36186476031** passed the full native Windows verification, genuine released-5.2.1 upgrade, interrupted-Setup recovery and protected-handoff gates before the publisher created the prerelease and dedicated Preview manifest. Publication then disarmed itself.
+RC2 deliberately receives a new version identity because its bytes differ from RC1. Its narrow product change removes Unicode literals from the protected-update transform so Windows PowerShell 5.1 cannot turn the update-success separator into mojibake. The packaged runtime now rejects the UTF-8 mojibake lead character, and protected restart acknowledgement requires the exact ASCII-safe success text.
 
-Post-publication compatibility commit **d16c8107aa1cf2403e52fe66a6c82b221b2918d5** passed workflow **36189240040**. Its developer field helper exact-allows **3.0.0-phase6.4.0-preview / 30000740**, **3.0.0-phase6.4.1-preview / 30000741** and **3.0.0-phase6.4.3-preview / 30000743** identities only, and still requires a Guardian known-good record matching the installed integrity manifest. The 6.4.1 identity is grounded by the historical 6.4.2 upgrade path, which explicitly supported 6.4.1 as the previous-preview baseline.
+RC2 does **not** change Auto Repair authority, Tailscale repair scope, VPN handling, retry policy, diagnostics authority, protected permissions or update trust. It also replaces the retired “current field pack” candidate gate with a synthetic **published RC1 -> current candidate** Early-access upgrade gate using the native RC1 updater and refreshed protected Setup path.
 
-CI also pins the already-published RC1 package assets by tag, release target, size and SHA-256 before privacy-scanning and rerunning field acceptance. This guards the field pack against same-version rebuilt bytes.
+The one-time RC1 field bridge remains separately pinned to the exact already-published RC1 assets for bootstrap acceptance. Real-machine evidence remains off GitHub under the repository privacy policy.
 ## What Phase 6 now includes
 
 Automatic repair is local-only. Policy inputs are limited to the Tailscale service, service startup mode, the local Tailscale client and local backend state. Peer reachability, latency, routes, diagnostics and arbitrary error text cannot authorise automatic recovery.

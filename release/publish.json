@@ -1,10 +1,10 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-rc.1",
-  "versionCode": 30001001,
+  "version": "3.0.0-rc.2",
+  "versionCode": 30001002,
   "requiresSetup": false,
   "publicInstaller": true,
-  "notes": "3.0.0 RC1: guarded local-only Auto Repair 2.0, vendor-neutral VPN coexistence, exact Tailscale-only adapter recovery, protected update handoff and interruption recovery, System Integrity Guardian, privacy-safe support export, connection intelligence, and true no-window startup-in-tray. Early access only.",
+  "notes": "3.0.0 RC2: RC1 plus ASCII-safe protected-update status text, packaged mojibake regression coverage, and a synthetic published-RC1-to-RC2 Early-access upgrade gate. Repair and VPN/network policy are unchanged. Early access only.",
   "protectedHandoff": true
 }

@@ -87,7 +87,7 @@ try{
         $source.Contains("$psi.Verb = 'runas'") -and
         $source.Contains('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value')) 'Handoff launches only the installed Setup host for the exact channel, version and initiating Windows account'
     Check ($source.Contains('$ProtectedUpdateMarkerPath') -and $source.Contains('[int]$marker.schema -eq 2') -and -not $source.Contains('Repair-Backend.ps1')) 'Handoff uses the channel-bound version marker and never runs a protected script directly'
-    Check ($resultFn[0].Extent.Text.Contains('Update downloaded · finishing setup') -and
+    Check ($resultFn[0].Extent.Text.Contains('Update downloaded - finishing setup') -and
         $resultFn[0].Extent.Text.Contains('Windows approval is needed to finish the protected part of this update.')) 'Bridge success remains provisional until protected Setup completes'
 
     # Use an actual second local administrator account to verify the identity
@@ -198,7 +198,7 @@ if(-not $complete){exit 23}
     Check (-not $afterAck -or $null -eq $afterAck.$RestartRegistryName) 'Successful app restart clears the pending restart value'
     Check ($script:ackHistory.Count -eq 1 -and $script:ackHistory[0] -ceq 'update_installed') 'Installed History is recorded only after the refreshed app acknowledgement'
     Check ($script:ackNotifications.Count -eq 1 -and $script:ackNotifications[0] -ceq 'update_installed') 'Installed notification is requested only after restart acknowledgement'
-    Check ($UpdateStatusText.Text -like 'Updated successfully*' -and $UpdateDetailText.Text -ceq 'The protected update finished and Quick Repair restarted normally.') 'Acknowledged restart shows the final successful update state'
+    Check ($UpdateStatusText.Text -ceq ('Updated successfully - '+$ProductVersion) -and $UpdateDetailText.Text -ceq 'The protected update finished and Quick Repair restarted normally.') 'Acknowledged restart shows the exact ASCII-safe successful update state'
 
     New-Item -ItemType Directory -Path $RestartRegistryPath -Force|Out-Null
     Set-ItemProperty -LiteralPath $RestartRegistryPath -Name $RestartRegistryName -Type QWord -Value ([int64]$ProductVersionCode+1)

@@ -31,6 +31,8 @@ try {
     Expand-Archive -LiteralPath $setupZip[0].FullName -DestinationPath $setup
     $normalUi = [IO.File]::ReadAllText((Join-Path $normal 'app\Tailscale-Repair-UI.ps1'))
     $setupUi = [IO.File]::ReadAllText((Join-Path $setup 'app\Tailscale-Repair-UI.ps1'))
+    $mojibakeLead = [string][char]0x00C2
+    Assert-That (-not $normalUi.Contains($mojibakeLead) -and -not $setupUi.Contains($mojibakeLead)) 'Delivered UI contains no UTF-8 mojibake lead character'
     Assert-That ($normalUi -ceq $setupUi) 'Update and protected Setup deliver the same final UI'
     Assert-That ($normalUi.Contains('x:Name="ChangeTargetButton"') -and
         $normalUi.Contains('--upgrade --channel "') -and
