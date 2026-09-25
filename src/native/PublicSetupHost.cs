@@ -2157,6 +2157,15 @@ internal static class PublicSetupHost
         return source.TryGetValue(key, out value) && value != null && Convert.ToBoolean(value);
     }
 
+    private static long ReadLongArg(string[] args, string name, long fallback)
+    {
+        string value = ReadArg(args, name);
+        long parsed;
+        return Int64.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed)
+            ? parsed
+            : fallback;
+    }
+
     private static string ReadArg(string[] args, string name)
     {
         for (int i = 0; i < args.Length - 1; i++)
