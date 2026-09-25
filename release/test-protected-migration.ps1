@@ -73,6 +73,19 @@ function ProtectedAcl([string]$Path){
     }
     return $true
 }
+function AdminOnlyAcl([string]$Path){
+    $acl=Get-Acl -LiteralPath $Path
+    if(-not $acl.AreAccessRulesProtected -or $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne 'S-1-5-32-544'){return $false}
+    $rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
+    $seen=@{}
+    foreach($rule in $rules){
+        if($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow){return $false}
+        $sid=$rule.IdentityReference.Value
+        if($sid -notin @('S-1-5-18','S-1-5-32-544')){return $false}
+        $seen[$sid]=$true
+    }
+    return $seen.ContainsKey('S-1-5-18') -and $seen.ContainsKey('S-1-5-32-544')
+}
 function New-Fixture([bool]$CopyKnown=$true){
     if(Test-Path -LiteralPath $program){throw 'Previous test evidence was not archived.'}
     $script:fixtureActive=$true
@@ -130,6 +143,68 @@ try{
     $aclBefore=Descriptor $program;[void](Invoke-Setup 'PrepareProtectedRoot')
     Check ((Descriptor $program) -ceq $aclBefore) 'Repeated permission preparation is idempotent'
     Archive-Fixture 'migrated-layout'
+
+    # Reproduce the long-lived field layout: current protected payload plus
+    # exact pre-protected 2.0 lineage leftovers. The upgrade must preserve the
+    # legacy bytes in a locked sibling archive while leaving unknown content
+    # refusal intact.
+    $legacyArchive=Join-Path $env:ProgramData 'TailscaleQuickRepair.Legacy'
+    if(Test-Path -LiteralPath $legacyArchive){throw 'Legacy migration archive must not pre-exist in the disposable fixture.'}
+    New-Fixture
+    $legacyFiles=@(
+        'Launch-Tailscale-Auto-Repair.vbs','Launch-Tailscale-Monitor.vbs','NativeHost.cs',
+        'Repair-Installation.ps1','Repair-Tailscale.ps1','Tailscale-Repair-UI.ps1','version.json'
+    )
+    $legacyDirs=@('Rollback-2.0-Final','Rollback-2.0-RC1','Rollback-2.0-RC3.1','Rollback-2.0-RC3.2')
+    $legacyHashes=@{}
+    foreach($name in $legacyFiles){
+        $path=Join-Path $program $name
+        [IO.File]::WriteAllText($path,('legacy-field-file:'+ $name))
+        $legacyHashes[$name]=FileHash $path
+    }
+    foreach($name in $legacyDirs){
+        $dir=Join-Path $program $name;[void][IO.Directory]::CreateDirectory($dir)
+        $leaf=Join-Path $dir 'payload.keep';[IO.File]::WriteAllText($leaf,('legacy-field-dir:'+ $name))
+        $legacyHashes[$name]=FileHash $leaf
+    }
+    $marker=Join-Path $app 'protected-update.json'
+    [IO.File]::WriteAllText($marker,('{"schema":1,"versionCode":'+[string]$manifest.versionCode+'}'))
+    $legacyApply=Join-Path $work 'long-lived-apply';[void][IO.Directory]::CreateDirectory($legacyApply)
+    [void](Invoke-Setup 'ApplyFiles' @($verified,$legacyApply))
+    Check (Test-Path -LiteralPath $legacyArchive -PathType Container) 'Long-lived upgrade creates the fixed protected legacy archive'
+    Check (AdminOnlyAcl $legacyArchive) 'Legacy archive is administrator and SYSTEM only'
+    foreach($name in $legacyFiles){
+        $active=Join-Path $program $name;$archived=Join-Path $legacyArchive $name
+        Check (-not(Test-Path -LiteralPath $active) -and (Test-Path -LiteralPath $archived -PathType Leaf) -and (FileHash $archived) -ceq $legacyHashes[$name]) ('Legacy migration preserves file '+$name)
+    }
+    foreach($name in $legacyDirs){
+        $active=Join-Path $program $name;$leaf=Join-Path (Join-Path $legacyArchive $name) 'payload.keep'
+        Check (-not(Test-Path -LiteralPath $active) -and (Test-Path -LiteralPath $leaf -PathType Leaf) -and (FileHash $leaf) -ceq $legacyHashes[$name]) ('Legacy migration preserves rollback directory '+$name)
+    }
+    $legacyApply2=Join-Path $work 'long-lived-reapply';[void][IO.Directory]::CreateDirectory($legacyApply2)
+    [void](Invoke-Setup 'ApplyFiles' @($verified,$legacyApply2))
+    Check (AdminOnlyAcl $legacyArchive) 'Repeated long-lived upgrade leaves the protected legacy archive stable'
+    Remove-Item -LiteralPath $marker -Force
+    [IO.Directory]::Move($legacyArchive,(Join-Path $work 'long-lived-legacy-archive'))
+    Archive-Fixture 'long-lived-layout'
+
+    # Even with a valid protected handoff marker, an unrelated top-level name
+    # must block before any known legacy entry is moved.
+    New-Fixture
+    [IO.File]::WriteAllText($marker,('{"schema":1,"versionCode":'+[string]$manifest.versionCode+'}'))
+    $knownLegacy=Join-Path $program 'Repair-Tailscale.ps1';[IO.File]::WriteAllText($knownLegacy,'known legacy evidence')
+    $unknownLegacy=Join-Path $program 'do-not-touch.keep';[IO.File]::WriteAllText($unknownLegacy,'unrelated evidence')
+    $knownHash=FileHash $knownLegacy;$unknownHash=FileHash $unknownLegacy
+    $unknownApply=Join-Path $work 'unknown-with-marker';[void][IO.Directory]::CreateDirectory($unknownApply)
+    $refused=$false
+    try{[void](Invoke-Setup 'ApplyFiles' @($verified,$unknownApply))}catch{
+        $ex=$_.Exception;while($ex.InnerException){$ex=$ex.InnerException}
+        if($ex -is [IO.IOException] -or $ex -is [UnauthorizedAccessException]){$refused=$true}else{throw}
+    }
+    Check $refused 'Valid handoff still refuses unrelated protected-root content'
+    Check ((FileHash $knownLegacy) -ceq $knownHash -and (FileHash $unknownLegacy) -ceq $unknownHash -and -not(Test-Path -LiteralPath $legacyArchive)) 'Unknown-content refusal occurs before moving known legacy evidence'
+    Remove-Item -LiteralPath $marker -Force
+    Archive-Fixture 'unknown-with-valid-marker'
 
     foreach($kind in @('unknown-file','interrupted-copy','nested-content')){
         New-Fixture

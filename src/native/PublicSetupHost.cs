@@ -496,6 +496,7 @@ internal static class PublicSetupHost
     private static void ApplyFilesCore(List<InstallFile> files, string work, Action<int> afterReplace)
     {
         RecoverInterruptedFileTransaction();
+        MigrateKnownLegacyProtectedLayout();
         PrepareProtectedRoot();
 
         RecoveryDocument transaction = null;
@@ -1373,6 +1374,212 @@ internal static class PublicSetupHost
         "Auto-Repair-Monitor.ps1", "Repair-Backend.ps1", "TailscaleQuickRepair.Operations.dll",
         "Launch-Auto-Repair-Monitor.vbs", "Launch-Tailscale-Backend.vbs", "Advanced-Diagnostics.ps1"
     };
+    // Exact pre-protected Quick Repair names observed on the long-lived 2.0
+    // lineage. They are never executed by migration. A validated protected
+    // update marker is required before any of these entries may be moved.
+    private static readonly string[] LegacyProtectedFileNames = {
+        "Launch-Tailscale-Auto-Repair.vbs", "Launch-Tailscale-Monitor.vbs",
+        "NativeHost.cs", "Repair-Installation.ps1", "Repair-Tailscale.ps1",
+        "Tailscale-Repair-UI.ps1", "version.json"
+    };
+    private static readonly string[] LegacyProtectedDirectoryNames = {
+        "Rollback-2.0-Final", "Rollback-2.0-RC1", "Rollback-2.0-RC3.1", "Rollback-2.0-RC3.2"
+    };
+    private const int LegacyMigrationEntryLimit = 2048;
+    private const long LegacyMigrationByteLimit = 64L * 1024L * 1024L;
+
+    private static bool ContainsName(string[] names, string value)
+    {
+        return Array.FindIndex(names, delegate(string n) {
+            return String.Equals(n, value, StringComparison.OrdinalIgnoreCase);
+        }) >= 0;
+    }
+
+    private static string GetLegacyArchiveRoot()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "TailscaleQuickRepair.Legacy"
+        );
+    }
+
+    private static System.Security.AccessControl.DirectorySecurity LegacyArchiveDirectorySecurity()
+    {
+        var security = new System.Security.AccessControl.DirectorySecurity();
+        security.SetSecurityDescriptorSddlForm(
+            "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
+        );
+        return security;
+    }
+
+    private static void RequireLegacyArchiveRootSecurity(string root)
+    {
+        if (!Directory.Exists(root) || File.Exists(root))
+            throw new IOException("Legacy migration archive has an unexpected type.");
+
+        CheckInstallPath(root);
+        var actual = Directory.GetAccessControl(root);
+        if (!actual.AreAccessRulesProtected ||
+            actual.GetOwner(typeof(SecurityIdentifier)).Value != "S-1-5-32-544")
+            throw new IOException("Legacy migration archive permissions are invalid.");
+
+        bool system = false;
+        bool admins = false;
+        var rules = actual.GetAccessRules(true, true, typeof(SecurityIdentifier));
+        foreach (System.Security.AccessControl.AuthorizationRule raw in rules)
+        {
+            var rule = raw as System.Security.AccessControl.FileSystemAccessRule;
+            if (rule == null ||
+                rule.AccessControlType != System.Security.AccessControl.AccessControlType.Allow)
+                throw new IOException("Legacy migration archive permissions are invalid.");
+
+            string sid = rule.IdentityReference.Value;
+            if (sid == "S-1-5-18") system = true;
+            else if (sid == "S-1-5-32-544") admins = true;
+            else throw new IOException("Legacy migration archive grants an unexpected identity.");
+        }
+
+        if (!system || !admins)
+            throw new IOException("Legacy migration archive permissions are incomplete.");
+    }
+
+    private static void ValidateLegacyTree(string path, ref int entries, ref long bytes)
+    {
+        CheckInstallPath(path);
+        FileAttributes attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Legacy migration content is redirected.");
+
+        entries++;
+        if (entries > LegacyMigrationEntryLimit)
+            throw new IOException("Legacy migration contains too many entries.");
+
+        if ((attributes & FileAttributes.Directory) != 0)
+        {
+            foreach (string child in Directory.GetFileSystemEntries(path))
+                ValidateLegacyTree(child, ref entries, ref bytes);
+            return;
+        }
+
+        using (FileStream probe = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            RequireSingleLink(probe);
+
+        bytes += new FileInfo(path).Length;
+        if (bytes > LegacyMigrationByteLimit)
+            throw new IOException("Legacy migration content is too large.");
+    }
+
+    private static void ValidateLegacyArchive(string archive)
+    {
+        RequireLegacyArchiveRootSecurity(archive);
+        int entries = 0;
+        long bytes = 0;
+
+        foreach (string item in Directory.GetFileSystemEntries(archive))
+        {
+            string name = Path.GetFileName(item);
+            if (ContainsName(LegacyProtectedFileNames, name))
+            {
+                if (!File.Exists(item) || Directory.Exists(item))
+                    throw new IOException("Legacy migration archive has an unexpected entry type.");
+            }
+            else if (ContainsName(LegacyProtectedDirectoryNames, name))
+            {
+                if (!Directory.Exists(item) || File.Exists(item))
+                    throw new IOException("Legacy migration archive has an unexpected entry type.");
+            }
+            else
+                throw new IOException("Legacy migration archive contains unexpected content.");
+
+            ValidateLegacyTree(item, ref entries, ref bytes);
+        }
+    }
+
+    private static void MigrateKnownLegacyProtectedLayout()
+    {
+        // Never move legacy-looking content during a fresh install or ordinary
+        // maintenance. The protected bridge marker is validated by the caller
+        // immediately before ApplyFiles reaches this boundary.
+        if (!File.Exists(GetProtectedUpdateMarkerPath())) return;
+
+        string root = GetProgramDir();
+        if (!Directory.Exists(root))
+        {
+            if (File.Exists(root))
+                throw new IOException("Protected installation root has an unexpected type.");
+            return;
+        }
+
+        CheckInstallPath(root);
+        List<string> pending = new List<string>();
+        int entries = 0;
+        long bytes = 0;
+
+        // Validate the complete active root before moving the first byte.
+        foreach (string item in Directory.GetFileSystemEntries(root))
+        {
+            string name = Path.GetFileName(item);
+
+            if (ContainsName(ProtectedNames, name))
+            {
+                if (!File.Exists(item) || Directory.Exists(item))
+                    throw new IOException("Protected installation has unexpected content. Existing files were preserved.");
+                continue;
+            }
+
+            if (ContainsName(LegacyProtectedFileNames, name))
+            {
+                if (!File.Exists(item) || Directory.Exists(item))
+                    throw new IOException("Legacy protected content has an unexpected type.");
+                ValidateLegacyTree(item, ref entries, ref bytes);
+                pending.Add(item);
+                continue;
+            }
+
+            if (ContainsName(LegacyProtectedDirectoryNames, name))
+            {
+                if (!Directory.Exists(item) || File.Exists(item))
+                    throw new IOException("Legacy protected content has an unexpected type.");
+                ValidateLegacyTree(item, ref entries, ref bytes);
+                pending.Add(item);
+                continue;
+            }
+
+            throw new IOException("Protected installation has unexpected content. Existing files were preserved.");
+        }
+
+        if (pending.Count == 0) return;
+
+        string archive = GetLegacyArchiveRoot();
+        CheckInstallPath(archive);
+        if (File.Exists(archive))
+            throw new IOException("Legacy migration archive is occupied by a file.");
+
+        if (!Directory.Exists(archive))
+            Directory.CreateDirectory(archive, LegacyArchiveDirectorySecurity());
+
+        ValidateLegacyArchive(archive);
+        pending.Sort(StringComparer.OrdinalIgnoreCase);
+
+        foreach (string source in pending)
+        {
+            string name = Path.GetFileName(source);
+            string destination = Path.Combine(archive, name);
+
+            if (File.Exists(destination) || Directory.Exists(destination))
+                throw new IOException("Legacy migration archive already contains this entry.");
+
+            if (Directory.Exists(source))
+                Directory.Move(source, destination);
+            else if (File.Exists(source))
+                File.Move(source, destination);
+            else
+                throw new IOException("Legacy migration source changed during migration.");
+        }
+
+        ValidateLegacyArchive(archive);
+    }
+
     private static void CheckInstallPath(string path)
     {
         for (string p = Path.GetFullPath(path); !String.IsNullOrEmpty(p); p = Path.GetDirectoryName(p))

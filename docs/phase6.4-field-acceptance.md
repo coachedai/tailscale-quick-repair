@@ -36,6 +36,8 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\field-preview.
 
 The helper verifies both outer SHA-256 sidecars, every inner package-manifest entry, the fixed 6.4 version/code, bridge/protected file boundaries, and the current Windows account before mutation.
 
+For a long-lived installation that still contains the exact pre-protected Quick Repair 2.0 rollback/scripts layout, the refreshed Setup preserves those legacy entries intact in an administrator-only sibling archive before hardening the active protected directory. This compatibility path is available only during a validated protected-update handoff. It never executes legacy files, never treats arbitrary names as legacy, and unrelated or redirected content still fails closed before anything is moved.
+
 The first stage uses the **installed released 5.2.1 updater core** to apply only the user-level bridge. The second stage requests normal Windows administrator approval and uses the **refreshed Setup core** to apply the local protected package. The helper loads that refreshed Setup core from a verified disposable TEMP copy, matching production Setup's self-relocation boundary so the installed Setup executable is not held open while the protected package replaces it.
 
 The field helper itself is developer test tooling and is launched from Windows PowerShell. Any console belonging to the helper is therefore **not** evidence of a product console flash. The no-console requirement applies to normal Quick Repair, updater and Setup operation outside this helper path.
