@@ -2,12 +2,13 @@
 
 ## Current candidate
 
-Development has advanced to **3.0.0-phase6.4.2-preview**, code **30000742**. It remains **unpublished** (`publish:false`) on the preview channel. The live public release remains **3.0.0-phase5.2.1**.
+**3.0.0-rc.1 / 30001001** is now published only as the opt-in GitHub **prerelease / Early-access** release. Stable remains **3.0.0-phase5.2.1** on `main` and `updates/latest.json`.
 
-The source immediately before this version-only candidate was verified at **1b897e6da2cf69042274d52feed1a22ded064764** in workflow **35930299174**. Both Windows jobs completed successfully. The retained reports contain **1,107 passing assertions across 19 aggregate suites**: 836 native/package/Windows assertions, 135 genuine 5.2.1 upgrade assertions, 67 interrupted-Setup/integration assertions and 69 protected-handoff assertions. Nested child reports are evidence only and are not counted again.
+The frozen RC1 release target is **2555bf4af30845d2c722964e289cfdfe15a412bf**. Workflow **36186476031** passed the full native Windows verification, genuine released-5.2.1 upgrade, interrupted-Setup recovery and protected-handoff gates before the publisher created the prerelease and dedicated Preview manifest. Publication then disarmed itself.
 
-The 6.4.2 preview identity is unique to the VPN-neutral coexistence and exact-adapter-scope candidate. New installable preview payloads must advance the version code rather than reusing trusted identity across different bytes.
+Post-publication compatibility commit **d16c8107aa1cf2403e52fe66a6c82b221b2918d5** passed workflow **36189240040**. Its developer field helper exact-allows the physically accepted **3.0.0-phase6.4.0-preview / 30000740** and **3.0.0-phase6.4.3-preview / 30000743** identities only, and still requires a Guardian known-good record matching the installed integrity manifest. The accepted 6.4.0 path now has explicit cancel/retry/protected-completion acceptance.
 
+CI also pins the already-published RC1 package assets by tag, release target, size and SHA-256 before privacy-scanning and rerunning field acceptance. This guards the field pack against same-version rebuilt bytes.
 ## What Phase 6 now includes
 
 Automatic repair is local-only. Policy inputs are limited to the Tailscale service, service startup mode, the local Tailscale client and local backend state. Peer reachability, latency, routes, diagnostics and arbitrary error text cannot authorise automatic recovery.
@@ -26,7 +27,7 @@ History is bounded and typed: at most 40 records, 32 KiB and 30 days. Background
 
 Existing 5.2.1 installs use a staged protected handoff. The released updater first applies only user-level files, including the refreshed Setup host and a short-lived version marker. After restart, the refreshed app requests normal Windows administrator approval and launches only the installed Setup host in fixed upgrade mode. The old updater never writes the protected backend or protected task files.
 
-Setup validates the marker and the initiating Windows SID. Approval by a different Windows account is intentionally refused rather than migrating per-user state into the wrong profile. The current preview therefore requires the administrator approval to use the **same Windows account that launched Quick Repair**.
+Setup validates the marker and the initiating Windows SID. Approval by a different Windows account is intentionally refused rather than migrating per-user state into the wrong profile. RC1 therefore requires administrator approval to use the **same Windows account that launched Quick Repair**.
 
 Protected Setup keeps a machine-protected file transaction before replacing payload files. A killed Setup can restore the previous published file hashes; recovery itself can be killed and resumed. After every new file is verified, the transaction is durably marked committed before old backups are removed, so interrupted cleanup does not roll a valid new payload backwards. Recovery journals are tied to the initiating SID.
 
@@ -64,7 +65,7 @@ After Phase 6: **Phase 7 Startup / Passive Health**, **Phase 8 Update Guardian 2
 
 ### Quiet startup checkpoint
 
-The 6.4.2 candidate hardens `--start-in-tray` so the WPF main window is not passed to `Application.Run(window)` and therefore does not need to appear before being hidden. Hosted native acceptance launches the exact packaged executable, samples visible top-level windows, and requires no console/script-host child. Real reboot/logon remains a deferred physical gate.
+RC1 hardens `--start-in-tray` so the WPF main window is not passed to `Application.Run(window)` and therefore does not need to appear before being hidden. Hosted native acceptance launches the exact packaged executable, samples visible top-level windows, and requires no console/script-host child. Real reboot/logon remains a deferred physical gate.
 
 
 ### Guarded Preview RC publication
@@ -73,4 +74,4 @@ The development workflow has a separate Early-access publication gate controlled
 
 The publisher reuses the exact validated package artifact, rechecks SHA-256 sidecars and privacy, creates a GitHub **prerelease**, then disarms its own publication intent before making `preview/updates/preview.json` live. Both branch pushes are non-force. If the development branch moves before publication/disarm, the job refuses. The Preview job has no code path to `main` or `updates/latest.json`.
 
-This makes the intended release-candidate loop: physically accept the frozen 6.4.3 bootstrap once, enable **Early-access updates**, then install future 3.0 RCs through the normal in-app updater.
+This makes the release-candidate loop: trusted 5.2.1, 6.4.0 or 6.4.3 field baselines may use the one-time developer bridge to RC1; once RC1 is installed, enable **Early-access updates** and install later 3.0 RCs through the normal in-app updater.

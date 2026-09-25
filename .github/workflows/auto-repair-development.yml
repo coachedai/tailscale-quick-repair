@@ -150,6 +150,12 @@ jobs:
         env:
           TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
         run: .\release\test-field-preview.ps1 -OutputDirectory .\upgrade-dist -EvidenceDirectory .\upgrade-evidence
+      - name: Validate bridge against exact published RC1 assets
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-published-rc1-bridge.ps1 -EvidenceDirectory .\upgrade-evidence
       - name: Upgrade genuine released files and existing tasks with the new Setup core
         shell: powershell
         env:
