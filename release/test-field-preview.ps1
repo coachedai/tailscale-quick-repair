@@ -205,11 +205,11 @@ try{
     # Exercise the accepted previous-preview baseline explicitly. This changes
     # only fixture identity around already-verified installed candidate bytes;
     # it tests staging policy without claiming to recreate the historical
-    # 6.4.0 package byte-for-byte.
+    # 6.4.3 package byte-for-byte.
     Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction SilentlyContinue
     [ordered]@{
         product='Tailscale Quick Repair'
-        version='3.0.0-phaseRC1-preview'
+        version='3.0.0-phase6.4.3-preview'
         versionCode=30000743
         channel='preview'
         updateSchema=1
