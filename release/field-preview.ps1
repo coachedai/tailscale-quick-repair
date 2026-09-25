@@ -7,7 +7,8 @@ param(
     [switch]$CiNoElevation,
     [switch]$CiNoRelaunch,
     [switch]$CiCancelBeforeProtected,
-    [switch]$CiPrivacyFailureProbe
+    [switch]$CiPrivacyFailureProbe,
+    [switch]$CiProtectedChildFailureProbe
 )
 
 $ErrorActionPreference = 'Stop'
@@ -293,6 +294,12 @@ function Apply-Protected($protected,[string]$ExpectedRequesterSid) {
     }
     $result.requesterIdentityVerified = $true
 
+    if ($CiProtectedChildFailureProbe) {
+        Assert-CiFieldMode
+        $result.stage = 'protected_ci_failure_probe'
+        throw [InvalidOperationException]::new('CI protected child failure probe.')
+    }
+
     $installedSetup = Join-Path $StateDir 'TailscaleQuickRepairSetup.exe'
     if (-not (Test-Path -LiteralPath $installedSetup -PathType Leaf)) { Fail 'The refreshed Setup host is missing after bridge staging.' }
 
@@ -360,6 +367,10 @@ function Apply-Protected($protected,[string]$ExpectedRequesterSid) {
 
 try {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
+    if ($ElevatedApply) {
+        $result.stage = 'protected_elevated_preflight'
+        Save-Result
+    }
     if ($CiPrivacyFailureProbe) {
         Assert-CiFieldMode
         throw [InvalidOperationException]::new(('CI privacy probe local path: ' + $env:USERPROFILE))
@@ -412,10 +423,18 @@ try {
         Save-Result
         $powershell = Join-Path $PSHOME 'powershell.exe'
         $args = '-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -OutputDirectory "' + $OutputDirectory + '" -ResultPath "' + $ResultPath + '" -ElevatedApply -RequesterSid "' + $sid + '"'
+        if ($CiProtectedChildFailureProbe) {
+            Assert-CiFieldMode
+            $args += ' -CiProtectedChildFailureProbe -CiNoRelaunch'
+        }
         try {
-            $process = Start-Process -FilePath $powershell -ArgumentList $args -Verb RunAs -PassThru -Wait -ErrorAction Stop
+            if ($CiProtectedChildFailureProbe) {
+                $process = Start-Process -FilePath $powershell -ArgumentList $args -PassThru -Wait -ErrorAction Stop
+            } else {
+                $process = Start-Process -FilePath $powershell -ArgumentList $args -Verb RunAs -PassThru -Wait -ErrorAction Stop
+            }
         } catch {
-            if ($_.Exception.HResult -eq -2147467259 -or $_.Exception.Message -match 'cancel') {
+            if (-not $CiProtectedChildFailureProbe -and ($_.Exception.HResult -eq -2147467259 -or $_.Exception.Message -match 'cancel')) {
                 $result.elevationCancelled = $true
                 $result.protectedUnchangedOnCancel = Assert-ProtectedHashesUnchanged $protectedBefore
                 if (-not $result.protectedUnchangedOnCancel) {
@@ -428,12 +447,84 @@ try {
             }
             throw
         }
-        if (-not $process -or $process.ExitCode -ne 0) { Fail 'The protected field stage did not complete.' }
+
+        $child = $null
         if (Test-Path -LiteralPath $ResultPath -PathType Leaf) {
-            $child = Get-Content -LiteralPath $ResultPath -Raw | ConvertFrom-Json -ErrorAction Stop
+            try {
+                $candidate = Get-Content -LiteralPath $ResultPath -Raw | ConvertFrom-Json -ErrorAction Stop
+                $candidateStage = [string]$candidate.stage
+                if ([int]$candidate.schema -eq 1 -and
+                    [string]$candidate.version -ceq $ExpectedVersion -and
+                    [int64]$candidate.versionCode -eq $ExpectedCode -and
+                    $candidateStage -match '^protected_[a-z0-9_]+
+    }
+
+    $result.stage = 'restart_acknowledgement'
+    if (-not $CiNoRelaunch) {
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        do {
+            Start-Sleep -Milliseconds 500
+            $pending = Get-ItemProperty -LiteralPath $RestartRegistryPath -Name $RestartRegistryName -ErrorAction SilentlyContinue
+            if (-not $pending -or $null -eq $pending.$RestartRegistryName) { $result.restartAcknowledged = $true; break }
+        } while ([DateTime]::UtcNow -lt $deadline)
+        if (-not $result.restartAcknowledged) { Fail 'The preview installed, but the restarted app did not acknowledge the protected update.' }
+    }
+
+    if (Test-Path -LiteralPath $MarkerPath) { Fail 'The protected-update marker still exists after protected completion.' }
+    $installed = Read-InstalledVersion
+    if ([int64]$installed.versionCode -ne $ExpectedCode -or [string]$installed.version -cne $ExpectedVersion) { Fail 'The installed preview version record is wrong.' }
+    $result.passed = $true
+    $result.stage = 'complete'
+    Save-Result
+    Write-Host 'Phase 6.4 field preview completed successfully.'
+    exit 0
+}
+catch {
+    if ([string]::IsNullOrWhiteSpace([string]$result.error)) {
+        $result.error = 'Unexpected field-preview failure. No raw exception details were saved.'
+    }
+    Save-Result
+    Write-Error $_.Exception.Message
+    exit 1
+}
+finally {
+    if ($script:LeaseHeld -and $script:LeaseType) {
+        try { [void](Invoke-Private $script:LeaseType 'ReleaseOperationLock') } catch {}
+    }
+    foreach ($root in @($script:WorkRoots.ToArray())) {
+        try { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } } catch {}
+    }
+}
+) {
+                    $child = $candidate
+                }
+            } catch {
+                $child = $null
+            }
+        }
+
+        if (-not $process -or $process.ExitCode -ne 0) {
+            if ($child) {
+                $result.stage = [string]$child.stage
+                $result.requesterIdentityVerified = [bool]$child.requesterIdentityVerified
+                $result.protectedPackageVerified = [bool]$child.protectedPackageVerified
+                $result.protectedApplied = [bool]$child.protectedApplied
+                $result.error = 'The elevated protected field stage failed. The recorded stage identifies the boundary.'
+            } else {
+                $result.stage = 'protected_failed'
+                $result.error = 'The elevated protected field stage failed before returning a readable safe result.'
+            }
+            Save-Result
+            throw 'The protected field stage did not complete.'
+        }
+
+        if ($child) {
             if (-not [bool]$child.passed -or -not [bool]$child.protectedApplied) { Fail 'The elevated protected stage did not report success.' }
             $result.requesterIdentityVerified = [bool]$child.requesterIdentityVerified
+            $result.protectedPackageVerified = [bool]$child.protectedPackageVerified
             $result.protectedApplied = [bool]$child.protectedApplied
+        } else {
+            Fail 'The elevated protected stage did not return a readable result.'
         }
     }
 

@@ -85,6 +85,25 @@ try{
     $staged=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
     Check ([int64]$staged.versionCode -eq 30000740 -and (Test-Path (Join-Path $app 'protected-update.json') -PathType Leaf)) 'Cancellation leaves only the verified 6.4 bridge staged for retry'
 
+    $childFailureReport=Join-Path $evidence 'field-preview-protected-child-failure.json'
+    $childFailurePsi=New-Object Diagnostics.ProcessStartInfo
+    $childFailurePsi.FileName=Join-Path $PSHOME 'powershell.exe';$childFailurePsi.UseShellExecute=$false;$childFailurePsi.CreateNoWindow=$true
+    $childFailurePsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath "'+$childFailureReport+'" -CiProtectedChildFailureProbe -CiNoRelaunch'
+    $child=[Diagnostics.Process]::Start($childFailurePsi)
+    Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 1 -and (Test-Path -LiteralPath $childFailureReport -PathType Leaf)) 'Field preview preserves a protected child failure through the parent boundary'
+    $child.Dispose();$child=$null
+    $childFailureRaw=Get-Content -LiteralPath $childFailureReport -Raw
+    $childFailure=$childFailureRaw|ConvertFrom-Json
+    Check ($childFailure.stage -ceq 'protected_ci_failure_probe' -and $childFailure.requesterIdentityVerified -and -not $childFailure.protectedApplied) 'Parent retains the exact privacy-safe protected child stage'
+    Check ($childFailure.error -ceq 'The elevated protected field stage failed. The recorded stage identifies the boundary.') 'Parent replaces elevated child failure text with a curated field error'
+    Check ([string]::IsNullOrEmpty($env:USERPROFILE) -or -not $childFailureRaw.Contains($env:USERPROFILE)) 'Protected child failure result does not persist the local user profile path'
+    foreach($name in $protectedBaseline.Keys){
+        $path=Join-Path $program $name
+        $expectedHash=[string]$protectedBaseline[$name]
+        Check ((Test-Path -LiteralPath $path -PathType Leaf) -and (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $expectedHash) ('Protected child failure preserves baseline hash for '+$name)
+    }
+    Check (Test-Path (Join-Path $app 'protected-update.json') -PathType Leaf) 'Protected child failure leaves the verified bridge marker available for retry'
+
     $report=Join-Path $evidence 'field-preview-results.json'
     $fieldPsi=New-Object Diagnostics.ProcessStartInfo
     $fieldPsi.FileName=Join-Path $PSHOME 'powershell.exe';$fieldPsi.UseShellExecute=$false;$fieldPsi.CreateNoWindow=$true
