@@ -289,7 +289,18 @@ try{
         $trigger=$d.Triggers.Item($i)
         if([string]$trigger.Id -ceq 'LocalLogon'){$logonTriggers+=,$trigger}
     }
-    Check ($logonTriggers.Count -eq 1 -and [string]$logonTriggers[0].UserId -ceq $sid -and [string]$logonTriggers[0].Delay -ceq 'PT30S') 'Actual protected monitor retains one delayed same-user logon trigger'
+    $logonTriggerSid=''
+    if($logonTriggers.Count -eq 1){
+        $triggerUser=[string]$logonTriggers[0].UserId
+        try{
+            $logonTriggerSid=if($triggerUser -match '^S-1-'){
+                $triggerUser
+            }else{
+                ([Security.Principal.NTAccount]::new($triggerUser)).Translate([Security.Principal.SecurityIdentifier]).Value
+            }
+        }catch{$logonTriggerSid=''}
+    }
+    Check ($logonTriggers.Count -eq 1 -and $logonTriggerSid -ceq $sid -and [string]$logonTriggers[0].Delay -ceq 'PT30S') 'Actual protected monitor retains one delayed same-user logon trigger'
     Check (-not [bool]$d.Settings.WakeToRun -and -not [bool]$d.Settings.StartWhenAvailable) 'Logon/background simulation does not wake the PC or replay missed fallback runs'
     Check ($d.Actions.Count -eq 1 -and $d.Actions.Item(1).Arguments -ceq ('"'+(Join-Path $program 'Launch-Auto-Repair-Monitor.vbs')+'"')) 'Actual protected task targets the reviewed fixed hidden launcher'
     $folderName='TqrNativeAcceptance-'+[Guid]::NewGuid().ToString('N');$folder=$rootFolder.CreateFolder($folderName,$null)
