@@ -1,10 +1,10 @@
 # Phase 6.4 field acceptance
 
-This is the final real-PC acceptance path for 3.0.0-phase6.4.2-preview before any public release. It does not change the live GitHub update manifest and it is not part of the public Quick Repair packages.
+This is the one-time developer field/bootstrap path for **3.0.0-rc.1 / 30001001**. RC1 is published only to the opt-in Early-access channel; Stable `main` and `updates/latest.json` remain on 3.0.0-phase5.2.1. The helper is not part of the shipping Quick Repair packages.
 
 ## Why a field helper exists
 
-The released 5.2.1 application intentionally trusts only main/updates/latest.json. Publishing the 6.4 preview there merely to test UAC would expose an unfinished release to the public update channel.
+The released 5.2.1 application and the accepted 6.4.0 field build predate the in-app Early-access selector, so they cannot discover the dedicated Preview manifest themselves. The helper provides a narrowly allowlisted bridge to RC1 without exposing the candidate through Stable.
 
 Hosted Windows acceptance already proves that the genuine released 5.2.1 updater can apply the exact user-level bridge. The field helper reuses that installed updater core against the exact CI-produced bridge package, then uses the refreshed Setup core against the exact local protected package. The only production network-fetch step replaced by the helper is the unpublished manifest/download lookup.
 
@@ -12,7 +12,7 @@ The helper never changes the product trust policy, never adds a local-package sw
 
 ## Before running
 
-- Start from the genuine installed 5.2.1 release, the physically accepted 3.0.0-phase6.4.1-preview preview with a healthy known-good integrity baseline, or a 3.0.0-phase6.4.2-preview bridge left staged after intentionally cancelling the UAC prompt.
+- Start from the genuine installed 5.2.1 release, an explicitly allowlisted accepted preview (**3.0.0-phase6.4.0-preview / 30000740** or **3.0.0-phase6.4.3-preview / 30000743**) with a matching Guardian known-good integrity record, or an already-staged RC1 bridge left after intentionally cancelling the UAC prompt.
 - Exit Quick Repair from the tray menu before the first run.
 - Leave **Auto Repair off** for the initial upgrade acceptance.
 - Keep Tailscale signed in normally. Do not deliberately break networking for the first pass.
@@ -23,9 +23,9 @@ The helper never changes the product trust policy, never adds a local-package sw
 Keep these files together in one folder:
 
 - field-preview.ps1
-- TailscaleQuickRepair-3.0.0-phase6.4.2-preview.zip
+- TailscaleQuickRepair-3.0.0-rc.1.zip
 - its .sha256 sidecar
-- TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.2-preview.zip
+- TailscaleQuickRepair-SetupPackage-3.0.0-rc.1.zip
 - its .sha256 sidecar
 
 Open Windows PowerShell in that folder and run:
@@ -34,7 +34,7 @@ Open Windows PowerShell in that folder and run:
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\field-preview.ps1 -OutputDirectory .
 ```
 
-The helper verifies both outer SHA-256 sidecars, every inner package-manifest entry, the fixed 6.4 version/code, bridge/protected file boundaries, and the current Windows account before mutation.
+The helper verifies both outer SHA-256 sidecars, every inner package-manifest entry, the fixed RC1 version/code/channel, bridge/protected file boundaries, and the current Windows account before mutation. Previous-preview entry is exact-match only; no version ranges or arbitrary local packages are accepted.
 
 For a long-lived installation that still contains the exact pre-protected Quick Repair 2.0 rollback/scripts layout, the refreshed Setup preserves those legacy entries intact in an administrator-only sibling archive before hardening the active protected directory. This compatibility path is available only during a validated protected-update handoff. It never executes legacy files, never treats arbitrary names as legacy, and unrelated or redirected content still fails closed before anything is moved.
 
@@ -48,7 +48,7 @@ A small phase6.4-field-result.json file is written beside the helper. Its path i
 
 Cancelling the Windows approval prompt is a valid test. Before staging anything, the helper requires the complete published protected baseline to be present. After cancellation it verifies every expected protected baseline file is still present with the same SHA-256, then leaves only the verified user-level bridge plus its protected-update marker staged. If the baseline is incomplete or any protected hash changes, the field run fails closed.
 
-Run the same command again and approve the prompt. The helper recognises the already-staged bridge without replaying the original baseline -> 6.4.2 transition. Before protected Setup continues, it reapplies the currently verified user-level preview package with the candidate updater so every same-version bridge byte (including the installed Setup host) matches the exact field pack. Hosted acceptance deliberately corrupts the staged Setup host and proves the retry refreshes it before entering the protected boundary. It also exercises the cancel/stage/retry state transition without claiming to reproduce the physical Windows UAC screen.
+Run the same command again and approve the prompt. The helper recognises the already-staged bridge without replaying the original baseline -> RC1 transition. Before protected Setup continues, it reapplies the currently verified user-level preview package with the candidate updater so every same-version bridge byte (including the installed Setup host) matches the exact field pack. Hosted acceptance deliberately corrupts the staged Setup host and proves the retry refreshes it before entering the protected boundary. It also exercises the cancel/stage/retry state transition without claiming to reproduce the physical Windows UAC screen.
 
 Same-version retries remain supported for an interrupted field attempt, but new installable preview payloads now receive a new version code. If a same-version field retry is ever required, a same-version field refresh also preserves the prior Guardian known-good record as its predecessor and retires the active record. Guardian itself remains strict: same version code plus different trusted bytes is still treated as suspicious during normal product operation. After the exact field candidate is installed, Guardian establishes a fresh known-good baseline only after its own integrity check passes.
 
@@ -66,7 +66,7 @@ The first pass is complete only when:
 
 - the same-account UAC approval succeeds;
 - the protected marker is removed by protected completion;
-- the installed version is exactly 3.0.0-phase6.4.2-preview / 30000742;
+- the installed version is exactly 3.0.0-rc.1 / 30001001;
 - Quick Repair reopens normally;
 - the restart acknowledgement is cleared by that reopened candidate;
 - there are no PowerShell/console flashes from normal product operation;
@@ -89,4 +89,4 @@ Do not interpret remote peer unavailability as a repair trigger. Optional diagno
 
 ## RC1 delivery note
 
-The intended user path after the 6.4.3 bootstrap is installed is **Early-access updates -> Check for updates -> Update now**. The field helper remains a developer acceptance path and is not the normal RC delivery mechanism.
+Once RC1 is installed, future release-candidate updates use **Early-access updates -> Check for updates -> Update now** inside Quick Repair. The field helper remains a one-time developer bridge for trusted older baselines and is not the normal update mechanism.

@@ -202,72 +202,78 @@ try{
     Check ([string]$retiredGuardian.integrityManifestSha256 -ceq $staleGuardianHash) 'Reconciliation atomically replaces an existing predecessor with the stale same-version Guardian record'
     Check (@(Get-ChildItem -LiteralPath $app -Filter 'guardian-known-good.previous.json.*.replace-backup' -File -ErrorAction SilentlyContinue).Count -eq 0) 'Reconciliation removes its temporary predecessor replacement backup'
 
-    # Exercise the accepted previous-preview baseline explicitly. This changes
-    # only fixture identity around already-verified installed candidate bytes;
-    # it tests staging policy without claiming to recreate the historical
-    # 6.4.3 package byte-for-byte.
-    Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction SilentlyContinue
-    [ordered]@{
-        product='Tailscale Quick Repair'
-        version='3.0.0-phase6.4.3-preview'
-        versionCode=30000743
-        channel='preview'
-        updateSchema=1
-        configSchema=2
-    }|ConvertTo-Json -Depth 4|Set-Content -LiteralPath (Join-Path $app 'version.user.json') -Encoding UTF8
-    [ordered]@{
-        schema=1
-        versionCode=30000743
-        integrityManifestSha256=$candidateIntegrityHash
-        verifiedReleaseFiles=1
-        startupEnabled=$true
-        repairEngineReady=$true
-        autoRepairAvailable=$true
-        verifiedUtc=[DateTime]::UtcNow.ToString('o')
-    }|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $guardianSnapshot -Encoding UTF8
+    # Exercise every explicitly accepted previous-preview identity. The fixture
+    # changes only version/Guardian identity around already-verified installed
+    # candidate bytes; this tests strict staging policy without claiming to
+    # recreate either historical preview package byte-for-byte.
+    foreach($previousPreview in @(
+        [pscustomobject]@{label='6.4.0';version='3.0.0-phase6.4.0-preview';code=[int64]30000740},
+        [pscustomobject]@{label='6.4.3';version='3.0.0-phase6.4.3-preview';code=[int64]30000743}
+    )){
+        Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction SilentlyContinue
+        [ordered]@{
+            product='Tailscale Quick Repair'
+            version=[string]$previousPreview.version
+            versionCode=[int64]$previousPreview.code
+            channel='preview'
+            updateSchema=1
+            configSchema=2
+        }|ConvertTo-Json -Depth 4|Set-Content -LiteralPath (Join-Path $app 'version.user.json') -Encoding UTF8
+        [ordered]@{
+            schema=1
+            versionCode=[int64]$previousPreview.code
+            integrityManifestSha256=$candidateIntegrityHash
+            verifiedReleaseFiles=1
+            startupEnabled=$true
+            repairEngineReady=$true
+            autoRepairAvailable=$true
+            verifiedUtc=[DateTime]::UtcNow.ToString('o')
+        }|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $guardianSnapshot -Encoding UTF8
 
-    $previewBaselineHashes=[ordered]@{}
-    foreach($name in @('Repair-Backend.ps1','Auto-Repair-Monitor.ps1','TailscaleQuickRepair.Operations.dll')){
-        $path=Join-Path $program $name
-        $previewBaselineHashes[$name]=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        $previewBaselineHashes=[ordered]@{}
+        foreach($name in @('Repair-Backend.ps1','Auto-Repair-Monitor.ps1','TailscaleQuickRepair.Operations.dll')){
+            $path=Join-Path $program $name
+            $previewBaselineHashes[$name]=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+
+        $previewKey=([string]$previousPreview.label).Replace('.','-')
+        $previewCancelReport=Join-Path $evidence ('field-preview-'+$previewKey+'-cancel.json')
+        $previewCancelPsi=New-Object Diagnostics.ProcessStartInfo
+        $previewCancelPsi.FileName=Join-Path $PSHOME 'powershell.exe'
+        $previewCancelPsi.UseShellExecute=$false
+        $previewCancelPsi.CreateNoWindow=$true
+        $previewCancelPsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath "'+$previewCancelReport+'" -CiCancelBeforeProtected -CiNoRelaunch'
+        $child=[Diagnostics.Process]::Start($previewCancelPsi)
+        Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 2 -and (Test-Path -LiteralPath $previewCancelReport -PathType Leaf)) ('Accepted '+$previousPreview.label+' preview can stage the uniquely versioned RC1 bridge before simulated UAC cancellation')
+        $child.Dispose();$child=$null
+        $previewCancel=Get-Content -LiteralPath $previewCancelReport -Raw|ConvertFrom-Json
+        Check ($previewCancel.baselineVerified -and $previewCancel.bridgeApplied -and $previewCancel.elevationCancelled -and $previewCancel.protectedUnchangedOnCancel) ($previousPreview.label+' transition records the verified pre-protected boundary')
+        $previewStaged=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
+        Check ([string]$previewStaged.version -ceq '3.0.0-rc.1' -and [int64]$previewStaged.versionCode -eq 30001001 -and (Test-Path (Join-Path $app 'protected-update.json') -PathType Leaf)) ($previousPreview.label+' transition stages only the new RC1 user bridge')
+        $previewMarker=Get-Content (Join-Path $app 'protected-update.json') -Raw|ConvertFrom-Json
+        Check ([int]$previewMarker.schema -eq 2 -and [int64]$previewMarker.versionCode -eq 30001001 -and [string]$previewMarker.channel -ceq 'preview') ($previousPreview.label+' staging carries the exact Preview channel into the protected handoff')
+        foreach($name in $previewBaselineHashes.Keys){
+            $path=Join-Path $program $name
+            Check ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ceq [string]$previewBaselineHashes[$name]) ($previousPreview.label+' cancellation preserves protected hash for '+$name)
+        }
+
+        $previewCompleteReport=Join-Path $evidence ('field-preview-'+$previewKey+'-complete.json')
+        $previewCompletePsi=New-Object Diagnostics.ProcessStartInfo
+        $previewCompletePsi.FileName=Join-Path $PSHOME 'powershell.exe'
+        $previewCompletePsi.UseShellExecute=$false
+        $previewCompletePsi.CreateNoWindow=$true
+        $previewCompletePsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath "'+$previewCompleteReport+'" -CiNoElevation -CiNoRelaunch'
+        $child=[Diagnostics.Process]::Start($previewCompletePsi)
+        Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 0 -and (Test-Path -LiteralPath $previewCompleteReport -PathType Leaf)) ('Staged RC1 bridge can complete protected Setup from accepted '+$previousPreview.label+' preview')
+        $child.Dispose();$child=$null
+        $previewComplete=Get-Content -LiteralPath $previewCompleteReport -Raw|ConvertFrom-Json
+        Check ($previewComplete.passed -and $previewComplete.bridgeRefreshed -and $previewComplete.protectedApplied) ($previousPreview.label+' retry completes through the same protected candidate path')
+        $previewFinal=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
+        Check ([string]$previewFinal.version -ceq '3.0.0-rc.1' -and [int64]$previewFinal.versionCode -eq 30001001 -and -not(Test-Path (Join-Path $app 'protected-update.json'))) ($previousPreview.label+' transition finishes at the unique RC1 identity')
+        $previewPending=Get-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction Stop
+        Check ([int64]$previewPending.PendingRestartVersionCode -eq 30001001) ($previousPreview.label+' protected completion writes the unique RC1 restart acknowledgement')
+        Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction Stop
     }
-
-    $previewCancelReport=Join-Path $evidence 'field-preview-previous-preview-cancel.json'
-    $previewCancelPsi=New-Object Diagnostics.ProcessStartInfo
-    $previewCancelPsi.FileName=Join-Path $PSHOME 'powershell.exe'
-    $previewCancelPsi.UseShellExecute=$false
-    $previewCancelPsi.CreateNoWindow=$true
-    $previewCancelPsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath "'+$previewCancelReport+'" -CiCancelBeforeProtected -CiNoRelaunch'
-    $child=[Diagnostics.Process]::Start($previewCancelPsi)
-    Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 2 -and (Test-Path -LiteralPath $previewCancelReport -PathType Leaf)) 'Accepted 6.4.3 preview can stage the uniquely versioned RC1 bridge before simulated UAC cancellation'
-    $child.Dispose();$child=$null
-    $previewCancel=Get-Content -LiteralPath $previewCancelReport -Raw|ConvertFrom-Json
-    Check ($previewCancel.baselineVerified -and $previewCancel.bridgeApplied -and $previewCancel.elevationCancelled -and $previewCancel.protectedUnchangedOnCancel) 'Previous-preview transition records the verified pre-protected boundary'
-    $previewStaged=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
-    Check ([string]$previewStaged.version -ceq '3.0.0-rc.1' -and [int64]$previewStaged.versionCode -eq 30001001 -and (Test-Path (Join-Path $app 'protected-update.json') -PathType Leaf)) 'Previous-preview transition stages only the new RC1 user bridge'
-    $previewMarker=Get-Content (Join-Path $app 'protected-update.json') -Raw|ConvertFrom-Json
-    Check ([int]$previewMarker.schema -eq 2 -and [int64]$previewMarker.versionCode -eq 30001001 -and [string]$previewMarker.channel -ceq 'preview') 'Previous-preview staging carries the exact Preview channel into the protected handoff'
-    foreach($name in $previewBaselineHashes.Keys){
-        $path=Join-Path $program $name
-        Check ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ceq [string]$previewBaselineHashes[$name]) ('Previous-preview cancellation preserves protected hash for '+$name)
-    }
-
-    $previewCompleteReport=Join-Path $evidence 'field-preview-previous-preview-complete.json'
-    $previewCompletePsi=New-Object Diagnostics.ProcessStartInfo
-    $previewCompletePsi.FileName=Join-Path $PSHOME 'powershell.exe'
-    $previewCompletePsi.UseShellExecute=$false
-    $previewCompletePsi.CreateNoWindow=$true
-    $previewCompletePsi.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $PSScriptRoot 'field-preview.ps1')+'" -OutputDirectory "'+(Resolve-Path $OutputDirectory).Path+'" -ResultPath "'+$previewCompleteReport+'" -CiNoElevation -CiNoRelaunch'
-    $child=[Diagnostics.Process]::Start($previewCompletePsi)
-    Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 0 -and (Test-Path -LiteralPath $previewCompleteReport -PathType Leaf)) 'Staged RC1 bridge can complete protected Setup from the previous-preview transition'
-    $child.Dispose();$child=$null
-    $previewComplete=Get-Content -LiteralPath $previewCompleteReport -Raw|ConvertFrom-Json
-    Check ($previewComplete.passed -and $previewComplete.bridgeRefreshed -and $previewComplete.protectedApplied) 'Previous-preview retry completes through the same protected candidate path'
-    $previewFinal=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
-    Check ([string]$previewFinal.version -ceq '3.0.0-rc.1' -and [int64]$previewFinal.versionCode -eq 30001001 -and -not(Test-Path (Join-Path $app 'protected-update.json'))) 'Previous-preview transition finishes at the unique RC1 identity'
-    $previewPending=Get-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction Stop
-    Check ([int64]$previewPending.PendingRestartVersionCode -eq 30001001) 'Previous-preview protected completion writes the unique RC1 restart acknowledgement'
-    Remove-ItemProperty -LiteralPath 'HKCU:\Software\TailscaleQuickRepair' -Name PendingRestartVersionCode -ErrorAction Stop
 
     $passed=$true
 }catch{

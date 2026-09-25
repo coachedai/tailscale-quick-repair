@@ -21,8 +21,10 @@ $ExpectedCode = [int64]30001001
 $ExpectedChannel = 'preview'
 $BaselineVersion = '3.0.0-phase5.2.1'
 $BaselineCode = [int64]30000621
-$PreviousPreviewVersion = '3.0.0-phase6.4.3-preview'
-$PreviousPreviewCode = [int64]30000743
+$AcceptedPreviousPreviews = @(
+    [pscustomobject]@{ version = '3.0.0-phase6.4.0-preview'; versionCode = [int64]30000740 },
+    [pscustomobject]@{ version = '3.0.0-phase6.4.3-preview'; versionCode = [int64]30000743 }
+)
 $GuardianSnapshotPath = Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair\guardian-known-good.json'
 $StateDir = Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair'
 $ProgramDir = Join-Path $env:ProgramData 'TailscaleQuickRepair'
@@ -279,7 +281,7 @@ function Read-InstalledVersion {
     catch { Fail 'The installed Quick Repair version record is invalid.' }
 }
 
-function Assert-PreviousPreviewKnownGood {
+function Assert-PreviousPreviewKnownGood([int64]$ExpectedPreviousCode) {
     if (-not (Test-Path -LiteralPath $GuardianSnapshotPath -PathType Leaf)) {
         Fail 'The installed previous preview has no established known-good integrity baseline.'
     }
@@ -303,7 +305,7 @@ function Assert-PreviousPreviewKnownGood {
     }
 
     $recordedHash = ([string]$snapshot.integrityManifestSha256).ToLowerInvariant()
-    if ([int]$snapshot.schema -ne 1 -or [int64]$snapshot.versionCode -ne $PreviousPreviewCode -or
+    if ([int]$snapshot.schema -ne 1 -or [int64]$snapshot.versionCode -ne $ExpectedPreviousCode -or
         $recordedHash -notmatch '^[0-9a-f]{64}$') {
         Fail 'The previous preview known-good record does not match the accepted preview identity.'
     }
@@ -480,13 +482,20 @@ function Stage-Bridge($ordinary) {
     }
 
     $isPublicBaseline = ([int64]$installed.versionCode -eq $BaselineCode -and [string]$installed.version -ceq $BaselineVersion)
-    $isPreviousPreview = ([int64]$installed.versionCode -eq $PreviousPreviewCode -and [string]$installed.version -ceq $PreviousPreviewVersion)
+    $previousPreviewMatches = @($AcceptedPreviousPreviews | Where-Object {
+        [int64]$installed.versionCode -eq [int64]$_.versionCode -and
+        [string]$installed.version -ceq [string]$_.version
+    })
+    if ($previousPreviewMatches.Count -gt 1) {
+        Fail 'Accepted previous-preview policy is ambiguous.'
+    }
+    $isPreviousPreview = ($previousPreviewMatches.Count -eq 1)
     if (-not $isPublicBaseline -and -not $isPreviousPreview) {
-        Fail 'Field preview staging requires the genuine public baseline, the accepted previous preview, or an already-staged current bridge.'
+        Fail 'Field preview staging requires the genuine public baseline, an explicitly accepted previous preview, or an already-staged current bridge.'
     }
 
     if ($isPreviousPreview) {
-        Assert-PreviousPreviewKnownGood
+        Assert-PreviousPreviewKnownGood ([int64]$previousPreviewMatches[0].versionCode)
     }
 
     $result.baselineVerified = $true
