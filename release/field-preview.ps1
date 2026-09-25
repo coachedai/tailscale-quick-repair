@@ -50,6 +50,7 @@ $result = [ordered]@{
     baselineVerified = $false
     bridgeVerified = $false
     bridgeApplied = $false
+    bridgeRefreshed = $false
     elevationRequested = $false
     elevationCancelled = $false
     protectedUnchangedOnCancel = $false
@@ -251,27 +252,16 @@ function Read-InstalledVersion {
     catch { Fail 'The installed Quick Repair version record is invalid.' }
 }
 
-function Stage-Bridge($ordinary) {
-    $installed = Read-InstalledVersion
-    if ([int64]$installed.versionCode -eq $ExpectedCode -and (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
-        $result.bridgeApplied = $true
-        return
-    }
-    if ([int64]$installed.versionCode -ne $BaselineCode -or [string]$installed.version -cne $BaselineVersion) {
-        Fail 'Field preview staging requires the genuine 5.2.1 starting version, or an already-staged 6.4 bridge.'
-    }
-    $result.baselineVerified = $true
-    Assert-NoQuickRepairUi
-    $installedUpdater = Join-Path $StateDir 'TailscaleQuickRepairUpdater.exe'
-    if (-not (Test-Path -LiteralPath $installedUpdater -PathType Leaf)) { Fail 'The installed 5.2.1 updater is missing.' }
+function Apply-BridgePackage($ordinary,[string]$UpdaterSource,[string]$UpdaterError) {
+    if (-not (Test-Path -LiteralPath $UpdaterSource -PathType Leaf)) { Fail $UpdaterError }
     $tempUpdater = Join-Path (New-WorkRoot 'TqrFieldUpdater') 'TailscaleQuickRepairUpdater.exe'
-    Copy-Item -LiteralPath $installedUpdater -Destination $tempUpdater -Force
+    Copy-Item -LiteralPath $UpdaterSource -Destination $tempUpdater -Force
     $type = [Reflection.Assembly]::LoadFile($tempUpdater).GetType('Program')
-    if (-not $type) { Fail 'The installed 5.2.1 updater host is not valid.' }
+    if (-not $type) { Fail 'The selected updater host is not valid.' }
     $manifest = Invoke-Private $type 'ReadPackageManifest' @($ordinary.root)
     if ([string]$manifest.Version -cne $ExpectedVersion -or [int64]$manifest.VersionCode -ne $ExpectedCode) { Fail 'The staged package identity is wrong.' }
     $files = Invoke-Private $type 'VerifyPackageFiles' @($ordinary.root,$manifest)
-    if (@($files).Count -lt 1) { Fail 'The released updater rejected the preview bridge.' }
+    if (@($files).Count -lt 1) { Fail 'The updater rejected the preview bridge.' }
     $lease = [bool](Invoke-Private $type 'TryAcquireOperationLock' @('update'))
     if (-not $lease) { Fail 'Another Quick Repair operation is active. No bridge was applied.' }
     $script:LeaseType = $type
@@ -283,10 +273,35 @@ function Stage-Bridge($ordinary) {
         $script:LeaseHeld = $false
     }
     $after = Read-InstalledVersion
-    if ([int64]$after.versionCode -ne $ExpectedCode -or -not (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
-        Fail 'The 5.2.1 updater did not leave the expected protected bridge state.'
+    if ([int64]$after.versionCode -ne $ExpectedCode -or [string]$after.version -cne $ExpectedVersion -or
+        -not (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
+        Fail 'The updater did not leave the expected protected bridge state.'
     }
     $result.bridgeApplied = $true
+}
+
+function Stage-Bridge($ordinary) {
+    $installed = Read-InstalledVersion
+    Assert-NoQuickRepairUi
+
+    if ([int64]$installed.versionCode -eq $ExpectedCode -and [string]$installed.version -ceq $ExpectedVersion -and
+        (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
+        # A field retry may be using a newer build of the same unpublished
+        # preview version. Refresh every verified user-level bridge byte from
+        # the current candidate before protected Setup is allowed to continue.
+        $candidateUpdater = Join-Path $ordinary.root 'app\TailscaleQuickRepairUpdater.exe'
+        Apply-BridgePackage $ordinary $candidateUpdater 'The verified candidate updater is missing.'
+        $result.bridgeRefreshed = $true
+        return
+    }
+
+    if ([int64]$installed.versionCode -ne $BaselineCode -or [string]$installed.version -cne $BaselineVersion) {
+        Fail 'Field preview staging requires the genuine 5.2.1 starting version, or an already-staged 6.4 bridge.'
+    }
+
+    $result.baselineVerified = $true
+    $installedUpdater = Join-Path $StateDir 'TailscaleQuickRepairUpdater.exe'
+    Apply-BridgePackage $ordinary $installedUpdater 'The installed 5.2.1 updater is missing.'
 }
 
 function Apply-Protected($protected,[string]$ExpectedRequesterSid) {
@@ -355,7 +370,24 @@ function Apply-Protected($protected,[string]$ExpectedRequesterSid) {
         [void](Invoke-Private $type 'StopQuickRepair')
 
         $result.stage = 'protected_files'
-        [void](Invoke-Private $type 'ApplyFiles' @($files,$work))
+        try {
+            [void](Invoke-Private $type 'ApplyFiles' @($files,$work))
+        } catch {
+            $message = [string]$_.Exception.Message
+            $code = [int]$_.Exception.HResult
+            if ($code -eq -2147024864) {
+                $result.stage = 'protected_files_locked'
+            } elseif ($code -eq -2147024891 -or $_.Exception -is [UnauthorizedAccessException]) {
+                $result.stage = 'protected_files_access'
+            } elseif ($message -match 'recovery|journal|backup') {
+                $result.stage = 'protected_files_recovery'
+            } elseif ($message -match 'temporary path|setup\.new') {
+                $result.stage = 'protected_files_temporary'
+            } elseif ($message -match 'unexpected content|unexpected type|redirected|unsupported link|legacy migration') {
+                $result.stage = 'protected_files_layout'
+            }
+            throw
+        }
 
         $result.stage = 'protected_integration'
         [void](Invoke-Private $type 'CompleteInstalledIntegration' @($peer,$startup,$true,[int64]$manifest.VersionCode))

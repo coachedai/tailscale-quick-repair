@@ -37,6 +37,12 @@ try{
     $protected=@(Get-ChildItem -LiteralPath $OutputDirectory -Filter 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.0-preview.zip' -File)
     Check ($ordinary.Count -eq 1 -and $protected.Count -eq 1) 'Exact 6.4 ordinary and protected packages are present'
 
+    $ordinaryRoot=Join-Path $lab 'candidate-ordinary'
+    Expand-Archive -LiteralPath $ordinary[0].FullName -DestinationPath $ordinaryRoot
+    $candidateSetup=Join-Path $ordinaryRoot 'app\TailscaleQuickRepairSetup.exe'
+    Check (Test-Path -LiteralPath $candidateSetup -PathType Leaf) 'Ordinary candidate contains the refreshed installed Setup host'
+    $candidateSetupHash=(Get-FileHash -LiteralPath $candidateSetup -Algorithm SHA256).Hash.ToLowerInvariant()
+
     $installReport=Join-Path $lab 'InstallLegacy.json'
     $psi=New-Object Diagnostics.ProcessStartInfo
     $psi.FileName=Join-Path $PSHOME 'powershell.exe';$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
@@ -85,6 +91,11 @@ try{
     $staged=Get-Content (Join-Path $app 'version.user.json') -Raw|ConvertFrom-Json
     Check ([int64]$staged.versionCode -eq 30000740 -and (Test-Path (Join-Path $app 'protected-update.json') -PathType Leaf)) 'Cancellation leaves only the verified 6.4 bridge staged for retry'
 
+    $installedSetup=Join-Path $app 'TailscaleQuickRepairSetup.exe'
+    Check ((Get-FileHash -LiteralPath $installedSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $candidateSetupHash) 'Initial bridge stages the exact candidate Setup host'
+    [IO.File]::WriteAllText($installedSetup,'stale same-version field bridge')
+    Check ((Get-FileHash -LiteralPath $installedSetup -Algorithm SHA256).Hash.ToLowerInvariant() -cne $candidateSetupHash) 'Fixture simulates an older build of the same 6.4 bridge'
+
     $childFailureName='field-preview-protected-child-failure.json'
     $childFailureReport=Join-Path $evidence $childFailureName
     $childFailurePsi=New-Object Diagnostics.ProcessStartInfo
@@ -97,6 +108,7 @@ try{
     $childFailureRaw=Get-Content -LiteralPath $childFailureReport -Raw
     $childFailure=$childFailureRaw|ConvertFrom-Json
     Check ($childFailure.stage -ceq 'protected_ci_failure_probe' -and $childFailure.requesterIdentityVerified -and -not $childFailure.protectedApplied) 'Parent retains the exact privacy-safe protected child stage'
+    Check ($childFailure.bridgeRefreshed -and (Get-FileHash -LiteralPath $installedSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $candidateSetupHash) 'Same-version field retry refreshes the exact candidate bridge before protected Setup'
     Check ($childFailure.error -ceq 'The elevated protected field stage failed. The recorded stage identifies the boundary.') 'Parent replaces elevated child failure text with a curated field error'
     Check ([string]::IsNullOrEmpty($env:USERPROFILE) -or -not $childFailureRaw.Contains($env:USERPROFILE)) 'Protected child failure result does not persist the local user profile path'
     foreach($name in $protectedBaseline.Keys){
@@ -114,7 +126,7 @@ try{
     Check ($child.WaitForExit(180000) -and $child.ExitCode -eq 0 -and (Test-Path -LiteralPath $report -PathType Leaf)) 'Field preview retry completes its disposable no-UAC protected core path'
     $child.Dispose();$child=$null
     $field=Get-Content -LiteralPath $report -Raw|ConvertFrom-Json
-    Check ($field.passed -is [bool] -and $field.passed -and -not $field.baselineVerified -and $field.bridgeVerified -and $field.bridgeApplied) 'Field preview retry reuses the staged bridge without pretending the baseline was reverified'
+    Check ($field.passed -is [bool] -and $field.passed -and -not $field.baselineVerified -and $field.bridgeVerified -and $field.bridgeApplied -and $field.bridgeRefreshed) 'Field preview retry refreshes the staged bridge without pretending the baseline was reverified'
     Check ($field.requesterIdentityVerified -and $field.protectedPackageVerified -and $field.protectedApplied) 'Field preview retry records same-user protected package completion'
     Check (-not $field.restartAcknowledged) 'CI no-relaunch mode never manufactures physical restart acknowledgement'
     Check (-not(Test-Path (Join-Path $app 'protected-update.json'))) 'Protected completion removes the exact bridge marker'

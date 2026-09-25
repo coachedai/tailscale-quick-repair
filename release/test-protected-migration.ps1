@@ -188,6 +188,21 @@ try{
     [IO.Directory]::Move($legacyArchive,(Join-Path $work 'long-lived-legacy-archive'))
     Archive-Fixture 'long-lived-layout'
 
+    # Exact legacy names must not migrate outside a protected-update handoff.
+    New-Fixture
+    $noMarkerLegacy=Join-Path $program 'Repair-Tailscale.ps1'
+    [IO.File]::WriteAllText($noMarkerLegacy,'legacy evidence without a handoff marker')
+    $noMarkerHash=FileHash $noMarkerLegacy
+    $noMarkerApply=Join-Path $work 'legacy-without-marker';[void][IO.Directory]::CreateDirectory($noMarkerApply)
+    $refused=$false
+    try{[void](Invoke-Setup 'ApplyFiles' @($verified,$noMarkerApply))}catch{
+        $ex=$_.Exception;while($ex.InnerException){$ex=$ex.InnerException}
+        if($ex -is [IO.IOException] -or $ex -is [UnauthorizedAccessException]){$refused=$true}else{throw}
+    }
+    Check $refused 'Known legacy content is refused when no protected handoff marker exists'
+    Check ((FileHash $noMarkerLegacy) -ceq $noMarkerHash -and -not(Test-Path -LiteralPath $legacyArchive)) 'No-marker refusal preserves legacy evidence in place'
+    Archive-Fixture 'legacy-without-marker'
+
     # Even with a valid protected handoff marker, an unrelated top-level name
     # must block before any known legacy entry is moved.
     New-Fixture
