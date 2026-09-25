@@ -37,6 +37,10 @@ try{
     $protected=@(Get-ChildItem -LiteralPath $OutputDirectory -Filter 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.0-preview.zip' -File)
     Check ($ordinary.Count -eq 1 -and $protected.Count -eq 1) 'Exact 6.4 ordinary and protected packages are present'
 
+    $fieldSource=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'field-preview.ps1'))
+    Check ($fieldSource -notmatch 'Start-Process[^\r\n]+-PassThru\s+-Wait') 'Field preview never waits on the relaunched Quick Repair descendant tree'
+    Check ($fieldSource -match '\.WaitForExit\(180000\)') 'Field preview bounds the direct protected-child wait'
+
     $ordinaryRoot=Join-Path $lab 'candidate-ordinary'
     Expand-Archive -LiteralPath $ordinary[0].FullName -DestinationPath $ordinaryRoot
     $candidateSetup=Join-Path $ordinaryRoot 'app\TailscaleQuickRepairSetup.exe'

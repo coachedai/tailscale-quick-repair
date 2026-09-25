@@ -470,9 +470,20 @@ try {
         try {
             if ($CiProtectedChildFailureProbe) {
                 $probeWorkingDirectory = Join-Path $env:WINDIR 'System32'
-                $process = Start-Process -FilePath $powershell -ArgumentList $args -WorkingDirectory $probeWorkingDirectory -PassThru -Wait -ErrorAction Stop
+                $process = Start-Process -FilePath $powershell -ArgumentList $args -WorkingDirectory $probeWorkingDirectory -PassThru -ErrorAction Stop
             } else {
-                $process = Start-Process -FilePath $powershell -ArgumentList $args -WorkingDirectory $OutputDirectory -Verb RunAs -PassThru -Wait -ErrorAction Stop
+                $process = Start-Process -FilePath $powershell -ArgumentList $args -WorkingDirectory $OutputDirectory -Verb RunAs -PassThru -ErrorAction Stop
+            }
+
+            # Start-Process -Wait on Windows can wait for the descendant process
+            # tree. Protected Setup intentionally relaunches resident Quick Repair,
+            # so waiting that way can hold the field console open indefinitely.
+            # Wait only for the direct elevated child, with a bounded timeout.
+            if (-not $process.WaitForExit(180000)) {
+                $result.stage = 'protected_child_timeout'
+                $result.error = 'The elevated protected field stage did not exit within the allowed time.'
+                Save-Result
+                throw 'The protected field stage timed out.'
             }
         } catch {
             if (-not $CiProtectedChildFailureProbe -and ($_.Exception.HResult -eq -2147467259 -or $_.Exception.Message -match 'cancel')) {
