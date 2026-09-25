@@ -110,7 +110,7 @@ try{
     $scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();$folder=$scheduler.GetFolder('\')
     foreach($name in $taskNames){$exists=$false;try{[void]$folder.GetTask($name);$exists=$true}catch{};Check (-not $exists) 'No pre-existing product task is reused'}
 
-    $rc1Setup=[Reflection.Assembly]::LoadFile((Join-Path $rc1Root 'app\TailscaleQuickRepairSetup.exe')).GetType('PublicSetupHost')
+    $rc1Setup=[Reflection.Assembly]::Load([IO.File]::ReadAllBytes((Join-Path $rc1Root 'app\TailscaleQuickRepairSetup.exe'))).GetType('PublicSetupHost')
     Check ($null -ne $rc1Setup) 'Published RC1 Setup host loads from the pinned package'
     $lease=[bool](Invoke-Private $rc1Setup 'TryAcquireOperationLock' @('setup'))
     Check $lease 'Published RC1 Setup acquires its native operation lease'
@@ -155,7 +155,7 @@ try{
 
     $tempUpdater=Join-Path $lab 'RC1-Updater.exe'
     Copy-Item (Join-Path $app 'TailscaleQuickRepairUpdater.exe') $tempUpdater
-    $updater=[Reflection.Assembly]::LoadFile($tempUpdater).GetType('Program')
+    $updater=[Reflection.Assembly]::Load([IO.File]::ReadAllBytes($tempUpdater)).GetType('Program')
     Check ($null -ne $updater) 'Published RC1 updater loads from a detached copy'
     $candidateManifest=Invoke-Private $updater 'ReadPackageManifest' @($ordinaryRoot)
     $candidateFiles=Invoke-Private $updater 'VerifyPackageFiles' @($ordinaryRoot,$candidateManifest)
@@ -176,7 +176,7 @@ try{
 
     $detachedSetup=Join-Path $lab 'RC2-Setup.exe'
     Copy-Item (Join-Path $app 'TailscaleQuickRepairSetup.exe') $detachedSetup
-    $setup=[Reflection.Assembly]::LoadFile($detachedSetup).GetType('PublicSetupHost')
+    $setup=[Reflection.Assembly]::Load([IO.File]::ReadAllBytes($detachedSetup)).GetType('PublicSetupHost')
     Check ($null -ne $setup) 'Staged RC2 Setup host loads from a detached copy'
     $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     [void](Invoke-Private $setup 'RequireRequesterIdentity' @($sid))
