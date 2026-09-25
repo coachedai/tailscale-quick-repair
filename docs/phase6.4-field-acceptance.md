@@ -71,11 +71,15 @@ The first pass is complete only when:
 - the restart acknowledgement is cleared by that reopened candidate;
 - there are no PowerShell/console flashes from normal product operation;
 - the existing target and startup preference are preserved;
-- Tailscale remains signed in and ProtonVPN/network settings are untouched;
+- Tailscale remains signed in and other VPN/network settings are untouched;
 - Auto Repair remains off until the initial installed state is checked.
 
 ## Follow-up physical acceptance
 
-After the first upgrade passes, test UAC cancel/retry, normal close-to-tray and tray Exit, reboot/logon, sleep/resume, Wi-Fi transitions, ProtonVPN disconnect/reconnect/transition behavior, authenticated local-backend recovery, and finally guarded Auto Repair behavior.
+After the first upgrade passes, test UAC cancel/retry, normal close-to-tray and tray Exit, reboot/logon, sleep/resume, Wi-Fi transitions, VPN coexistence, authenticated local-backend recovery, and finally guarded Auto Repair behavior.
+
+VPN coexistence is **vendor-neutral**. Proton VPN may be used as one real-machine representative, but it is not a product dependency or special case. When practical, exercise representative transitions from more than one family: a WireGuard/Wintun-style client, an OpenVPN/TAP/TUN-style client, and a corporate/full-tunnel client. Split-tunnel/full-tunnel and kill-switch transitions are useful additional cases when the installed VPN supports them. Do not install or configure unrelated third-party VPN software merely to satisfy this field check.
+
+A VPN transition may cause Quick Repair to settle and perform a delayed **local** recheck. It must not, by itself, authorise a repair. Passing coexistence means Quick Repair does not stop/restart another VPN service or process, change its adapter, route or DNS configuration, disable a kill switch, or perform a broad Windows network reset. An unrecognised VPN is still safe because VPN detection is optional read-only context and is not part of Auto Repair policy.
 
 Do not interpret remote peer unavailability as a repair trigger. Optional diagnostics remain read-only and must not influence core health or automatic recovery.

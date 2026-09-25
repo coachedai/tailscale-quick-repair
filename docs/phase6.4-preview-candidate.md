@@ -18,7 +18,7 @@ This candidate packages the completed Phase 6 engineering work into a clearly ve
 
 ## Field acceptance before public release
 
-The preview is intended to close the few behaviors that hosted Windows runners cannot fully certify: physical UAC approve/cancel/retry, real desktop suspend/resume and VPN/network transitions, and authenticated local-backend recovery.
+The preview is intended to close the few behaviors that hosted Windows runners cannot fully certify: physical UAC approve/cancel/retry, real desktop suspend/resume and vendor-neutral VPN/network transitions, and authenticated local-backend recovery.
 
 The approving administrator must currently be the same Windows account that launched Quick Repair. Using separate administrator credentials is intentionally refused so per-user state is never written into the wrong profile.
 

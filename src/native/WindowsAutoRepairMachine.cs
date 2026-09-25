@@ -45,6 +45,11 @@ namespace Tqr
         }
         private static string NetworkStamp()
         {
+            // Every non-Tailscale interface contributes only to an in-memory
+            // continuity stamp. A Wi-Fi/VPN/adapter transition invalidates this
+            // machine instance so a stale repair cannot continue across a network
+            // change. No vendor is interpreted and no adapter, route or DNS state
+            // is changed or persisted here.
             try
             {
                 List<string> parts=new List<string>();

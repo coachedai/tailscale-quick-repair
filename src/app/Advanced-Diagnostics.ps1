@@ -44,21 +44,746 @@ function Read-Probe {
     if($remaining -lt 100){$r=New-Object Tqr.DiagnosticCommand;$r.TimedOut=$true;return $r}
     return [Tqr.DiagnosticAnalysis]::Run($Cli,$Type,$Peer,[Math]::Min($LimitMs,$remaining))
 }
-function Detect-OtherVpns {
-    # Presence only: installed services do not prove a VPN is connected or conflicting.
-    $known=[ordered]@{
-        ProtonVPN=@('protonvpn','protonvpnservice');NordVPN=@('nordvpn','nordvpn-service')
-        WireGuard=@('wireguard');OpenVPN=@('openvpn','openvpnservice');Mullvad=@('mullvad','mullvad-daemon')
+function Match-VpnSoftware {
+    param([string[]]$Names)
+    # Fixed labels only. Raw process/service names never leave this function.
+    # Detection is best-effort context for Diagnostics and is never a health or repair input.
+    $rules=@(
+        [pscustomobject]@{label='Proton VPN';patterns=@('^protonvpn(?:service|\.wireguardservice)?
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
     }
-    $found=@()
-    foreach($label in $known.Keys){
-        foreach($name in $known[$label]){
-            if((Get-Process -Name $name -ErrorAction SilentlyContinue) -or (Get-Service -Name $name -ErrorAction SilentlyContinue)){
-                $found+=$label;break
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+,'^proton vpn(?: service)?
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='NordVPN';patterns=@('^nordvpn(?:-service|service)?
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+,'^nordvpn(?: service)?
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='Mullvad';patterns=@('^mullvad(?:-daemon|daemon)?
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+,'^mullvad vpn(?: service)?
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='ExpressVPN';patterns=@('^expressvpn(?:service|systemservice)?
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+,'^expressvpn(?: service)?
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='Surfshark';patterns=@('^surfshark(?:service| service)?
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='Private Internet Access';patterns=@('^(?:pia-client|pia-service|private internet access(?: service)?)
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='Windscribe';patterns=@('^windscribe(?:service| service)?
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='IVPN';patterns=@('^ivpn(?:service|-service| client| service)?
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='TunnelBear';patterns=@('^tunnelbear.*
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='CyberGhost';patterns=@('^cyberghost.*
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='OpenVPN';patterns=@('^openvpn(?:service.*|serv.*| connect)?
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='WireGuard';patterns=@('^wireguard(?:manager|service.*| manager)?
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='Cisco Secure Client';patterns=@('^(?:vpnagent|csc_vpnagent|cisco secure client(?: vpn)?)
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='GlobalProtect';patterns=@('^(?:pangps|pangpa|globalprotect|globalprotect service)
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='FortiClient VPN';patterns=@('^forti(?:client|vpn).*
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+        [pscustomobject]@{label='Ivanti Secure Access';patterns=@('^(?:pulsesvc|pulseui|ivanti secure access.*)
+try {
+    Publish 'Finding Tailscale' 5
+    Add-Type -Path (Join-Path $PSScriptRoot 'TailscaleQuickRepair.Operations.dll') -ErrorAction Stop
+    if(-not [Tqr.DiagnosticAnalysis]::ValidPeer($Peer)){throw 'Invalid peer input.'}
+    $cli=Get-TailscaleCli
+    if(-not $cli){
+        $script:Result.error='cli_missing';$script:Result.detail='The diagnostic CLI was not found. No network settings were changed.'
+        Publish 'Complete' 100 $true 'warn' 'Diagnostics could not find the Tailscale CLI.'
+        exit 0
+    }
+    Publish 'Inspecting network conditions' 15
+    $net=[Tqr.DiagnosticAnalysis]::ParseNetwork((Read-Probe $cli 'netcheck' 8000))
+    foreach($name in @('udp','ipv4','ipv6','nearestDerp','mapping','portMapping')){$script:Result[$name]=[string]$net.$name}
+    $script:Result.netcheckStatus=$net.status
+    Publish 'Probing the peer path' 40
+    $disco=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'disco'),'disco')
+    $script:Result.disco=$disco.Status;$script:Result.path=$disco.Path;$script:Result.latency=$disco.Latency
+    Publish 'Probing the tunnel' 55
+    $tunnel=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'tsmp'),'tsmp');$script:Result.tsmp=$tunnel.Status
+    Publish 'Probing ICMP' 70
+    $icmp=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'icmp'),'icmp');$script:Result.icmp=$icmp.Status
+    Publish 'Probing Peer API' 85
+    $api=[Tqr.DiagnosticAnalysis]::ParseProbe((Read-Probe $cli 'peerapi'),'peerapi');$script:Result.peerApi=$api.Status
+    $script:Result.otherVpns=@(Detect-OtherVpns)
+    $verdict=[Tqr.DiagnosticAnalysis]::Explain($net,$disco,$tunnel,$icmp,$api)
+    $script:Result.detail=$verdict.Detail
+    if($script:Result.otherVpns.Count -gt 0){$script:Result.detail+=' Detected VPN software is not evidence of an active conflict.'}
+    Publish 'Complete' 100 $true $verdict.Severity $verdict.Summary
+} catch {
+    $script:Result.error='inspection_incomplete'
+    $script:Result.detail='One or more diagnostic steps could not complete. The main connection check and network settings were not changed.'
+    Publish 'Complete' 100 $true 'warn' 'Diagnostics could not complete every step.'
+}
+)}
+    )
+    $found=New-Object 'Collections.Generic.List[string]'
+    $seen=New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach($raw in @($Names)){
+        if([string]::IsNullOrWhiteSpace([string]$raw)){continue}
+        $name=([string]$raw).Trim()
+        $matched=$false
+        foreach($rule in $rules){
+            foreach($pattern in @($rule.patterns)){
+                if($name -match $pattern){
+                    if($seen.Add([string]$rule.label)){$found.Add([string]$rule.label)}
+                    $matched=$true
+                    break
+                }
             }
+            if($matched){break}
+        }
+        if(-not $matched -and $name -match '(?i)vpn|wireguard|openvpn'){
+            if($seen.Add('Other VPN software')){$found.Add('Other VPN software')}
         }
     }
-    return $found
+    return @($found.ToArray())
+}
+function Detect-OtherVpns {
+    # Presence only: installed/running software does not prove a VPN is connected or conflicting.
+    # Inventory is read-only and raw process/service names are not persisted.
+    $names=New-Object 'Collections.Generic.List[string]'
+    foreach($process in @(Get-Process -ErrorAction SilentlyContinue)){
+        try {$names.Add([string]$process.ProcessName)} catch {}
+        finally {try{$process.Dispose()}catch{}}
+    }
+    foreach($service in @(Get-Service -ErrorAction SilentlyContinue)){
+        try {
+            $names.Add([string]$service.Name)
+            $names.Add([string]$service.DisplayName)
+        } catch {}
+        finally {try{$service.Dispose()}catch{}}
+    }
+    return @(Match-VpnSoftware -Names @($names.ToArray()))
 }
 try {
     Publish 'Finding Tailscale' 5

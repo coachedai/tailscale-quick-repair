@@ -12,7 +12,7 @@ The preview version bump does not change repair permissions, network behavior or
 
 Automatic repair is local-only. Policy inputs are limited to the Tailscale service, service startup mode, the local Tailscale client and local backend state. Peer reachability, latency, routes, diagnostics and arbitrary error text cannot authorise automatic recovery.
 
-Intentional disconnect, sign-in, device approval and another-user states require attention and are preserved across later service loss. A disabled service is left disabled. Missing or uncertain installation state cannot mutate Windows. Automatic repair does not run `tailscale up`, reset adapters, perform broad Windows network resets or change unrelated VPN settings.
+Intentional disconnect, sign-in, device approval and another-user states require attention and are preserved across later service loss. A disabled service is left disabled. Missing or uncertain installation state cannot mutate Windows. Automatic repair does not run `tailscale up`, reset adapters, alter DNS/routes, perform broad Windows network resets or change unrelated VPN settings. VPN brand or protocol is not a policy input.
 
 Candidate faults require repeated comparable observations before action. Retry reservations use increasing cooldowns and stop after the incident retry limit. Recovery is reported only after explicit healthy local evidence; starting a task or completing a service action is not labelled as recovery.
 
@@ -44,7 +44,7 @@ The remaining work is intentionally narrow:
 
 - physical desktop/UAC field acceptance of approve, cancel, retry and relaunch behavior;
 - actual authenticated local-backend recovery and sustained-backend restart behavior without using a real user tailnet in automated CI;
-- broader suspend/resume and VPN/network lifecycle acceptance on a real desktop;
+- broader suspend/resume and vendor-neutral VPN/network lifecycle acceptance on a real desktop;
 - whole-PC/storage-interruption acceptance beyond the process-kill transaction tests;
 - decide whether separate-administrator credential support is added or remains an explicit same-account limitation;
 - final release-candidate review before Phase 6 is closed.

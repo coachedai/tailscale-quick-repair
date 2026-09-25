@@ -151,6 +151,10 @@ function HarmlessTask([string]$Name,[string]$TriggerId){
 }
 try{
     Add-Type -AssemblyName System.IO.Compression.FileSystem,System.ServiceProcess
+    $machineSource=[IO.File]::ReadAllText((Join-Path $repo 'src\native\WindowsAutoRepairMachine.cs'))
+    Check ($machineSource -notmatch '(?i)proton|nordvpn|mullvad|expressvpn|surfshark|openvpn|wireguard|globalprotect|forticlient|tunnelbear|cyberghost') 'Production Auto Repair contains no VPN-vendor-specific branch'
+    Check ($machineSource -notmatch '(?i)\bnetsh\b|\bwinsock\b|\bipconfig\b|set-netadapter|disable-netadapter|enable-netadapter|set-dnsclientserveraddress|clear-dnsclientcache|reset.*adapter') 'Production Auto Repair contains no generic adapter, DNS or Windows-network reset command path'
+    Check ($machineSource -match 'Comparison only in memory\.' -and $machineSource -match 'if\(nic\.Description\.IndexOf\("Tailscale"') 'Non-Tailscale interfaces are observed only as an in-memory continuity guard'
     $principal=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     Check ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) 'Disposable runner has native installation permission'
     Check ([Diagnostics.Process]::GetCurrentProcess().SessionId -gt 0) 'Acceptance runs in a real interactive user session'
