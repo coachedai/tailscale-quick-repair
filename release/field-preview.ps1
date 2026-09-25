@@ -332,6 +332,7 @@ function Retire-StaleFieldGuardianBaseline($candidate) {
     }
 
     $temp = $previousPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    $replaceBackup = $previousPath + '.' + [Guid]::NewGuid().ToString('N') + '.replace-backup'
     try {
         $bytes = [IO.File]::ReadAllBytes($snapshotPath)
         $stream = [IO.File]::Open($temp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
@@ -344,7 +345,12 @@ function Retire-StaleFieldGuardianBaseline($candidate) {
         }
 
         if (Test-Path -LiteralPath $previousPath) {
-            [IO.File]::Replace($temp,$previousPath,$null)
+            # .NET Framework on Windows does not accept a null backup path for
+            # File.Replace. Use a same-directory temporary backup so replacing
+            # an existing predecessor remains atomic, then discard that older
+            # predecessor only after the replacement succeeds.
+            [IO.File]::Replace($temp,$previousPath,$replaceBackup)
+            [IO.File]::Delete($replaceBackup)
         }
         else {
             [IO.File]::Move($temp,$previousPath)
@@ -354,6 +360,9 @@ function Retire-StaleFieldGuardianBaseline($candidate) {
     finally {
         if (Test-Path -LiteralPath $temp) {
             Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $replaceBackup) {
+            Remove-Item -LiteralPath $replaceBackup -Force -ErrorAction SilentlyContinue
         }
     }
 

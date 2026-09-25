@@ -159,7 +159,8 @@ try{
     $guardianSnapshot=Join-Path $app 'guardian-known-good.json'
     $guardianPrevious=Join-Path $app 'guardian-known-good.previous.json'
     $staleGuardianHash=('0' * 64) -join ''
-    Check ($staleGuardianHash -cne $candidateIntegrityHash) 'Fixture stale Guardian hash differs from the exact candidate manifest'
+    $olderGuardianHash=('f' * 64) -join ''
+    Check ($staleGuardianHash -cne $candidateIntegrityHash -and $olderGuardianHash -cne $candidateIntegrityHash) 'Fixture Guardian hashes differ from the exact candidate manifest'
     [ordered]@{
         schema=1
         versionCode=30000740
@@ -170,6 +171,17 @@ try{
         autoRepairAvailable=$true
         verifiedUtc=[DateTime]::UtcNow.ToString('o')
     }|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $guardianSnapshot -Encoding UTF8
+    [ordered]@{
+        schema=1
+        versionCode=30000621
+        integrityManifestSha256=$olderGuardianHash
+        verifiedReleaseFiles=1
+        startupEnabled=$true
+        repairEngineReady=$true
+        autoRepairAvailable=$true
+        verifiedUtc=[DateTime]::UtcNow.AddMinutes(-5).ToString('o')
+    }|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $guardianPrevious -Encoding UTF8
+    Check (Test-Path -LiteralPath $guardianPrevious -PathType Leaf) 'Fixture includes an existing Guardian predecessor before reconciliation'
 
     $reconcileReport=Join-Path $evidence 'field-preview-baseline-reconcile.json'
     $reconcilePsi=New-Object Diagnostics.ProcessStartInfo
@@ -185,7 +197,8 @@ try{
     Check ($reconcile.passed -and $reconcile.installedCandidateVerified -and $reconcile.integrityBaselineRetired -and $reconcile.restartAcknowledged) 'Field post-install reconciliation verifies exact installed bytes and retires only the stale preview baseline'
     Check (-not(Test-Path -LiteralPath $guardianSnapshot) -and (Test-Path -LiteralPath $guardianPrevious -PathType Leaf)) 'Post-install reconciliation leaves Guardian ready to establish the exact candidate baseline'
     $retiredGuardian=Get-Content -LiteralPath $guardianPrevious -Raw|ConvertFrom-Json
-    Check ([string]$retiredGuardian.integrityManifestSha256 -ceq $staleGuardianHash) 'Reconciliation preserves the previous same-version Guardian record'
+    Check ([string]$retiredGuardian.integrityManifestSha256 -ceq $staleGuardianHash) 'Reconciliation atomically replaces an existing predecessor with the stale same-version Guardian record'
+    Check (@(Get-ChildItem -LiteralPath $app -Filter 'guardian-known-good.previous.json.*.replace-backup' -File -ErrorAction SilentlyContinue).Count -eq 0) 'Reconciliation removes its temporary predecessor replacement backup'
 
     $passed=$true
 }catch{
