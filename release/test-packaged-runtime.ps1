@@ -32,7 +32,10 @@ try {
     $normalUi = [IO.File]::ReadAllText((Join-Path $normal 'app\Tailscale-Repair-UI.ps1'))
     $setupUi = [IO.File]::ReadAllText((Join-Path $setup 'app\Tailscale-Repair-UI.ps1'))
     Assert-That ($normalUi -ceq $setupUi) 'Update and protected Setup deliver the same final UI'
-    Assert-That ($normalUi.Contains('x:Name="ChangeTargetButton"') -and $normalUi.Contains("'--upgrade'")) 'Both delivery paths retain Change Target and protected-update routing'
+    Assert-That ($normalUi.Contains('x:Name="ChangeTargetButton"') -and
+        $normalUi.Contains('--upgrade --channel "') -and
+        $normalUi.Contains('--target-code ') -and
+        $normalUi.Contains('$script:updateManifestChannel')) 'Both delivery paths retain Change Target and channel-bound protected-update routing'
     $dll = Join-Path $normal 'app\TailscaleQuickRepair.Operations.dll'
     Add-Type -Path $dll
     $expectedVersion = Get-Content (Join-Path $normal 'version.json') -Raw | ConvertFrom-Json
