@@ -78,6 +78,8 @@ The first pass is complete only when:
 
 After the first upgrade passes, test UAC cancel/retry, normal close-to-tray and tray Exit, reboot/logon, sleep/resume, Wi-Fi transitions, VPN coexistence, authenticated local-backend recovery, and finally guarded Auto Repair behavior.
 
+Real reboot/logon and sleep/resume may be **deferred** when disrupting the field machine is impractical. A hosted disposable-Windows simulation can validate startup registration, the exact `--start-in-tray` packaged launch, no console/script-host child, and the delayed logon trigger without restarting the user's PC. That simulation is supporting evidence only and must not be recorded as a physical reboot or resume pass.
+
 VPN coexistence is **vendor-neutral**. Proton VPN may be used as one real-machine representative, but it is not a product dependency or special case. When practical, exercise representative transitions from more than one family: a WireGuard/Wintun-style client, an OpenVPN/TAP/TUN-style client, and a corporate/full-tunnel client. Split-tunnel/full-tunnel and kill-switch transitions are useful additional cases when the installed VPN supports them. Do not install or configure unrelated third-party VPN software merely to satisfy this field check.
 
 A VPN transition may cause Quick Repair to settle and perform a delayed **local** recheck. It must not, by itself, authorise a repair. Passing coexistence means Quick Repair does not stop/restart another VPN service or process, change its adapter, route or DNS configuration, disable a kill switch, or perform a broad Windows network reset. An unrecognised VPN is still safe because VPN detection is optional read-only context and is not part of Auto Repair policy.

@@ -26,6 +26,7 @@ $observations=New-Object 'Collections.Generic.List[object]'
 $passed=$false;$cleanupOK=$true;$stage='preflight';$failureType='';$failureCode=0;$reflectionBoundary='';$blockedStage='';$blockedBoundary=''
 $cleanupStage='';$cleanupFailureType='';$cleanupFailureCode=0
 $vendorInstalled=$false;$productOwned=$false;$vendorOwned=$false;$setupLease=$false
+$startupOwned=$false;$startupApp=$null
 $createdTasks=New-Object 'Collections.Generic.List[string]'
 $folderName='';$folder=$null;$scheduler=$null;$setupType=$null;$msi='';$vendorHash='';$repeatDelta=-1;$fallbackScheduledUtc='';$fallbackFirings=@();$firstDelaySeconds=-1
 $app=Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair'
@@ -129,6 +130,32 @@ function MarkerTimes([string]$Path){
         [DateTime]::ParseExact($_,'o',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind)
     })
 }
+if(-not ('TqrStartupWindowProbe' -as [type])){
+    Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class TqrStartupWindowProbe
+{
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    public static int CountVisibleTopLevelWindows(int processId)
+    {
+        int count = 0;
+        EnumWindows(delegate(IntPtr hWnd, IntPtr lParam)
+        {
+            uint pid;
+            GetWindowThreadProcessId(hWnd, out pid);
+            if(pid == (uint)processId && IsWindowVisible(hWnd)) count++;
+            return true;
+        }, IntPtr.Zero);
+        return count;
+    }
+}
+"@
+}
 function HarmlessTask([string]$Name,[string]$TriggerId){
     $definition=$scheduler.NewTask(0);$definition.Principal.UserId=$sid;$definition.Principal.LogonType=3;$definition.Principal.RunLevel=0
     $definition.Settings.Enabled=$true;$definition.Settings.MultipleInstances=2;$definition.Settings.ExecutionTimeLimit='PT1M'
@@ -168,6 +195,11 @@ try{
         $found=$false;try{[void]$rootFolder.GetTask($name);$found=$true}catch{}
         Check (-not $found) 'No pre-existing Quick Repair task is replaced'
     }
+    $startupRegistryPath='HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    $startupRegistryName='Tailscale Quick Repair'
+    $startupExisting=$null
+    try{$startupExisting=(Get-ItemProperty -LiteralPath $startupRegistryPath -Name $startupRegistryName -ErrorAction Stop).$startupRegistryName}catch{}
+    Check ($null -eq $startupExisting) 'Disposable runner has no pre-existing Quick Repair startup registration'
     $zip=@(Get-ChildItem -LiteralPath $OutputDirectory -Filter '*SetupPackage-*.zip')
     Check ($zip.Count -eq 1) 'One exact full Setup development package is available'
     Stage 'verify exact package before native installation'
@@ -202,6 +234,43 @@ try{
         if((Get-FileHash -LiteralPath $target).Hash -ine $f.sha256){throw 'Installed payload differs from verified Setup package.'}
     }
     Check $true 'Actual Setup file application installs and verifies every app and protected file'
+
+    Stage 'simulate Windows startup launch without rebooting the disposable runner'
+    [void](Setup 'ConfigureStartup' @($true));$startupOwned=$true
+    $startupExe=Join-Path $app 'TailscaleQuickRepair.exe'
+    $expectedStartup='"'+$startupExe+'" --start-in-tray'
+    $startupValue=(Get-ItemProperty -LiteralPath $startupRegistryPath -Name $startupRegistryName -ErrorAction Stop).$startupRegistryName
+    Check ([string]$startupValue -ceq $expectedStartup -and [bool](Setup 'IsStartupEnabled' @())) 'Actual Setup writes the exact per-user --start-in-tray startup command'
+
+    $beforeShellChildren=@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue|Where-Object {$_.Name -in @('powershell.exe','pwsh.exe','cmd.exe','conhost.exe','wscript.exe','cscript.exe')}|Select-Object -ExpandProperty ProcessId)
+    $startupApp=Start-Process -FilePath $startupExe -ArgumentList '--start-in-tray' -PassThru
+    $sampleClock=[Diagnostics.Stopwatch]::StartNew();$samples=0;$maxVisible=0
+    while($sampleClock.Elapsed.TotalSeconds -lt 6){
+        $startupApp.Refresh()
+        if($startupApp.HasExited){break}
+        $visible=[TqrStartupWindowProbe]::CountVisibleTopLevelWindows($startupApp.Id)
+        if($visible -gt $maxVisible){$maxVisible=$visible}
+        $samples++
+        Start-Sleep -Milliseconds 100
+    }
+    $startupApp.Refresh()
+    Check (-not $startupApp.HasExited -and $samples -ge 20) 'Exact packaged --start-in-tray launch remains resident during startup simulation'
+    Check ($maxVisible -eq 0) 'Start-in-tray simulation exposes no visible top-level Quick Repair window during sampled startup'
+
+    $descendants=@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue|Where-Object {$_.ParentProcessId -eq $startupApp.Id})
+    $consoleChildren=@($descendants|Where-Object {$_.Name -in @('powershell.exe','pwsh.exe','cmd.exe','conhost.exe','wscript.exe','cscript.exe')})
+    Check ($consoleChildren.Count -eq 0) 'Native startup path spawns no console or script-host child process'
+
+    try{
+        [void]$startupApp.CloseMainWindow()
+        if(-not $startupApp.WaitForExit(2500)){$startupApp.Kill();[void]$startupApp.WaitForExit(5000)}
+    }finally{$startupApp.Dispose();$startupApp=$null}
+
+    [void](Setup 'ConfigureStartup' @($false));$startupOwned=$false
+    $startupAfter=$null
+    try{$startupAfter=(Get-ItemProperty -LiteralPath $startupRegistryPath -Name $startupRegistryName -ErrorAction Stop).$startupRegistryName}catch{}
+    Check ($null -eq $startupAfter -and -not [bool](Setup 'IsStartupEnabled' @())) 'Actual Setup can remove only its own startup registration after the simulation'
+
     [void](Setup 'RegisterRepairTask' @());$createdTasks.Add('Tailscale Quick Repair')
     [void](Setup 'RegisterAutoRepairTask' @());$createdTasks.Add('Tailscale Quick Repair Auto Monitor')
     [void](Setup 'ReleaseOperationLock' @());$setupLease=$false
@@ -215,6 +284,13 @@ try{
     $user=[string]$d.Principal.UserId
     $actualSid=if($user -match '^S-1-'){$user}else{([Security.Principal.NTAccount]::new($user)).Translate([Security.Principal.SecurityIdentifier]).Value}
     Check ($actualSid -ceq $sid -and $d.Principal.LogonType -eq 3 -and $d.Principal.RunLevel -eq 1) 'Actual Setup registers the protected task for the same interactive user at highest run level'
+    $logonTriggers=@()
+    for($i=1;$i -le $d.Triggers.Count;$i++){
+        $trigger=$d.Triggers.Item($i)
+        if([string]$trigger.Id -ceq 'LocalLogon'){$logonTriggers+=,$trigger}
+    }
+    Check ($logonTriggers.Count -eq 1 -and [string]$logonTriggers[0].UserId -ceq $sid -and [string]$logonTriggers[0].Delay -ceq 'PT30S') 'Actual protected monitor retains one delayed same-user logon trigger'
+    Check (-not [bool]$d.Settings.WakeToRun -and -not [bool]$d.Settings.StartWhenAvailable) 'Logon/background simulation does not wake the PC or replay missed fallback runs'
     Check ($d.Actions.Count -eq 1 -and $d.Actions.Item(1).Arguments -ceq ('"'+(Join-Path $program 'Launch-Auto-Repair-Monitor.vbs')+'"')) 'Actual protected task targets the reviewed fixed hidden launcher'
     $folderName='TqrNativeAcceptance-'+[Guid]::NewGuid().ToString('N');$folder=$rootFolder.CreateFolder($folderName,$null)
     Stage 'download and validate fixed official vendor MSI'
@@ -344,6 +420,17 @@ try{
     Write-Host ('Native Windows gate blocked at: '+$stage+'; type='+$failureType+'; code='+$failureCode)
 }finally{
     # Only this empty-runner suite's own installation and tasks are cleaned up.
+    if($startupApp){
+        try{$startupApp.Refresh();if(-not $startupApp.HasExited){$startupApp.Kill();[void]$startupApp.WaitForExit(5000)}}catch{Mark-CleanupFailure 'stop_startup_fixture_app' $_.Exception}
+        try{$startupApp.Dispose()}catch{}
+        $startupApp=$null
+    }
+    if($startupOwned){
+        try{
+            Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'Tailscale Quick Repair' -ErrorAction SilentlyContinue
+            $startupOwned=$false
+        }catch{Mark-CleanupFailure 'remove_startup_fixture_registration' $_.Exception}
+    }
     # Never reset a policy/ownership marker to make an assertion pass.
     if($timingContext){
         try{$timingReport=Read-NativeRecurrenceTrace $timingContext $repeat.Task}catch{$timingError=$_.Exception.HResult;Mark-CleanupFailure 'read_recurrence_trace' $_.Exception}
@@ -382,11 +469,11 @@ try{
     if($vendorOwned -and (Test-TailscaleServicePresent)){Mark-CleanupFailure 'vendor_service_present_after_cleanup'}
     $cases.Add([pscustomobject]@{name='Only owned native lab tasks and vendor installation are cleaned up';passed=$cleanupOK})
     [pscustomobject]@{
-        passed=($passed -and $cleanupOK);source=$env:GITHUB_SHA;scope='Real empty GitHub-hosted Windows machine: unmodified Setup cores, installed worker and official unauthenticated vendor service; real scheduled dispatch and full recurrence';
+        passed=($passed -and $cleanupOK);source=$env:GITHUB_SHA;scope='Real empty GitHub-hosted Windows machine: unmodified Setup cores, exact packaged startup-in-tray simulation, installed worker and official unauthenticated vendor service; real scheduled dispatch and full recurrence';
         vendorVersion='1.102.3';vendorSha256=$vendorHash;recurrenceSeconds=$repeatDelta;fallbackScheduledUtc=$fallbackScheduledUtc;fallbackFirings=$fallbackFirings;firstDelaySeconds=$firstDelaySeconds;cases=@($cases.ToArray());observations=@($observations.ToArray());
         failureStage=$(if($passed){''}else{$blockedStage});failureType=$failureType;failureCode=$failureCode;reflectionBoundary=$blockedBoundary;timingTraceError=$timingError;
         cleanupStage=$cleanupStage;cleanupFailureType=$cleanupFailureType;cleanupFailureCode=$cleanupFailureCode;
-        limits=@('No tailnet login, authentication key or remote peer','Fresh stopped-service policy is an explicitly separate state fixture; observed-intent state is preserved','Real service event uses the exact Setup subscription with a harmless action; actual monitor task dispatch is a separate test','Setup verification/application/registration cores execute natively; interactive UAC, alternate-admin, restart/rollback and full entry are not certified','Real client reopen is exercised without authentication; authenticated recovery remains separate','No actual sleep/resume, logon or VPN transition is induced','No raw vendor logs, host paths, usernames, addresses, private state or MSI is uploaded; transient files remain only on the disposable runner')
+        limits=@('No tailnet login, authentication key or remote peer','Fresh stopped-service policy is an explicitly separate state fixture; observed-intent state is preserved','Real service event uses the exact Setup subscription with a harmless action; actual monitor task dispatch is a separate test','Setup verification/application/registration cores execute natively; interactive UAC, alternate-admin, restart/rollback and full entry are not certified','Real client reopen is exercised without authentication; authenticated recovery remains separate','No actual reboot, sleep/resume, logoff/logon or VPN transition is induced; startup command, tray launch and logon-trigger behavior are simulated in-session on the disposable runner','No raw vendor logs, host paths, usernames, addresses, private state or MSI is uploaded; transient files remain only on the disposable runner')
     }|ConvertTo-Json -Depth 10|Set-Content (Join-Path $evidence 'native-windows-results.json') -Encoding UTF8
 }
 if(-not $passed -or -not $cleanupOK){$why=if(-not $passed){$blockedStage}else{$cleanupStage};throw ('Native Windows acceptance remains blocked: '+$why)}

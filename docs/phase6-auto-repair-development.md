@@ -38,13 +38,19 @@ Current native acceptance covers the genuine published 5.2.1 package, exact pack
 
 Earlier failed runs remain preserved in the pull-request history. In particular, Task Scheduler catch-up behavior was traced to Event 114 and fixed by disabling missed-run replay; the timing gate itself was not widened.
 
+## Hosted startup/logon simulation
+
+A disposable Windows runner now simulates the software-side reboot/logon path without rebooting a user's PC. It invokes the actual Setup startup-registration core, launches the exact packaged GUI with `--start-in-tray`, samples for visible top-level windows, verifies no console/script-host child process appears, and inspects the protected delayed same-user logon trigger. The fixture is removed afterward.
+
+This is supporting evidence only. It does **not** certify a real Windows reboot, real sign-out/sign-in, real sleep/resume, firmware/driver resume behavior, or interactions with unrelated desktop applications. Those physical lifecycle gates remain deferred until a suitable real-machine test window is available.
+
 ## Final Phase 6 acceptance still required
 
 The remaining work is intentionally narrow:
 
 - physical desktop/UAC field acceptance of approve, cancel, retry and relaunch behavior;
 - actual authenticated local-backend recovery and sustained-backend restart behavior without using a real user tailnet in automated CI;
-- broader suspend/resume and vendor-neutral VPN/network lifecycle acceptance on a real desktop;
+- broader suspend/resume and vendor-neutral VPN/network lifecycle acceptance on a real desktop; real reboot/logon and sleep/resume remain deferred physical gates even when hosted startup/logon simulation passes;
 - whole-PC/storage-interruption acceptance beyond the process-kill transaction tests;
 - decide whether separate-administrator credential support is added or remains an explicit same-account limitation;
 - final release-candidate review before Phase 6 is closed.
