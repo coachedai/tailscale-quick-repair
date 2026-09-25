@@ -110,6 +110,8 @@ jobs:
           @(
             'Tailscale Quick Repair 3.0.0 RC1 - one-time field bridge',
             '',
+            'Validated starting preview: 3.0.0-phase6.4.1-preview / 30000741 (plus the other explicitly accepted baselines in the acceptance notes).',
+            '',
             '1. In Quick Repair, make sure Auto Repair is OFF.',
             '2. Exit Quick Repair from the tray icon (do not just close the window).',
             '3. Right-click START-RC1-FIELD-BRIDGE.ps1 and choose Run with PowerShell.',
