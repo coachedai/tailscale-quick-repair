@@ -267,11 +267,9 @@ jobs:
           $version = Get-Content version.json -Raw | ConvertFrom-Json
           $v = [string]$version.version
           $normal = @(Get-ChildItem preview-dist -Filter "TailscaleQuickRepair-$v.zip" -File)
-          $bootstrap = @(Get-ChildItem preview-dist -Filter "TailscaleQuickRepair-Bootstrap-$v.exe" -File)
           $setupZip = @(Get-ChildItem preview-dist -Filter "TailscaleQuickRepair-SetupPackage-$v.zip" -File)
-          $setupExe = @(Get-ChildItem preview-dist -Filter "TailscaleQuickRepair-Setup-$v.exe" -File)
-          if ($normal.Count -ne 1 -or $bootstrap.Count -ne 1 -or $setupZip.Count -ne 1 -or $setupExe.Count -ne 1) { throw 'Exact validated Preview assets are missing.' }
-          foreach ($file in @($normal[0],$bootstrap[0],$setupZip[0],$setupExe[0])) {
+          if ($normal.Count -ne 1 -or $setupZip.Count -ne 1) { throw 'Exact validated Preview package assets are missing.' }
+          foreach ($file in @($normal[0],$setupZip[0])) {
             $sidecar = $file.FullName + '.sha256'
             if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) { throw ('Missing SHA-256 sidecar: ' + $file.Name) }
             $expected = (Get-Content -LiteralPath $sidecar -Raw).Trim().ToLowerInvariant()
@@ -299,15 +297,9 @@ jobs:
           $assets = @(
             (Get-Item "preview-dist\TailscaleQuickRepair-$v.zip"),
             (Get-Item "preview-dist\TailscaleQuickRepair-$v.zip.sha256"),
-            (Get-Item "preview-dist\TailscaleQuickRepair-Bootstrap-$v.exe"),
-            (Get-Item "preview-dist\TailscaleQuickRepair-Bootstrap-$v.exe.sha256"),
             (Get-Item "preview-dist\TailscaleQuickRepair-SetupPackage-$v.zip"),
-            (Get-Item "preview-dist\TailscaleQuickRepair-SetupPackage-$v.zip.sha256"),
-            (Get-Item "preview-dist\TailscaleQuickRepair-Setup-$v.exe"),
-            (Get-Item "preview-dist\TailscaleQuickRepair-Setup-$v.exe.sha256")
+            (Get-Item "preview-dist\TailscaleQuickRepair-SetupPackage-$v.zip.sha256")
           )
-          $metadata = Get-Item preview-dist\public-setup-metadata.json -ErrorAction SilentlyContinue
-          if ($metadata) { $assets += $metadata }
           $notes = [string]$publish.notes
           if ([string]::IsNullOrWhiteSpace($notes)) { $notes = "Tailscale Quick Repair $v" }
           $notesFile = Join-Path $env:RUNNER_TEMP 'preview-release-notes.txt'
@@ -350,9 +342,7 @@ jobs:
           $v = [string]$version.version
           $code = [int64]$version.versionCode
           $normal = Get-Item "preview-dist\TailscaleQuickRepair-$v.zip"
-          $bootstrap = Get-Item "preview-dist\TailscaleQuickRepair-Bootstrap-$v.exe"
           $setupZip = Get-Item "preview-dist\TailscaleQuickRepair-SetupPackage-$v.zip"
-          $setupExe = Get-Item "preview-dist\TailscaleQuickRepair-Setup-$v.exe"
           $tag = "v$v"
           $assetBase = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag"
           $manifest = [ordered]@{
@@ -367,9 +357,7 @@ jobs:
             protectedHandoff = [bool]$publish.protectedHandoff
             notes = [string]$publish.notes
             package = [ordered]@{url="$assetBase/$($normal.Name)";sha256=(Get-Content ($normal.FullName+'.sha256') -Raw).Trim().ToLowerInvariant();size=[int64]$normal.Length}
-            bootstrap = [ordered]@{url="$assetBase/$($bootstrap.Name)";sha256=(Get-Content ($bootstrap.FullName+'.sha256') -Raw).Trim().ToLowerInvariant();size=[int64]$bootstrap.Length}
             setup = [ordered]@{url="$assetBase/$($setupZip.Name)";sha256=(Get-Content ($setupZip.FullName+'.sha256') -Raw).Trim().ToLowerInvariant();size=[int64]$setupZip.Length}
-            installer = [ordered]@{url="$assetBase/$($setupExe.Name)";sha256=(Get-Content ($setupExe.FullName+'.sha256') -Raw).Trim().ToLowerInvariant();size=[int64]$setupExe.Length}
           }
           $path = Join-Path $env:RUNNER_TEMP 'preview.json'
           [IO.File]::WriteAllText($path,($manifest|ConvertTo-Json -Depth 7),(New-Object Text.UTF8Encoding($false)))

@@ -19,6 +19,13 @@ try{
     Check ((Count 'contents: write') -eq 1) 'Only one development job receives contents write permission'
     Check ($workflow.Contains('name: auto-repair-regression-packages') -and
            $workflow.Contains('Preview publisher reuses the exact validated package artifact')) 'Preview publisher consumes the exact upstream-tested product artifact'
+    $jobStartForAssets=$workflow.IndexOf('  preview-publish:',[StringComparison]::Ordinal)
+    if($jobStartForAssets -lt 0){throw 'Preview publisher job boundary missing.'}
+    $assetJob=$workflow.Substring($jobStartForAssets)
+    Check ($assetJob.Contains('TailscaleQuickRepair-SetupPackage-$v.zip') -and
+           $assetJob.Contains('TailscaleQuickRepair-$v.zip') -and
+           -not $assetJob.Contains('TailscaleQuickRepair-Bootstrap-$v.exe') -and
+           -not $assetJob.Contains('TailscaleQuickRepair-Setup-$v.exe')) 'Preview prerelease exposes only in-app package ZIPs and their sidecars'
     Check ($workflow.Contains('--prerelease') -and
            $workflow.Contains("'^3\.0\.0-rc\.[1-9][0-9]*$'")) 'Preview publisher only creates explicit 3.0 RC GitHub prereleases'
     Check ($workflow.Contains('refs/heads/preview') -and
