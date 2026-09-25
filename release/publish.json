@@ -1,10 +1,10 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-phase6.4.3-preview",
-  "versionCode": 30000743,
+  "version": "3.0.0-rc.1",
+  "versionCode": 30001001,
   "requiresSetup": false,
   "publicInstaller": true,
-  "notes": "Preview bootstrap: opt-in Early-access updates with fixed trusted manifests, exact target binding and channel-bound protected Setup handoff, plus true no-window startup-in-tray and Phase 6 Auto Repair hardening.",
+  "notes": "3.0.0 RC1: guarded local-only Auto Repair 2.0, vendor-neutral VPN coexistence, exact Tailscale-only adapter recovery, protected update handoff and interruption recovery, System Integrity Guardian, privacy-safe support export, connection intelligence, and true no-window startup-in-tray. Early access only.",
   "protectedHandoff": true
 }

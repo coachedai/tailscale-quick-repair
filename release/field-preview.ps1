@@ -16,13 +16,13 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version 2
 
-$ExpectedVersion = '3.0.0-phase6.4.3-preview'
-$ExpectedCode = [int64]30000743
+$ExpectedVersion = '3.0.0-rc.1'
+$ExpectedCode = [int64]30001001
 $ExpectedChannel = 'preview'
 $BaselineVersion = '3.0.0-phase5.2.1'
 $BaselineCode = [int64]30000621
-$PreviousPreviewVersion = '3.0.0-phase6.4.1-preview'
-$PreviousPreviewCode = [int64]30000741
+$PreviousPreviewVersion = '3.0.0-phase6.4.3-preview'
+$PreviousPreviewCode = [int64]30000743
 $GuardianSnapshotPath = Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair\guardian-known-good.json'
 $StateDir = Join-Path $env:LOCALAPPDATA 'TailscaleQuickRepair'
 $ProgramDir = Join-Path $env:ProgramData 'TailscaleQuickRepair'
@@ -114,7 +114,7 @@ function Expand-Candidate([string]$Zip,[bool]$AllowProgram,[bool]$RequireMarker)
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { Fail 'Candidate package manifest is missing.' }
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
     if ($manifest.schema -ne 1 -or [string]$manifest.version -cne $ExpectedVersion -or [int64]$manifest.versionCode -ne $ExpectedCode) {
-        Fail 'Candidate package identity does not match the Phase 6.4.3 preview.'
+        Fail 'Candidate package identity does not match the release-candidate preview.'
     }
     $declared = @($manifest.files)
     if ($declared.Count -lt 1) { Fail 'Candidate package contains no declared files.' }
@@ -329,7 +329,7 @@ function Get-InstalledCandidateTarget([string]$Relative) {
 function Assert-ExactInstalledCandidate($protected) {
     $installed = Read-InstalledVersion
     if ([string]$installed.version -cne $ExpectedVersion -or [int64]$installed.versionCode -ne $ExpectedCode) {
-        Fail 'Field reconciliation requires the exact installed Phase 6.4.3 preview.'
+        Fail 'Field reconciliation requires the exact installed release-candidate preview.'
     }
     if (Test-Path -LiteralPath $MarkerPath -PathType Leaf) {
         Fail 'Field reconciliation refused an unfinished protected-update marker.'
@@ -607,8 +607,8 @@ try {
     }
     if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) { Fail 'The validated candidate folder was not found.' }
     $OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
-    $ordinaryZip = Get-OneCandidate 'TailscaleQuickRepair-3.0.0-phase6.4.3-preview.zip'
-    $setupZip = Get-OneCandidate 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.3-preview.zip'
+    $ordinaryZip = Get-OneCandidate ('TailscaleQuickRepair-' + $ExpectedVersion + '.zip')
+    $setupZip = Get-OneCandidate ('TailscaleQuickRepair-SetupPackage-' + $ExpectedVersion + '.zip')
     $ordinary = Expand-Candidate $ordinaryZip $false $true
     $protected = Expand-Candidate $setupZip $true $false
     $result.bridgeVerified = $true
@@ -774,7 +774,7 @@ try {
     $result.passed = $true
     $result.stage = 'complete'
     Save-Result
-    Write-Host 'Phase 6.4.3 field preview completed successfully.'
+    Write-Host 'Release candidate field preview completed successfully.'
     exit 0
 }
 catch {

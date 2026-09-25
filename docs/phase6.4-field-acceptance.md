@@ -85,3 +85,8 @@ VPN coexistence is **vendor-neutral**. Proton VPN may be used as one real-machin
 A VPN transition may cause Quick Repair to settle and perform a delayed **local** recheck. It must not, by itself, authorise a repair. Passing coexistence means Quick Repair does not stop/restart another VPN service or process, change its adapter, route or DNS configuration, disable a kill switch, or perform a broad Windows network reset. An unrecognised VPN is still safe because VPN detection is optional read-only context and is not part of Auto Repair policy.
 
 Do not interpret remote peer unavailability as a repair trigger. Optional diagnostics remain read-only and must not influence core health or automatic recovery.
+
+
+## RC1 delivery note
+
+The intended user path after the 6.4.3 bootstrap is installed is **Early-access updates -> Check for updates -> Update now**. The field helper remains a developer acceptance path and is not the normal RC delivery mechanism.

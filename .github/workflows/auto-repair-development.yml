@@ -177,12 +177,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $v = [string](Get-Content version.json -Raw | ConvertFrom-Json).version
           $packages = @(
-            @(Get-ChildItem .\upgrade-dist -Filter 'TailscaleQuickRepair-3.0.0-phase6.4.3-preview.zip' -File),
-            @(Get-ChildItem .\upgrade-dist -Filter 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.3-preview.zip' -File)
+            @(Get-ChildItem .\upgrade-dist -Filter "TailscaleQuickRepair-$v.zip" -File),
+            @(Get-ChildItem .\upgrade-dist -Filter "TailscaleQuickRepair-SetupPackage-$v.zip" -File)
           )
           $packages = @($packages | ForEach-Object { $_ })
-          if ($packages.Count -ne 2) { throw 'Exact preview packages are required for field-helper isolation.' }
+          if ($packages.Count -ne 2) { throw 'Exact candidate packages are required for field-helper isolation.' }
           foreach ($package in $packages) {
             $archive = [IO.Compression.ZipFile]::OpenRead($package.FullName)
             try {
@@ -194,18 +195,19 @@ jobs:
               }
             } finally { $archive.Dispose() }
           }
-      - name: Assemble Phase 6.4.3 field preview pack
+      - name: Assemble current candidate field pack
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
+          $v = [string](Get-Content version.json -Raw | ConvertFrom-Json).version
           $pack = Join-Path $PWD 'field-preview-pack'
           if (Test-Path $pack) { Remove-Item $pack -Recurse -Force }
           New-Item -ItemType Directory -Path $pack | Out-Null
           Copy-Item .\release\field-preview.ps1 $pack
           Copy-Item .\docs\phase6.4-field-acceptance.md $pack
           foreach ($pattern in @(
-            'TailscaleQuickRepair-3.0.0-phase6.4.3-preview.zip',
-            'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.3-preview.zip'
+            "TailscaleQuickRepair-$v.zip",
+            "TailscaleQuickRepair-SetupPackage-$v.zip"
           )) {
             $item = @(Get-ChildItem .\upgrade-dist -Filter $pattern -File)
             if ($item.Count -ne 1) { throw ('Expected one validated field candidate: ' + $pattern) }
@@ -215,10 +217,10 @@ jobs:
             Copy-Item -LiteralPath $sidecar -Destination $pack
           }
           Set-Content -LiteralPath (Join-Path $pack 'candidate-source.txt') -Value '${{ github.sha }}' -Encoding ASCII
-      - name: Preserve Phase 6.4.3 field preview pack
+      - name: Preserve current candidate field pack
         uses: actions/upload-artifact@v4
         with:
-          name: phase6.4.3-field-preview
+          name: development-field-preview
           path: field-preview-pack/*
           if-no-files-found: error
       - name: Preserve released-upgrade evidence including failures
