@@ -81,6 +81,21 @@ $functionBlock = @'
                 throw 'The protected update marker is invalid.'
             }
 
+            $installedVersionPath = Join-Path $StateDir 'version.user.json'
+            if (-not (Test-Path -LiteralPath $installedVersionPath -PathType Leaf)) {
+                throw 'The installed update identity is missing.'
+            }
+            $installedVersion = Get-Content -LiteralPath $installedVersionPath -Raw -ErrorAction Stop |
+                ConvertFrom-Json -ErrorAction Stop
+            $installedChannel = [string]$installedVersion.channel
+            if (
+                [int64]$installedVersion.versionCode -ne $ProductVersionCode -or
+                $installedChannel -notin @('stable','preview') -or
+                $installedChannel -cne $markerChannel
+            ) {
+                throw 'The protected update marker does not match the installed release channel.'
+            }
+
             if (-not (Test-Path -LiteralPath $SetupHostPath -PathType Leaf)) {
                 throw 'The verified Setup component is missing.'
             }

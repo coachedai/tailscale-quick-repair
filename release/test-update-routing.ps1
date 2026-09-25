@@ -95,6 +95,11 @@ public class TqrRouteProbe {
 
     # The handoff starts only after the ordinary bridge package has restarted
     # the app. Exercise the actual final function with a harmless Setup fixture.
+    $StateDir=$root
+    [IO.File]::WriteAllText(
+        (Join-Path $StateDir 'version.user.json'),
+        ([ordered]@{product='Tailscale Quick Repair';version='fixture';versionCode=2;channel='preview';updateSchema=1;configSchema=2}|ConvertTo-Json -Compress)
+    )
     # Simulate a real Windows UAC cancellation at the one process-start
     # boundary. No protected process may start, the marker must remain and the
     # existing window must stay usable so reopening/retrying is safe.
