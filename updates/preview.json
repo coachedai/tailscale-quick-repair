@@ -1,11 +1,22 @@
 {
   "schema": 1,
   "channel": "preview",
-  "version": "3.0.0-phase5.2.1",
-  "versionCode": 30000621,
-  "published": false,
+  "version": "3.0.0-rc.1",
+  "versionCode": 30001001,
+  "published": true,
+  "publishedAt": "2026-09-25T20:54:42.8675236Z",
   "mandatory": false,
   "requiresSetup": false,
-  "protectedHandoff": false,
-  "notes": "No Early-access release is published right now."
+  "protectedHandoff": true,
+  "notes": "3.0.0 RC1: guarded local-only Auto Repair 2.0, vendor-neutral VPN coexistence, exact Tailscale-only adapter recovery, protected update handoff and interruption recovery, System Integrity Guardian, privacy-safe support export, connection intelligence, and true no-window startup-in-tray. Early access only.",
+  "package": {
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-rc.1/TailscaleQuickRepair-3.0.0-rc.1.zip",
+    "sha256": "dcf715e2289dff3c0077f6de43c7195750ec81066c82fcf9e5d6a8eff7d8423d",
+    "size": 134104
+  },
+  "setup": {
+    "url": "https://github.com/coachedai/tailscale-quick-repair/releases/download/v3.0.0-rc.1/TailscaleQuickRepair-SetupPackage-3.0.0-rc.1.zip",
+    "sha256": "e6097330a68153c3db65a3f33dad23508e2c6cb18da85ddc88c773594ecfa05c",
+    "size": 184330
+  }
 }
