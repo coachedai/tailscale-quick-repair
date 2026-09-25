@@ -456,46 +456,7 @@ try {
                 if ([int]$candidate.schema -eq 1 -and
                     [string]$candidate.version -ceq $ExpectedVersion -and
                     [int64]$candidate.versionCode -eq $ExpectedCode -and
-                    $candidateStage -match '^protected_[a-z0-9_]+
-    }
-
-    $result.stage = 'restart_acknowledgement'
-    if (-not $CiNoRelaunch) {
-        $deadline = [DateTime]::UtcNow.AddSeconds(30)
-        do {
-            Start-Sleep -Milliseconds 500
-            $pending = Get-ItemProperty -LiteralPath $RestartRegistryPath -Name $RestartRegistryName -ErrorAction SilentlyContinue
-            if (-not $pending -or $null -eq $pending.$RestartRegistryName) { $result.restartAcknowledged = $true; break }
-        } while ([DateTime]::UtcNow -lt $deadline)
-        if (-not $result.restartAcknowledged) { Fail 'The preview installed, but the restarted app did not acknowledge the protected update.' }
-    }
-
-    if (Test-Path -LiteralPath $MarkerPath) { Fail 'The protected-update marker still exists after protected completion.' }
-    $installed = Read-InstalledVersion
-    if ([int64]$installed.versionCode -ne $ExpectedCode -or [string]$installed.version -cne $ExpectedVersion) { Fail 'The installed preview version record is wrong.' }
-    $result.passed = $true
-    $result.stage = 'complete'
-    Save-Result
-    Write-Host 'Phase 6.4 field preview completed successfully.'
-    exit 0
-}
-catch {
-    if ([string]::IsNullOrWhiteSpace([string]$result.error)) {
-        $result.error = 'Unexpected field-preview failure. No raw exception details were saved.'
-    }
-    Save-Result
-    Write-Error $_.Exception.Message
-    exit 1
-}
-finally {
-    if ($script:LeaseHeld -and $script:LeaseType) {
-        try { [void](Invoke-Private $script:LeaseType 'ReleaseOperationLock') } catch {}
-    }
-    foreach ($root in @($script:WorkRoots.ToArray())) {
-        try { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } } catch {}
-    }
-}
-) {
+                    $candidateStage.StartsWith('protected_',[StringComparison]::Ordinal)) {
                     $child = $candidate
                 }
             } catch {
