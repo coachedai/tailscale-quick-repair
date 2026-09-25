@@ -45,3 +45,5 @@ Do not upload, commit, attach, paste into Actions, or preserve in repository his
 Do not record a per-user or per-machine acceptance result in this public repository. Real-machine observations may guide an interactive troubleshooting session, but repository evidence must remain generic and product-scoped. Persisted acceptance evidence on GitHub must come from disposable/synthetic CI fixtures or otherwise contain no information derived from a specific user's computer.
 
 If a real-machine observation reveals a product issue, record only the generalized product behavior or bug necessary to fix it, with all user/machine context removed.
+
+The privacy scanner fails closed on unreviewed non-text/binary repository files. Evidence-like media, screen captures, logs, dumps, registry/event exports, packet captures, opaque archives, office/PDF documents, databases/backups and arbitrary binary blobs are forbidden. Expanded release packages may contain only the expected compiled native executable/library binaries in addition to scanned text files.

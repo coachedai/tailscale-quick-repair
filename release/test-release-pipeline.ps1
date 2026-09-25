@@ -32,6 +32,27 @@ try{
     Check ($workflow.Contains('Main changed after validation; do not publish an outdated build.') -and
            $workflow.Contains('Main changed during publication; keep the previous update channel.')) 'Publication refuses a moving main branch'
     Check ($workflow.Contains('git push origin HEAD:refs/heads/main') -and -not $workflow.Contains('git push --force')) 'Manifest publication remains non-force only'
+    $privacyScan=Join-Path $repo 'release\privacy-scan.ps1'
+    $privacyLab=Join-Path $env:TEMP ('TqrPrivacyPipeline-'+[Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $privacyLab|Out-Null
+    try{
+        [IO.File]::WriteAllBytes((Join-Path $privacyLab 'synthetic-screen.png'),[byte[]](1,2,3,4))
+        [IO.File]::WriteAllBytes((Join-Path $privacyLab 'opaque-evidence.bin'),[byte[]](5,6,7,8))
+        [IO.File]::WriteAllBytes((Join-Path $privacyLab 'evidence.zip'),[byte[]](9,10,11,12))
+        $blocked=$false
+        try{& $privacyScan -Root $privacyLab -SkipRepositoryIdentity}catch{$blocked=$true}
+        Check $blocked 'Privacy scanner rejects synthetic screenshot, archive and opaque binary evidence'
+        Remove-Item -LiteralPath $privacyLab -Recurse -Force
+        New-Item -ItemType Directory -Path $privacyLab|Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $privacyLab 'fixture.exe'),[byte[]](1,2,3,4))
+        [IO.File]::WriteAllBytes((Join-Path $privacyLab 'fixture.dll'),[byte[]](5,6,7,8))
+        Set-Content -LiteralPath (Join-Path $privacyLab 'fixture.txt') -Value 'synthetic package fixture' -Encoding ASCII
+        & $privacyScan -Root $privacyLab -SkipRepositoryIdentity
+        Check $true 'Privacy scanner still permits expected expanded native package binaries and safe text'
+    }finally{
+        Remove-Item -LiteralPath $privacyLab -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
     foreach($path in @(
         'release\test-native-windows.ps1',
         'release\test-native-permissions.ps1',

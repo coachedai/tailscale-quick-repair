@@ -82,9 +82,31 @@ $textExtensions = @(
     '.ps1', '.psm1', '.psd1',
     '.cs', '.vbs', '.py',
     '.json', '.yml', '.yaml',
-    '.md', '.txt', '.gitignore',
-    '.xml', '.config'
+    '.md', '.txt',
+    '.xml', '.config', '.ini', '.cfg', '.conf', '.toml', '.properties', '.csv'
 )
+
+$textLeafNames = @(
+    '.gitignore',
+    '.gitattributes'
+)
+
+# Real-machine evidence and opaque containers are forbidden from public
+# source and release payloads. Do not add user-specific deny-list values here:
+# the policy must remain generic and must never contain private identifiers.
+$forbiddenEvidenceExtensions = @(
+    '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff',
+    '.mp4', '.mov', '.webm', '.avi',
+    '.log', '.dmp', '.mdmp', '.evtx', '.etl', '.reg',
+    '.pcap', '.pcapng', '.har',
+    '.zip', '.7z', '.rar', '.tar', '.gz', '.tgz',
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+    '.db', '.sqlite', '.sqlite3', '.bak'
+)
+
+# Expanded release payloads legitimately contain the compiled native hosts.
+# Public repository source itself is text-only.
+$allowedExpandedBinaryExtensions = @('.exe', '.dll')
 
 $secretPatterns = @(
     @{ Name = 'GitHub token'; Pattern = '(?i)\bgh[pousr]_[A-Za-z0-9]{20,}\b' },
@@ -119,10 +141,20 @@ foreach ($relative in $tracked) {
 
     $extension = [IO.Path]::GetExtension($leaf).ToLowerInvariant()
 
+    if ($forbiddenEvidenceExtensions -contains $extension) {
+        Add-Finding $findings $relativeNormalized 'Real-machine evidence, opaque archive, or document file type is forbidden.'
+        continue
+    }
+
     if (
         -not ($textExtensions -contains $extension) -and
-        $leaf -ne '.gitignore'
+        -not ($textLeafNames -contains $leaf)
     ) {
+        if ($SkipRepositoryIdentity -and $allowedExpandedBinaryExtensions -contains $extension) {
+            continue
+        }
+
+        Add-Finding $findings $relativeNormalized 'Unreviewed non-text/binary file type is forbidden by the public-repository privacy policy.'
         continue
     }
 
