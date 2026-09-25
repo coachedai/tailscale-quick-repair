@@ -290,8 +290,8 @@ function Assert-ExactInstalledCandidate($protected) {
     }
 }
 
-function Retire-StaleFieldGuardianBaseline($ordinary) {
-    $candidateManifest = Join-Path $ordinary.root 'app\integrity-manifest.json'
+function Retire-StaleFieldGuardianBaseline($candidate) {
+    $candidateManifest = Join-Path $candidate.root 'app\integrity-manifest.json'
     if (-not (Test-Path -LiteralPath $candidateManifest -PathType Leaf)) {
         Fail 'The verified field candidate is missing its integrity manifest.'
     }
@@ -551,7 +551,7 @@ try {
         }
         $result.restartAcknowledged = $true
 
-        [void](Retire-StaleFieldGuardianBaseline $ordinary)
+        [void](Retire-StaleFieldGuardianBaseline $protected)
         $result.stage = 'field_baseline_complete'
         $result.passed = $true
         Save-Result

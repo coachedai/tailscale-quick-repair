@@ -48,9 +48,6 @@ try{
     $candidateSetup=Join-Path $ordinaryRoot 'app\TailscaleQuickRepairSetup.exe'
     Check (Test-Path -LiteralPath $candidateSetup -PathType Leaf) 'Ordinary candidate contains the refreshed installed Setup host'
     $candidateSetupHash=(Get-FileHash -LiteralPath $candidateSetup -Algorithm SHA256).Hash.ToLowerInvariant()
-    $candidateIntegrity=Join-Path $ordinaryRoot 'app\integrity-manifest.json'
-    Check (Test-Path -LiteralPath $candidateIntegrity -PathType Leaf) 'Ordinary candidate contains the exact integrity manifest'
-    $candidateIntegrityHash=(Get-FileHash -LiteralPath $candidateIntegrity -Algorithm SHA256).Hash.ToLowerInvariant()
 
     $installReport=Join-Path $lab 'InstallLegacy.json'
     $psi=New-Object Diagnostics.ProcessStartInfo
@@ -146,6 +143,9 @@ try{
 
     $setupRoot=Join-Path $lab 'candidate-setup';Expand-Archive -LiteralPath $protected[0].FullName -DestinationPath $setupRoot
     $manifest=Get-Content (Join-Path $setupRoot 'package-manifest.json') -Raw|ConvertFrom-Json
+    $candidateIntegrity=Join-Path $setupRoot 'app\integrity-manifest.json'
+    Check (Test-Path -LiteralPath $candidateIntegrity -PathType Leaf) 'Protected candidate contains the exact installed integrity manifest'
+    $candidateIntegrityHash=(Get-FileHash -LiteralPath $candidateIntegrity -Algorithm SHA256).Hash.ToLowerInvariant()
     foreach($entry in @($manifest.files)){
         $relative=([string]$entry.path).Replace('\\','/')
         if($relative -eq 'version.json'){$target=Join-Path $app 'version.user.json'}
