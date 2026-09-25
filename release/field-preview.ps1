@@ -8,7 +8,8 @@ param(
     [switch]$CiNoRelaunch,
     [switch]$CiCancelBeforeProtected,
     [switch]$CiPrivacyFailureProbe,
-    [switch]$CiProtectedChildFailureProbe
+    [switch]$CiProtectedChildFailureProbe,
+    [switch]$ReconcileFieldBaselineOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,6 +52,8 @@ $result = [ordered]@{
     bridgeVerified = $false
     bridgeApplied = $false
     bridgeRefreshed = $false
+    installedCandidateVerified = $false
+    integrityBaselineRetired = $false
     elevationRequested = $false
     elevationCancelled = $false
     protectedUnchangedOnCancel = $false
@@ -250,6 +253,446 @@ function Read-InstalledVersion {
     if (-not (Test-Path -LiteralPath $VersionPath -PathType Leaf)) { Fail 'Quick Repair is not installed for this Windows account.' }
     try { return (Get-Content -LiteralPath $VersionPath -Raw | ConvertFrom-Json -ErrorAction Stop) }
     catch { Fail 'The installed Quick Repair version record is invalid.' }
+}
+
+function Get-InstalledCandidateTarget([string]$Relative) {
+    $relativePath = $Relative.Replace('\','/')
+    if ($relativePath -ceq 'version.json') { return $VersionPath }
+    if ($relativePath.StartsWith('app/',[StringComparison]::OrdinalIgnoreCase)) {
+        return (Join-Path $StateDir $relativePath.Substring(4).Replace('/',[IO.Path]::DirectorySeparatorChar))
+    }
+    if ($relativePath.StartsWith('program/',[StringComparison]::OrdinalIgnoreCase)) {
+        return (Join-Path $ProgramDir $relativePath.Substring(8).Replace('/',[IO.Path]::DirectorySeparatorChar))
+    }
+    Fail 'Protected candidate contains an unsupported installed path.'
+}
+
+function Assert-ExactInstalledCandidate($protected) {
+    $installed = Read-InstalledVersion
+    if ([string]$installed.version -cne $ExpectedVersion -or [int64]$installed.versionCode -ne $ExpectedCode) {
+        Fail 'Field reconciliation requires the exact installed Phase 6.4 preview.'
+    }
+    if (Test-Path -LiteralPath $MarkerPath -PathType Leaf) {
+        Fail 'Field reconciliation refused an unfinished protected-update marker.'
+    }
+
+    foreach ($entry in @($protected.manifest.files)) {
+        $relative = ([string]$entry.path).Replace('\','/')
+        $target = Get-InstalledCandidateTarget $relative
+        if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+            Fail 'The installed Phase 6.4 candidate is incomplete.'
+        }
+        $actual = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+        $expected = ([string]$entry.sha256).ToLowerInvariant()
+        if ($actual -cne $expected) {
+            Fail 'The installed Phase 6.4 candidate does not match the verified field package.'
+        }
+    }
+}
+
+function Retire-StaleFieldGuardianBaseline($ordinary) {
+    $candidateManifest = Join-Path $ordinary.root 'app\integrity-manifest.json'
+    if (-not (Test-Path -LiteralPath $candidateManifest -PathType Leaf)) {
+        Fail 'The verified field candidate is missing its integrity manifest.'
+    }
+    $candidateHash = (Get-FileHash -LiteralPath $candidateManifest -Algorithm SHA256).Hash.ToLowerInvariant()
+    $snapshotPath = Join-Path $StateDir 'guardian-known-good.json'
+    if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { return $false }
+
+    if (((Get-Item -LiteralPath $snapshotPath).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Fail 'Field reconciliation refused a redirected known-good record.'
+    }
+
+    try { $snapshot = Get-Content -LiteralPath $snapshotPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+    catch { Fail 'Field reconciliation refused an unreadable known-good record.' }
+
+    $recordedHash = ([string]$snapshot.integrityManifestSha256).ToLowerInvariant()
+    if ([int]$snapshot.schema -ne 1 -or [int64]$snapshot.versionCode -le 0 -or
+        $recordedHash -notmatch '^[0-9a-f]{64}($ordinary,[string]$UpdaterSource,[string]$UpdaterError) {
+    if (-not (Test-Path -LiteralPath $UpdaterSource -PathType Leaf)) { Fail $UpdaterError }
+    $tempUpdater = Join-Path (New-WorkRoot 'TqrFieldUpdater') 'TailscaleQuickRepairUpdater.exe'
+    Copy-Item -LiteralPath $UpdaterSource -Destination $tempUpdater -Force
+    $type = [Reflection.Assembly]::LoadFile($tempUpdater).GetType('Program')
+    if (-not $type) { Fail 'The selected updater host is not valid.' }
+    $manifest = Invoke-Private $type 'ReadPackageManifest' @($ordinary.root)
+    if ([string]$manifest.Version -cne $ExpectedVersion -or [int64]$manifest.VersionCode -ne $ExpectedCode) { Fail 'The staged package identity is wrong.' }
+    $files = Invoke-Private $type 'VerifyPackageFiles' @($ordinary.root,$manifest)
+    if (@($files).Count -lt 1) { Fail 'The updater rejected the preview bridge.' }
+    $lease = [bool](Invoke-Private $type 'TryAcquireOperationLock' @('update'))
+    if (-not $lease) { Fail 'Another Quick Repair operation is active. No bridge was applied.' }
+    $script:LeaseType = $type
+    $script:LeaseHeld = $true
+    try {
+        [void](Invoke-Private $type 'ApplyTransaction' @($files,[string]$manifest.Version,[int64]$manifest.VersionCode))
+    } finally {
+        [void](Invoke-Private $type 'ReleaseOperationLock')
+        $script:LeaseHeld = $false
+    }
+    $after = Read-InstalledVersion
+    if ([int64]$after.versionCode -ne $ExpectedCode -or [string]$after.version -cne $ExpectedVersion -or
+        -not (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
+        Fail 'The updater did not leave the expected protected bridge state.'
+    }
+    $result.bridgeApplied = $true
+}
+
+function Stage-Bridge($ordinary) {
+    $installed = Read-InstalledVersion
+    Assert-NoQuickRepairUi
+
+    if ([int64]$installed.versionCode -eq $ExpectedCode -and [string]$installed.version -ceq $ExpectedVersion -and
+        (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
+        # A field retry may be using a newer build of the same unpublished
+        # preview version. Refresh every verified user-level bridge byte from
+        # the current candidate before protected Setup is allowed to continue.
+        $candidateUpdater = Join-Path $ordinary.root 'app\TailscaleQuickRepairUpdater.exe'
+        Apply-BridgePackage $ordinary $candidateUpdater 'The verified candidate updater is missing.'
+        $result.bridgeRefreshed = $true
+        [void](Retire-StaleFieldGuardianBaseline $ordinary)
+        return
+    }
+
+    if ([int64]$installed.versionCode -ne $BaselineCode -or [string]$installed.version -cne $BaselineVersion) {
+        Fail 'Field preview staging requires the genuine 5.2.1 starting version, or an already-staged 6.4 bridge.'
+    }
+
+    $result.baselineVerified = $true
+    $installedUpdater = Join-Path $StateDir 'TailscaleQuickRepairUpdater.exe'
+    Apply-BridgePackage $ordinary $installedUpdater 'The installed 5.2.1 updater is missing.'
+}
+
+function Apply-Protected($protected,[string]$ExpectedRequesterSid) {
+    $result.stage = 'protected_admin'
+    if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        Fail 'The protected field stage is not running with administrator approval.'
+    }
+
+    $result.stage = 'protected_identity'
+    $currentSid = Current-Sid
+    if ([string]::IsNullOrWhiteSpace($ExpectedRequesterSid) -or $currentSid -cne $ExpectedRequesterSid) {
+        Fail 'Administrator approval used a different Windows account. Protected changes were refused.'
+    }
+    $result.requesterIdentityVerified = $true
+
+    if ($CiProtectedChildFailureProbe) {
+        Assert-CiFieldMode
+        $result.stage = 'protected_ci_failure_probe'
+        throw [InvalidOperationException]::new('CI protected child failure probe.')
+    }
+
+    $installedSetup = Join-Path $StateDir 'TailscaleQuickRepairSetup.exe'
+    if (-not (Test-Path -LiteralPath $installedSetup -PathType Leaf)) { Fail 'The refreshed Setup host is missing after bridge staging.' }
+
+    # Production Setup relocates itself before replacing the installed Setup
+    # executable. The developer-only field harness invokes the protected core
+    # by reflection, so mirror that same lock boundary with a detached copy.
+    $detachedRoot = New-WorkRoot 'TqrFieldSetupHost'
+    $setup = Join-Path $detachedRoot 'TailscaleQuickRepairSetup.exe'
+    Copy-Item -LiteralPath $installedSetup -Destination $setup -Force
+    if ((Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $installedSetup -Algorithm SHA256).Hash) {
+        Fail 'The detached Setup host did not match the staged installed Setup.'
+    }
+
+    $type = [Reflection.Assembly]::LoadFile($setup).GetType('PublicSetupHost')
+    if (-not $type) { Fail 'The refreshed Setup host is invalid.' }
+    [void](Invoke-Private $type 'RequireRequesterIdentity' @($ExpectedRequesterSid))
+
+    $result.stage = 'protected_recovery'
+    [void](Invoke-Private $type 'RecoverInterruptedFileTransaction')
+
+    $result.stage = 'protected_package_read'
+    $manifest = Invoke-Private $type 'ReadPackageManifest' @($protected.root)
+    if ([string]$manifest.Version -cne $ExpectedVersion -or [int64]$manifest.VersionCode -ne $ExpectedCode) { Fail 'The protected package identity is wrong.' }
+
+    $result.stage = 'protected_package_verify'
+    $files = Invoke-Private $type 'VerifyPackage' @($protected.root,$manifest)
+
+    $result.stage = 'protected_marker'
+    [void](Invoke-Private $type 'ValidateProtectedUpdateMarker' @([int64]$manifest.VersionCode))
+    $result.protectedPackageVerified = $true
+
+    $result.stage = 'protected_context'
+    $peer = [string](Invoke-Private $type 'ReadConfiguredPeer')
+    $startup = [bool](Invoke-Private $type 'IsStartupEnabled')
+
+    $result.stage = 'protected_lease'
+    $lease = [bool](Invoke-Private $type 'TryAcquireUpgradeOperationLock')
+    if (-not $lease) { Fail 'Another Quick Repair operation is active. Protected changes were not started.' }
+    $script:LeaseType = $type
+    $script:LeaseHeld = $true
+    $work = New-WorkRoot 'TqrFieldProtected'
+
+    try {
+        $result.stage = 'protected_stop_ui'
+        [void](Invoke-Private $type 'StopQuickRepair')
+
+        $result.stage = 'protected_files'
+        try {
+            [void](Invoke-Private $type 'ApplyFiles' @($files,$work))
+        } catch {
+            $message = [string]$_.Exception.Message
+            $code = [int]$_.Exception.HResult
+            if ($code -eq -2147024864) {
+                $result.stage = 'protected_files_locked'
+            } elseif ($code -eq -2147024891 -or $_.Exception -is [UnauthorizedAccessException]) {
+                $result.stage = 'protected_files_access'
+            } elseif ($message -match 'recovery|journal|backup') {
+                $result.stage = 'protected_files_recovery'
+            } elseif ($message -match 'temporary path|setup\.new') {
+                $result.stage = 'protected_files_temporary'
+            } elseif ($message -match 'unexpected content|unexpected type|redirected|unsupported link|legacy migration') {
+                $result.stage = 'protected_files_layout'
+            }
+            throw
+        }
+
+        $result.stage = 'protected_integration'
+        [void](Invoke-Private $type 'CompleteInstalledIntegration' @($peer,$startup,$true,[int64]$manifest.VersionCode))
+        $result.protectedApplied = $true
+
+        if (-not $CiNoRelaunch) {
+            $result.stage = 'protected_relaunch'
+            [void](Invoke-Private $type 'StartQuickRepair')
+        }
+
+        $result.stage = 'protected_complete'
+    } finally {
+        [void](Invoke-Private $type 'ReleaseOperationLock')
+        $script:LeaseHeld = $false
+    }
+}
+
+try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    if ($ElevatedApply) {
+        $result.stage = 'protected_elevated_preflight'
+        Save-Result
+    }
+    if ($CiPrivacyFailureProbe) {
+        Assert-CiFieldMode
+        throw [InvalidOperationException]::new(('CI privacy probe local path: ' + $env:USERPROFILE))
+    }
+    if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) { Fail 'The validated candidate folder was not found.' }
+    $OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
+    $ordinaryZip = Get-OneCandidate 'TailscaleQuickRepair-3.0.0-phase6.4.0-preview.zip'
+    $setupZip = Get-OneCandidate 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.0-preview.zip'
+    $ordinary = Expand-Candidate $ordinaryZip $false $true
+    $protected = Expand-Candidate $setupZip $true $false
+    $result.bridgeVerified = $true
+    $result.protectedPackageVerified = $true
+
+    if ($ReconcileFieldBaselineOnly) {
+        if ($ElevatedApply -or $CiNoElevation -or $CiCancelBeforeProtected -or $CiPrivacyFailureProbe -or $CiProtectedChildFailureProbe) {
+            Fail 'Field baseline reconciliation cannot be combined with another field mode.'
+        }
+        $result.stage = 'field_baseline_reconcile'
+        Assert-AutoRepairOff
+        Assert-NoQuickRepairUi
+        Assert-ExactInstalledCandidate $protected
+        $result.installedCandidateVerified = $true
+
+        $pending = Get-ItemProperty -LiteralPath $RestartRegistryPath -Name $RestartRegistryName -ErrorAction SilentlyContinue
+        if ($pending -and $null -ne $pending.$RestartRegistryName) {
+            Fail 'Field reconciliation requires the restarted app to acknowledge the protected update first.'
+        }
+        $result.restartAcknowledged = $true
+        [void](Retire-StaleFieldGuardianBaseline $ordinary)
+        $result.stage = 'field_baseline_complete'
+        $result.passed = $true
+        Save-Result
+        Write-Host 'Phase 6.4 field baseline reconciliation completed successfully.'
+        exit 0
+    }
+
+    if ($ElevatedApply) {
+        $result.stage = 'protected_apply'
+        Apply-Protected $protected $RequesterSid
+        $result.passed = $true
+        Save-Result
+        exit 0
+    }
+
+    $result.stage = 'baseline'
+    Assert-AutoRepairOff
+    $sid = Current-Sid
+    $protectedBefore = Get-ProtectedBaselineHashes
+    Stage-Bridge $ordinary
+
+    if ($CiCancelBeforeProtected) {
+        if ($CiNoElevation) { Fail 'Only one CI protected-stage mode may be selected.' }
+        Assert-CiFieldMode
+        $result.stage = 'ci_uac_cancel'
+        $result.elevationRequested = $true
+        $result.elevationCancelled = $true
+        $result.protectedUnchangedOnCancel = Assert-ProtectedHashesUnchanged $protectedBefore
+        if (-not $result.protectedUnchangedOnCancel) {
+            Fail 'The simulated approval cancellation did not preserve the complete protected baseline.'
+        }
+        $result.error = ''
+        Save-Result
+        exit 2
+    }
+
+    if ($CiNoElevation) {
+        Assert-CiFieldMode
+        $result.stage = 'ci_protected_apply'
+        Apply-Protected $protected $sid
+    } else {
+        $result.stage = 'uac'
+        $result.elevationRequested = $true
+        Save-Result
+        $powershell = Join-Path $PSHOME 'powershell.exe'
+        $args = '-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -OutputDirectory "' + $OutputDirectory + '" -ResultPath "' + $ResultPath + '" -ElevatedApply -RequesterSid "' + $sid + '"'
+        if ($CiProtectedChildFailureProbe) {
+            Assert-CiFieldMode
+            $args += ' -CiProtectedChildFailureProbe -CiNoRelaunch'
+        }
+        try {
+            if ($CiProtectedChildFailureProbe) {
+                $probeWorkingDirectory = Join-Path $env:WINDIR 'System32'
+                $process = Start-Process -FilePath $powershell -ArgumentList $args -WorkingDirectory $probeWorkingDirectory -PassThru -ErrorAction Stop
+            } else {
+                $process = Start-Process -FilePath $powershell -ArgumentList $args -WorkingDirectory $OutputDirectory -Verb RunAs -PassThru -ErrorAction Stop
+            }
+
+            # Start-Process -Wait on Windows can wait for the descendant process
+            # tree. Protected Setup intentionally relaunches resident Quick Repair,
+            # so waiting that way can hold the field console open indefinitely.
+            # Wait only for the direct elevated child, with a bounded timeout.
+            if (-not $process.WaitForExit(180000)) {
+                $result.stage = 'protected_child_timeout'
+                $result.error = 'The elevated protected field stage did not exit within the allowed time.'
+                Save-Result
+                throw 'The protected field stage timed out.'
+            }
+        } catch {
+            if (-not $CiProtectedChildFailureProbe -and ($_.Exception.HResult -eq -2147467259 -or $_.Exception.Message -match 'cancel')) {
+                $result.elevationCancelled = $true
+                $result.protectedUnchangedOnCancel = Assert-ProtectedHashesUnchanged $protectedBefore
+                if (-not $result.protectedUnchangedOnCancel) {
+                    Fail 'Windows approval was cancelled, but protected files did not remain unchanged.'
+                }
+                $result.error = ''
+                Save-Result
+                Write-Host 'Windows approval was cancelled. The verified user-level bridge remains staged; protected files were unchanged. Rerun this field tool to retry.'
+                exit 2
+            }
+            throw
+        }
+
+        $child = $null
+        if (Test-Path -LiteralPath $ResultPath -PathType Leaf) {
+            try {
+                $candidate = Get-Content -LiteralPath $ResultPath -Raw | ConvertFrom-Json -ErrorAction Stop
+                $candidateStage = [string]$candidate.stage
+                if ([int]$candidate.schema -eq 1 -and
+                    [string]$candidate.version -ceq $ExpectedVersion -and
+                    [int64]$candidate.versionCode -eq $ExpectedCode -and
+                    $candidateStage.StartsWith('protected_',[StringComparison]::Ordinal)) {
+                    $child = $candidate
+                }
+            } catch {
+                $child = $null
+            }
+        }
+
+        if (-not $process -or $process.ExitCode -ne 0) {
+            if ($child) {
+                $result.stage = [string]$child.stage
+                $result.requesterIdentityVerified = [bool]$child.requesterIdentityVerified
+                $result.protectedPackageVerified = [bool]$child.protectedPackageVerified
+                $result.protectedApplied = [bool]$child.protectedApplied
+                $result.error = 'The elevated protected field stage failed. The recorded stage identifies the boundary.'
+            } else {
+                $result.stage = 'protected_failed'
+                $result.error = 'The elevated protected field stage failed before returning a readable safe result.'
+            }
+            Save-Result
+            throw 'The protected field stage did not complete.'
+        }
+
+        if ($child) {
+            if (-not [bool]$child.passed -or -not [bool]$child.protectedApplied) { Fail 'The elevated protected stage did not report success.' }
+            $result.requesterIdentityVerified = [bool]$child.requesterIdentityVerified
+            $result.protectedPackageVerified = [bool]$child.protectedPackageVerified
+            $result.protectedApplied = [bool]$child.protectedApplied
+        } else {
+            Fail 'The elevated protected stage did not return a readable result.'
+        }
+    }
+
+    $result.stage = 'restart_acknowledgement'
+    if (-not $CiNoRelaunch) {
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        do {
+            Start-Sleep -Milliseconds 500
+            $pending = Get-ItemProperty -LiteralPath $RestartRegistryPath -Name $RestartRegistryName -ErrorAction SilentlyContinue
+            if (-not $pending -or $null -eq $pending.$RestartRegistryName) { $result.restartAcknowledged = $true; break }
+        } while ([DateTime]::UtcNow -lt $deadline)
+        if (-not $result.restartAcknowledged) { Fail 'The preview installed, but the restarted app did not acknowledge the protected update.' }
+    }
+
+    if (Test-Path -LiteralPath $MarkerPath) { Fail 'The protected-update marker still exists after protected completion.' }
+    $installed = Read-InstalledVersion
+    if ([int64]$installed.versionCode -ne $ExpectedCode -or [string]$installed.version -cne $ExpectedVersion) { Fail 'The installed preview version record is wrong.' }
+    $result.passed = $true
+    $result.stage = 'complete'
+    Save-Result
+    Write-Host 'Phase 6.4 field preview completed successfully.'
+    exit 0
+}
+catch {
+    if ([string]::IsNullOrWhiteSpace([string]$result.error)) {
+        $result.error = 'Unexpected field-preview failure. No raw exception details were saved.'
+    }
+    Save-Result
+    Write-Error $_.Exception.Message
+    exit 1
+}
+finally {
+    if ($script:LeaseHeld -and $script:LeaseType) {
+        try { [void](Invoke-Private $script:LeaseType 'ReleaseOperationLock') } catch {}
+    }
+    foreach ($root in @($script:WorkRoots.ToArray())) {
+        try { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } } catch {}
+    }
+}
+) {
+        Fail 'Field reconciliation refused invalid known-good metadata.'
+    }
+
+    if ([int64]$snapshot.versionCode -ne $ExpectedCode -or $recordedHash -ceq $candidateHash) {
+        return $false
+    }
+
+    $previousPath = Join-Path $StateDir 'guardian-known-good.previous.json'
+    if (Test-Path -LiteralPath $previousPath) {
+        if (-not (Test-Path -LiteralPath $previousPath -PathType Leaf) -or
+            ((Get-Item -LiteralPath $previousPath).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            Fail 'Field reconciliation refused an unsafe predecessor record.'
+        }
+    }
+
+    $temp = $previousPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        $bytes = [IO.File]::ReadAllBytes($snapshotPath)
+        $stream = [IO.File]::Open($temp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        try { $stream.Write($bytes,0,$bytes.Length); $stream.Flush($true) }
+        finally { $stream.Dispose() }
+
+        if (Test-Path -LiteralPath $previousPath) {
+            [IO.File]::Replace($temp,$previousPath,$null)
+        } else {
+            [IO.File]::Move($temp,$previousPath)
+        }
+        [IO.File]::Delete($snapshotPath)
+    }
+    finally {
+        if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+    }
+
+    $result.integrityBaselineRetired = $true
+    return $true
 }
 
 function Apply-BridgePackage($ordinary,[string]$UpdaterSource,[string]$UpdaterError) {

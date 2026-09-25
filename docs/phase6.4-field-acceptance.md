@@ -50,6 +50,16 @@ Cancelling the Windows approval prompt is a valid test. Before staging anything,
 
 Run the same command again and approve the prompt. The helper recognises the already-staged bridge without replaying the original 5.2.1 -> 6.4 transition. Before protected Setup continues, it reapplies the currently verified user-level preview package with the candidate updater so every same-version bridge byte (including the installed Setup host) matches the exact field pack. Hosted acceptance deliberately corrupts the staged Setup host and proves the retry refreshes it before entering the protected boundary. It also exercises the cancel/stage/retry state transition without claiming to reproduce the physical Windows UAC screen.
 
+Because successive unpublished field candidates may intentionally reuse the same preview version code while their trusted bytes change, a same-version field refresh also preserves the prior Guardian known-good record as its predecessor and retires the active record. Guardian itself remains strict: same version code plus different trusted bytes is still treated as suspicious during normal product operation. After the exact field candidate is installed, Guardian establishes a fresh known-good baseline only after its own integrity check passes.
+
+For an already-completed exact field install, the developer helper can perform only this reconciliation without replaying Setup:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\field-preview.ps1 -OutputDirectory . -ReconcileFieldBaselineOnly
+```
+
+This mode refuses an unfinished protected marker or restart acknowledgement, verifies every installed candidate file against the exact protected package, requires Auto Repair off and Quick Repair exited, and never requests elevation.
+
 ## Passing first field upgrade
 
 The first pass is complete only when:
