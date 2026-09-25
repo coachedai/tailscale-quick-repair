@@ -38,6 +38,8 @@ try{
     Check ($ordinary.Count -eq 1 -and $protected.Count -eq 1) 'Exact 6.4 ordinary and protected packages are present'
 
     $fieldSource=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'field-preview.ps1'))
+    [void][scriptblock]::Create($fieldSource)
+    Check $true 'Field preview parses under Windows PowerShell 5.1 before any field mutation'
     Check ($fieldSource -notmatch 'Start-Process[^\r\n]+-PassThru\s+-Wait') 'Field preview never waits on the relaunched Quick Repair descendant tree'
     Check ($fieldSource -match '\.WaitForExit\(180000\)') 'Field preview bounds the direct protected-child wait'
 

@@ -308,7 +308,45 @@ function Retire-StaleFieldGuardianBaseline($ordinary) {
 
     $recordedHash = ([string]$snapshot.integrityManifestSha256).ToLowerInvariant()
     if ([int]$snapshot.schema -ne 1 -or [int64]$snapshot.versionCode -le 0 -or
-        $recordedHash -notmatch '^[0-9a-f]{64}($ordinary,[string]$UpdaterSource,[string]$UpdaterError) {
+        $recordedHash -notmatch '^[0-9a-f]{64}$') {
+        Fail 'Field reconciliation refused invalid known-good metadata.'
+    }
+
+    if ([int64]$snapshot.versionCode -ne $ExpectedCode -or $recordedHash -ceq $candidateHash) {
+        return $false
+    }
+
+    $previousPath = Join-Path $StateDir 'guardian-known-good.previous.json'
+    if (Test-Path -LiteralPath $previousPath) {
+        if (-not (Test-Path -LiteralPath $previousPath -PathType Leaf) -or
+            ((Get-Item -LiteralPath $previousPath).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            Fail 'Field reconciliation refused an unsafe predecessor record.'
+        }
+    }
+
+    $temp = $previousPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        $bytes = [IO.File]::ReadAllBytes($snapshotPath)
+        $stream = [IO.File]::Open($temp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        try { $stream.Write($bytes,0,$bytes.Length); $stream.Flush($true) }
+        finally { $stream.Dispose() }
+
+        if (Test-Path -LiteralPath $previousPath) {
+            [IO.File]::Replace($temp,$previousPath,$null)
+        } else {
+            [IO.File]::Move($temp,$previousPath)
+        }
+        [IO.File]::Delete($snapshotPath)
+    }
+    finally {
+        if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+    }
+
+    $result.integrityBaselineRetired = $true
+    return $true
+}
+
+function Apply-BridgePackage($ordinary,[string]$UpdaterSource,[string]$UpdaterError) {
     if (-not (Test-Path -LiteralPath $UpdaterSource -PathType Leaf)) { Fail $UpdaterError }
     $tempUpdater = Join-Path (New-WorkRoot 'TqrFieldUpdater') 'TailscaleQuickRepairUpdater.exe'
     Copy-Item -LiteralPath $UpdaterSource -Destination $tempUpdater -Force
