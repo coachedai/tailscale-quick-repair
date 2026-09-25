@@ -65,3 +65,12 @@ After Phase 6: **Phase 7 Startup / Passive Health**, **Phase 8 Update Guardian 2
 ### Quiet startup checkpoint
 
 The 6.4.2 candidate hardens `--start-in-tray` so the WPF main window is not passed to `Application.Run(window)` and therefore does not need to appear before being hidden. Hosted native acceptance launches the exact packaged executable, samples visible top-level windows, and requires no console/script-host child. Real reboot/logon remains a deferred physical gate.
+
+
+### Guarded Preview RC publication
+
+The development workflow has a separate Early-access publication gate controlled by `release/preview-publish.json`. It is disarmed by default and accepts only versions matching `3.0.0-rc.N`. When deliberately armed, publication remains blocked until both the full development verification job and released-upgrade/recovery job pass for the exact same commit.
+
+The publisher reuses the exact validated package artifact, rechecks SHA-256 sidecars and privacy, creates a GitHub **prerelease**, then disarms its own publication intent before making `preview/updates/preview.json` live. Both branch pushes are non-force. If the development branch moves before publication/disarm, the job refuses. The Preview job has no code path to `main` or `updates/latest.json`.
+
+This makes the intended release-candidate loop: physically accept the frozen 6.4.3 bootstrap once, enable **Early-access updates**, then install future 3.0 RCs through the normal in-app updater.
