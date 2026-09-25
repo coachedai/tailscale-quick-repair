@@ -6,7 +6,7 @@
 
 The frozen RC1 release target is **2555bf4af30845d2c722964e289cfdfe15a412bf**. Workflow **36186476031** passed the full native Windows verification, genuine released-5.2.1 upgrade, interrupted-Setup recovery and protected-handoff gates before the publisher created the prerelease and dedicated Preview manifest. Publication then disarmed itself.
 
-Post-publication compatibility commit **d16c8107aa1cf2403e52fe66a6c82b221b2918d5** passed workflow **36189240040**. Its developer field helper exact-allows the physically accepted **3.0.0-phase6.4.0-preview / 30000740**, **3.0.0-phase6.4.1-preview / 30000741** and **3.0.0-phase6.4.3-preview / 30000743** identities only, and still requires a Guardian known-good record matching the installed integrity manifest. The 6.4.1 identity is historically grounded by the 6.4.2 field-acceptance path, which explicitly required a physically accepted 6.4.1 preview with a healthy known-good baseline.
+Post-publication compatibility commit **d16c8107aa1cf2403e52fe66a6c82b221b2918d5** passed workflow **36189240040**. Its developer field helper exact-allows **3.0.0-phase6.4.0-preview / 30000740**, **3.0.0-phase6.4.1-preview / 30000741** and **3.0.0-phase6.4.3-preview / 30000743** identities only, and still requires a Guardian known-good record matching the installed integrity manifest. The 6.4.1 identity is grounded by the historical 6.4.2 upgrade path, which explicitly supported 6.4.1 as the previous-preview baseline.
 
 CI also pins the already-published RC1 package assets by tag, release target, size and SHA-256 before privacy-scanning and rerunning field acceptance. This guards the field pack against same-version rebuilt bytes.
 ## What Phase 6 now includes
@@ -43,13 +43,13 @@ Earlier failed runs remain preserved in the pull-request history. In particular,
 
 A disposable Windows runner now simulates the software-side reboot/logon path without rebooting a user's PC. It invokes the actual Setup startup-registration core, launches the exact packaged GUI with `--start-in-tray`, samples for visible top-level windows, verifies no console/script-host child process appears, and inspects the protected delayed same-user logon trigger. The fixture is removed afterward.
 
-This is supporting evidence only. It does **not** certify a real Windows reboot, real sign-out/sign-in, real sleep/resume, firmware/driver resume behavior, or interactions with unrelated desktop applications. Those physical lifecycle gates remain deferred until a suitable real-machine test window is available.
+This is supporting evidence only. It does **not** certify a real Windows reboot, real sign-out/sign-in, real sleep/resume, firmware/driver resume behavior, or interactions with unrelated desktop applications. Those lifecycle gates remain deferred to off-repo real-machine testing; no machine-specific evidence is stored in GitHub.
 
 ## Final Phase 6 acceptance still required
 
 The remaining work is intentionally narrow:
 
-- physical desktop/UAC field acceptance of approve, cancel, retry and relaunch behavior;
+- off-repo desktop/UAC acceptance of approve, cancel, retry and relaunch behavior; no per-user or per-machine evidence is stored in GitHub;
 - actual authenticated local-backend recovery and sustained-backend restart behavior without using a real user tailnet in automated CI;
 - broader suspend/resume and vendor-neutral VPN/network lifecycle acceptance on a real desktop; real reboot/logon and sleep/resume remain deferred physical gates even when hosted startup/logon simulation passes;
 - whole-PC/storage-interruption acceptance beyond the process-kill transaction tests;
@@ -65,7 +65,7 @@ After Phase 6: **Phase 7 Startup / Passive Health**, **Phase 8 Update Guardian 2
 
 ### Quiet startup checkpoint
 
-RC1 hardens `--start-in-tray` so the WPF main window is not passed to `Application.Run(window)` and therefore does not need to appear before being hidden. Hosted native acceptance launches the exact packaged executable, samples visible top-level windows, and requires no console/script-host child. Real reboot/logon remains a deferred physical gate.
+RC1 hardens `--start-in-tray` so the WPF main window is not passed to `Application.Run(window)` and therefore does not need to appear before being hidden. Hosted native acceptance launches the exact packaged executable, samples visible top-level windows, and requires no console/script-host child. Real reboot/logon remains an off-repo deferred gate.
 
 
 ### Guarded Preview RC publication

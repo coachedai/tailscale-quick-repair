@@ -12,8 +12,13 @@ Post-publication compatibility commit **d16c8107aa1cf2403e52fe66a6c82b221b2918d5
 - **3.0.0-phase6.4.1-preview / 30000741**
 - **3.0.0-phase6.4.3-preview / 30000743**
 
-The 6.4.1 identity is not inferred from the user's machine: the historical 6.4.2 field-acceptance instructions explicitly named the physically accepted **3.0.0-phase6.4.1-preview / 30000741** as the allowed previous-preview baseline. A previous preview is accepted only when its Guardian known-good record matches the installed integrity manifest. Arbitrary versions, version ranges, local package URLs and mismatched integrity records remain refused.
+The 6.4.1 identity is grounded only in the historical 6.4.2 upgrade contract, which explicitly named **3.0.0-phase6.4.1-preview / 30000741** as the allowed previous-preview baseline. A previous preview is accepted only when its Guardian known-good record matches the installed integrity manifest. Arbitrary versions, version ranges, local package URLs and mismatched integrity records remain refused.
 
 The post-publication pipeline also verifies the exact public RC1 release assets by frozen tag, target commit, size and SHA-256, privacy-scans the downloaded archives, and reruns the field acceptance against those already-published bytes. This is intentionally stronger than testing a freshly rebuilt package that merely shares the same version number.
 
 Once RC1 is installed, future release-candidate delivery uses **Early-access updates → Check for updates → Update now** inside Quick Repair. The field helper remains developer-only and is excluded from shipping packages.
+
+
+## Field privacy
+
+Real-machine screenshots, logs, local result files, addresses, hostnames, account names, paths, configuration and per-machine acceptance records are intentionally not stored in this repository or GitHub Actions. Public evidence remains generic and CI/synthetic only.

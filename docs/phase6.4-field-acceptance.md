@@ -76,9 +76,9 @@ The first pass is complete only when:
 
 ## Follow-up physical acceptance
 
-After the first upgrade passes, test UAC cancel/retry, normal close-to-tray and tray Exit, reboot/logon, sleep/resume, Wi-Fi transitions, VPN coexistence, authenticated local-backend recovery, and finally guarded Auto Repair behavior.
+After the first upgrade passes, off-repo testing may cover UAC cancel/retry, normal close-to-tray and tray Exit, reboot/logon, sleep/resume, Wi-Fi transitions, VPN coexistence, authenticated local-backend recovery, and finally guarded Auto Repair behavior. Do not upload or commit machine-specific evidence from these checks.
 
-Real reboot/logon and sleep/resume may be **deferred** when disrupting the field machine is impractical. A hosted disposable-Windows simulation can validate startup registration, the exact `--start-in-tray` packaged launch, no console/script-host child, and the delayed logon trigger without restarting the user's PC. That simulation is supporting evidence only and must not be recorded as a physical reboot or resume pass.
+Real reboot/logon and sleep/resume may be **deferred** when disrupting a field machine is impractical. A hosted disposable-Windows simulation can validate startup registration, the exact `--start-in-tray` packaged launch, no console/script-host child, and the delayed logon trigger without restarting the user's PC. That simulation is supporting evidence only and must not be recorded as a physical reboot or resume pass.
 
 VPN coexistence is **vendor-neutral**. Proton VPN may be used as one real-machine representative, but it is not a product dependency or special case. When practical, exercise representative transitions from more than one family: a WireGuard/Wintun-style client, an OpenVPN/TAP/TUN-style client, and a corporate/full-tunnel client. Split-tunnel/full-tunnel and kill-switch transitions are useful additional cases when the installed VPN supports them. Do not install or configure unrelated third-party VPN software merely to satisfy this field check.
 
@@ -90,3 +90,8 @@ Do not interpret remote peer unavailability as a repair trigger. Optional diagno
 ## RC1 delivery note
 
 Once RC1 is installed, future release-candidate updates use **Early-access updates -> Check for updates -> Update now** inside Quick Repair. The field helper remains a one-time developer bridge for trusted older baselines and is not the normal update mechanism.
+
+
+## Field evidence privacy
+
+Keep all real-machine screenshots, logs, local result JSON, paths, account identifiers, device/peer names, addresses and configuration off GitHub. This repository must not contain a record tied to a specific person's computer. Only generalized product behavior and synthetic/CI evidence may be persisted.
