@@ -607,8 +607,8 @@ try {
     }
     if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) { Fail 'The validated candidate folder was not found.' }
     $OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
-    $ordinaryZip = Get-OneCandidate 'TailscaleQuickRepair-3.0.0-phase6.4.2-preview.zip'
-    $setupZip = Get-OneCandidate 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.2-preview.zip'
+    $ordinaryZip = Get-OneCandidate 'TailscaleQuickRepair-3.0.0-phase6.4.3-preview.zip'
+    $setupZip = Get-OneCandidate 'TailscaleQuickRepair-SetupPackage-3.0.0-phase6.4.3-preview.zip'
     $ordinary = Expand-Candidate $ordinaryZip $false $true
     $protected = Expand-Candidate $setupZip $true $false
     $result.bridgeVerified = $true

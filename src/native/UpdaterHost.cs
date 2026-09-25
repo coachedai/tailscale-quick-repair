@@ -165,6 +165,7 @@ internal static class Program
             }
 
             List<VerifiedFile> files = VerifyPackageFiles(extractDir, package);
+            ValidatePackageChannelBinding(files, channel, manifest.VersionCode);
 
             if (files.Count == 0)
             {
@@ -431,6 +432,50 @@ internal static class Program
         }
 
         return verified;
+    }
+
+    private static void ValidatePackageChannelBinding(List<VerifiedFile> files, string channel, long versionCode)
+    {
+        channel = NormalizeChannel(channel);
+        List<VerifiedFile> markers = files.FindAll(delegate(VerifiedFile file)
+        {
+            return String.Equals(file.RelativePath.Replace('\\', '/'), "app/protected-update.json", StringComparison.OrdinalIgnoreCase);
+        });
+
+        if (markers.Count == 0) return;
+        if (markers.Count != 1) throw new InvalidDataException("Update package contains an invalid protected handoff marker set.");
+
+        ValidateProtectedHandoffMarker(
+            File.ReadAllText(markers[0].SourcePath, Encoding.UTF8),
+            channel,
+            versionCode
+        );
+    }
+
+    internal static void ValidateProtectedHandoffMarker(string markerJson, string channel, long versionCode)
+    {
+        channel = NormalizeChannel(channel);
+        Dictionary<string, object> marker = DeserializeObject(markerJson);
+        int schema = ReadInt(marker, "schema");
+        if (ReadLong(marker, "versionCode") != versionCode)
+            throw new InvalidDataException("Protected handoff marker version does not match the selected update.");
+
+        if (schema == 1)
+        {
+            if (marker.Count != 2 || channel != "stable")
+                throw new InvalidDataException("Legacy protected handoff marker is valid only on Stable.");
+            return;
+        }
+
+        if (schema == 2)
+        {
+            string markerChannel = NormalizeChannel(ReadString(marker, "channel"));
+            if (marker.Count != 3 || !String.Equals(markerChannel, channel, StringComparison.Ordinal))
+                throw new InvalidDataException("Protected handoff marker channel does not match the selected update.");
+            return;
+        }
+
+        throw new InvalidDataException("Unsupported protected handoff marker schema.");
     }
 
     private static string ResolveTarget(string relativePath)

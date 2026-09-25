@@ -14,6 +14,9 @@ $repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if((git -C $repo rev-parse HEAD).Trim() -cne $env:GITHUB_SHA -or
    (git -C $repo remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-quick-repair(?:\.git)?$' -or
    ((Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json).publish -and -not $releaseValidation)){throw 'Exact unpublished isolated source required.'}
+$publishMetadata=Get-Content (Join-Path $repo 'release\publish.json') -Raw|ConvertFrom-Json
+$candidateChannel=[string]$publishMetadata.channel
+if($candidateChannel -notin @('stable','preview')){throw 'Candidate update channel is invalid.'}
 $evidence=(Resolve-Path $EvidenceDirectory).Path
 foreach($name in @('native-windows-results.json','native-permission-results.json')){
     $prior=Get-Content (Join-Path $evidence $name) -Raw|ConvertFrom-Json
@@ -168,7 +171,7 @@ try{
         $legacyHashes[$name]=FileHash $leaf
     }
     $marker=Join-Path $app 'protected-update.json'
-    [IO.File]::WriteAllText($marker,('{"schema":1,"versionCode":'+[string]$manifest.versionCode+'}'))
+    [IO.File]::WriteAllText($marker,((@{schema=2;versionCode=[int64]$manifest.versionCode;channel=$candidateChannel}|ConvertTo-Json -Compress)))
     $legacyApply=Join-Path $work 'long-lived-apply';[void][IO.Directory]::CreateDirectory($legacyApply)
     [void](Invoke-Setup 'ApplyFiles' @($verified,$legacyApply))
     Check (Test-Path -LiteralPath $legacyArchive -PathType Container) 'Long-lived upgrade creates the fixed protected legacy archive'
@@ -206,7 +209,7 @@ try{
     # Even with a valid protected handoff marker, an unrelated top-level name
     # must block before any known legacy entry is moved.
     New-Fixture
-    [IO.File]::WriteAllText($marker,('{"schema":1,"versionCode":'+[string]$manifest.versionCode+'}'))
+    [IO.File]::WriteAllText($marker,((@{schema=2;versionCode=[int64]$manifest.versionCode;channel=$candidateChannel}|ConvertTo-Json -Compress)))
     $knownLegacy=Join-Path $program 'Repair-Tailscale.ps1';[IO.File]::WriteAllText($knownLegacy,'known legacy evidence')
     $unknownLegacy=Join-Path $program 'do-not-touch.keep';[IO.File]::WriteAllText($unknownLegacy,'unrelated evidence')
     $knownHash=FileHash $knownLegacy;$unknownHash=FileHash $unknownLegacy

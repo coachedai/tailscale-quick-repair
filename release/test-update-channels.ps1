@@ -67,8 +67,28 @@ try{
     catch{$inner=$_.Exception;while($inner.InnerException){$inner=$inner.InnerException};$nativeRejected=($inner -is [IO.InvalidDataException])}
     Check $nativeRejected 'Compiled updater rejects arbitrary channel input'
 
+    $validateMarker=$updaterType.GetMethod('ValidateProtectedHandoffMarker',$flags)
+    Check ($null -ne $validateMarker) 'Compiled updater exposes its protected handoff marker validator to acceptance'
+    $schema2Preview='{"schema":2,"versionCode":42,"channel":"preview"}'
+    [void]$validateMarker.Invoke($null,[object[]]@($schema2Preview,'preview',[int64]42))
+    Check $true 'Compiled updater accepts the exact Preview schema-2 marker'
+    $crossChannelRejected=$false
+    try{[void]$validateMarker.Invoke($null,[object[]]@($schema2Preview,'stable',[int64]42))}
+    catch{$inner=$_.Exception;while($inner.InnerException){$inner=$inner.InnerException};$crossChannelRejected=($inner -is [IO.InvalidDataException])}
+    Check $crossChannelRejected 'Compiled updater rejects a Preview bridge selected through Stable'
+    $wrongVersionRejected=$false
+    try{[void]$validateMarker.Invoke($null,[object[]]@($schema2Preview,'preview',[int64]43))}
+    catch{$inner=$_.Exception;while($inner.InnerException){$inner=$inner.InnerException};$wrongVersionRejected=($inner -is [IO.InvalidDataException])}
+    Check $wrongVersionRejected 'Compiled updater rejects a bridge marker for another target code'
+    $schema1='{"schema":1,"versionCode":42}'
+    [void]$validateMarker.Invoke($null,[object[]]@($schema1,'stable',[int64]42))
+    $legacyPreviewRejected=$false
+    try{[void]$validateMarker.Invoke($null,[object[]]@($schema1,'preview',[int64]42))}
+    catch{$inner=$_.Exception;while($inner.InnerException){$inner=$inner.InnerException};$legacyPreviewRejected=($inner -is [IO.InvalidDataException])}
+    Check $legacyPreviewRejected 'Legacy schema-1 protected markers are accepted only on Stable'
+
     $setupPath=Join-Path $root 'app\TailscaleQuickRepairSetup.exe'
-    $setupAssembly=[Reflection.Assembly]::LoadFile($setupPath)
+    $setupAssembly=[Reflection.Assembly]::Load([IO.File]::ReadAllBytes($setupPath))
     $setupType=$setupAssembly.GetType('PublicSetupHost',$true)
     $setupGetUrl=$setupType.GetMethod('GetManifestApiUrl',$flags)
     Check ($null -ne $setupGetUrl) 'Compiled Setup exposes fixed channel mapping to acceptance'
@@ -79,6 +99,13 @@ try{
     try{[void]$setupGetUrl.Invoke($null,[object[]]@('https://example.invalid/manifest.json'))}
     catch{$inner=$_.Exception;while($inner.InnerException){$inner=$inner.InnerException};$setupRejected=($inner -is [IO.InvalidDataException])}
     Check $setupRejected 'Protected Setup rejects arbitrary channel input'
+
+    $entryType=$setupAssembly.GetType('PublicSetupEntry',$true)
+    $preserve=$entryType.GetMethod('PreserveUpgradeArguments',$flags)
+    Check ($null -ne $preserve) 'Compiled Setup entry exposes relocation argument preservation to acceptance'
+    $upgradeArgs=[string[]]@('--upgrade','--channel','preview','--target-code','30000999','--requester-sid','S-1-5-21-100')
+    $preserved=[string[]]$preserve.Invoke($null,[object[]]@(,$upgradeArgs))
+    Check (($preserved -join [char]0) -ceq ($upgradeArgs -join [char]0)) 'Setup self-relocation preserves upgrade, channel, target code and requester SID exactly'
 
     $passed=$true
 }finally{
