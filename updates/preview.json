@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "channel": "preview",
+  "version": "3.0.0-phase5.2.1",
+  "versionCode": 30000621,
+  "published": false,
+  "mandatory": false,
+  "requiresSetup": false,
+  "protectedHandoff": false,
+  "notes": "No Early-access release is published right now."
+}
