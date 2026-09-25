@@ -124,8 +124,26 @@ jobs:
           @(
             '$ErrorActionPreference=''Stop''',
             '$here=Split-Path -Parent $MyInvocation.MyCommand.Path',
-            '& (Join-Path $here ''field-preview.ps1'') -OutputDirectory $here',
-            'exit $LASTEXITCODE'
+            '$result=Join-Path $here ''phase6.4-field-result.json''',
+            'if(Test-Path -LiteralPath $result){Remove-Item -LiteralPath $result -Force}',
+            '$args=@(''-NoLogo'',''-NoProfile'',''-ExecutionPolicy'',''Bypass'',''-File'',(Join-Path $here ''field-preview.ps1''),''-OutputDirectory'',$here,''-ResultPath'',$result)',
+            '$child=Start-Process -FilePath (Join-Path $PSHOME ''powershell.exe'') -ArgumentList $args -Wait -PassThru',
+            'Write-Host ''''',
+            'Write-Host ''Tailscale Quick Repair RC1 field bridge result'' -ForegroundColor Cyan',
+            'Write-Host (''Exit code: '' + $child.ExitCode)',
+            'if(Test-Path -LiteralPath $result){',
+            '  try{',
+            '    $r=Get-Content -LiteralPath $result -Raw|ConvertFrom-Json',
+            '    Write-Host (''Stage: '' + [string]$r.stage)',
+            '    Write-Host (''Passed: '' + [string]$r.passed)',
+            '    if(-not [string]::IsNullOrWhiteSpace([string]$r.error)){Write-Host (''Reason: '' + [string]$r.error) -ForegroundColor Yellow}',
+            '  }catch{Write-Host ''The result file exists but could not be read.'' -ForegroundColor Yellow}',
+            '}else{',
+            '  Write-Host ''No result file was produced.'' -ForegroundColor Yellow',
+            '}',
+            'Write-Host ''''',
+            'if($child.ExitCode -eq 0){Write-Host ''Bridge completed. Leave Auto Repair OFF until RC1 is checked.'' -ForegroundColor Green}else{Write-Host ''Bridge stopped before completion. Nothing should be guessed from this screen; use the Stage/Reason above.'' -ForegroundColor Yellow}',
+            '[void](Read-Host ''Press Enter to close'')'
           ) | Set-Content -LiteralPath (Join-Path $pack 'START-RC1-FIELD-BRIDGE.ps1') -Encoding UTF8
 
           [ordered]@{
