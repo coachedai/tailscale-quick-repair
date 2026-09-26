@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import urllib.request
+import urllib.error
 import zipfile
 
 REPOSITORY = "coachedai/tailscale-quick-repair"
@@ -20,6 +21,10 @@ MAX_TOTAL = 1536 * 1024 * 1024
 MAX_ENTRY = 16 * 1024 * 1024
 MAX_DEPTH = 3
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
 def request(url, token, method="GET"):
     req=urllib.request.Request(url,method=method,headers={
         "Authorization":"Bearer "+token,
@@ -27,6 +32,29 @@ def request(url, token, method="GET"):
         "User-Agent":"TailscaleQuickRepair-ArtifactPrivacyScrub"
     })
     return urllib.request.urlopen(req,timeout=90)
+
+def download_artifact(url, token):
+    req=urllib.request.Request(url,headers={
+        "Authorization":"Bearer "+token,
+        "Accept":"application/vnd.github+json",
+        "User-Agent":"TailscaleQuickRepair-ArtifactPrivacyScrub"
+    })
+    opener=urllib.request.build_opener(NoRedirect)
+    try:
+        response=opener.open(req,timeout=90)
+        try:
+            return response.read(MAX_ARTIFACT+1)
+        finally:
+            response.close()
+    except urllib.error.HTTPError as e:
+        if e.code not in (301,302,303,307,308):
+            raise
+        location=e.headers.get("Location")
+        if not location or not location.startswith("https://"):
+            raise RuntimeError("Artifact redirect was missing or not HTTPS")
+        clean=urllib.request.Request(location,headers={"User-Agent":"TailscaleQuickRepair-ArtifactPrivacyScrub"})
+        with urllib.request.urlopen(clean,timeout=90) as response:
+            return response.read(MAX_ARTIFACT+1)
 
 def api_json(url, token):
     with request(url,token) as r:
@@ -99,8 +127,7 @@ def main():
         total+=size
         if total>MAX_TOTAL:
             raise RuntimeError("Artifact scan exceeded total byte bound")
-        with request("https://api.github.com/repos/%s/actions/artifacts/%d/zip"%(REPOSITORY,aid),token) as r:
-            data=r.read(MAX_ARTIFACT+1)
+        data=download_artifact("https://api.github.com/repos/%s/actions/artifacts/%d/zip"%(REPOSITORY,aid),token)
         if len(data)>MAX_ARTIFACT:
             raise RuntimeError("Artifact download exceeded byte bound")
         scanned+=1
