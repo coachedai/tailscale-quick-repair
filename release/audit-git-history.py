@@ -75,7 +75,11 @@ def scan_text(text, add, object_id, kind):
     if DEVICE_NAME.search(text):
         add(kind, object_id, "machine_style_device_name")
     for m in EMAIL.finditer(text):
-        if not re.search(r"@users\.noreply\.github\.com$", m.group(0), re.I):
+        email = m.group(0)
+        if not (
+            re.search(r"@users\.noreply\.github\.com$", email, re.I) or
+            email.lower() == "noreply@github.com"
+        ):
             add(kind, object_id, "email_address")
     for m in IPV4.finditer(text):
         value = m.group(0)
@@ -201,10 +205,24 @@ def main():
                 add("commit",sha,"non_noreply_commit_email")
         scan_text(message, add, sha, "commit")
 
+    # Public commit hashes are safe provenance. Never include matched content
+    # or raw historical paths in the uploaded result.
+    for finding in findings:
+        if finding.get("kind") in {"blob","path"}:
+            sha = finding.get("object","")
+            if sha:
+                try:
+                    history = run_git(["log","--all","--find-object="+sha,"--format=%H","--reverse"]).decode("ascii","replace").splitlines()
+                    finding["change_commits"] = [x for x in history if x][:8]
+                    finding["change_commit_count"] = len([x for x in history if x])
+                except Exception:
+                    finding["change_commits"] = []
+                    finding["change_commit_count"] = 0
+
     result = {
         "schema":1,
         "passed":len(findings)==0,
-        "scope":"All reachable Git refs; historical paths/blobs and commit metadata. Findings contain hashes/reason codes only, never matched content.",
+        "scope":"All reachable Git refs; historical paths/blobs and commit metadata. Findings contain hashes/reason codes/public commit SHAs only, never matched content.",
         "counts":counts,
         "finding_count":len(findings),
         "findings":findings[:500],
