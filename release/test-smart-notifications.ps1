@@ -26,6 +26,10 @@ try {
     Check $other.Settings().Enabled 'Enabled preference survives a new app instance'
     $r=$other.Prepare('check_healthy',$time.ToString('o'),$time,$true,$true)
     Check ($r.Status -eq 'invalid') 'Routine healthy checks have no notification code'
+    foreach($code in @('startup_maintenance','startup_config_attention','startup_tailscale_missing','startup_service_disabled','startup_sign_in','startup_approval','startup_other_user')){
+        $description=[Tqr.SmartNotifications]::Describe($code)
+        Check ($description -and $description.Warning -and $description.Title -and $description.Body) ('Passive startup notification code is typed and generic: '+$code)
+    }
     $r=$other.Prepare('peer_lost',$time.AddSeconds(-1).ToString('o'),$time,$true,$true)
     Check ($r.Status -eq 'stale') 'Previously observed events do not replay on a new launch'
     $r=$other.Prepare('peer_lost',$time.AddMinutes(-11).ToString('o'),$time,$true,$true)

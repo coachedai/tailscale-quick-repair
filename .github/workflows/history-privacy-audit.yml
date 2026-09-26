@@ -3,9 +3,6 @@ name: Repository history privacy audit
 on:
   push:
     branches: [work/6.1-auto-repair-safety]
-    paths:
-      - release/audit-git-history.py
-      - .github/workflows/history-privacy-audit.yml
 
 permissions:
   contents: read

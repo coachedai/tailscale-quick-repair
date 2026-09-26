@@ -73,6 +73,9 @@ jobs:
       - name: Native bounded local status gates
         shell: powershell
         run: .\release\test-auto-repair-local-status.ps1 -EvidenceDirectory .\test-evidence
+      - name: Passive startup health local-only gates
+        shell: powershell
+        run: .\release\test-passive-startup-health.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
       - name: Real installed Windows service and full recurrence gates
         shell: powershell
         env:

@@ -51,7 +51,7 @@ The privacy scanner fails closed on unreviewed non-text/binary repository files.
 
 ## Historical audit
 
-All reachable repository refs are scanned separately from the current-tree release scan. The historical audit reports only Git object hashes, generic reason codes and public commit hashes; it never prints matched sensitive content.
+All reachable repository refs are scanned separately from the current-tree release scan. The historical audit reports only Git object hashes, generic reason codes and public commit hashes; it never prints matched sensitive content. The history audit runs on every development-branch push so a value that is later deleted from the current tree cannot silently remain only in Git history.
 
 One pre-isolation README object is retained as explicit historical redaction debt by its Git object hash only. It contained a cross-project naming reference that was removed in a later sanitized revision. No content, URL, secret, configuration, path, address or data from that unrelated project is included in the current repository. Any additional historical cross-project or privacy finding fails the audit.
 

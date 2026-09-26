@@ -16,7 +16,8 @@ if ($zips.Count -ne 1) {
 
 $requiredSources = @(
     'src\native\PublicSetupHost.cs',
-    'src\native\PublicSetupEntry.cs'
+    'src\native\PublicSetupEntry.cs',
+    'src\native\PassiveStartupHealth.cs'
 )
 
 foreach ($relative in $requiredSources) {
@@ -148,6 +149,7 @@ try {
         ('"{0}"' -f (Join-Path $repo 'src\native\LocalHistory.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\ConnectionQuality.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\SmartNotifications.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\PassiveStartupHealth.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\DiagnosticAnalysis.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\SupportReport.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\SupportReportWindow.cs')))
@@ -369,6 +371,7 @@ try {
     & (Join-Path $PSScriptRoot 'add-progress-reset.ps1') -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-support-export.ps1') -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-auto-repair-worker.ps1') -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-passive-startup-health.ps1') -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-protected-update-handoff.ps1') -Path $uiPath
     Copy-Item -LiteralPath (Join-Path $repo 'src\app\Advanced-Diagnostics.ps1') -Destination (Join-Path $appDir 'Advanced-Diagnostics.ps1') -Force
 

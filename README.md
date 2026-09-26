@@ -20,7 +20,7 @@ Machine-specific values such as peer addresses, usernames, local paths and setti
 
 The target can be changed later inside Quick Repair. It is not uploaded to GitHub.
 
-The release pipeline performs repository-isolation and privacy scans before validation and again immediately before publication.
+The release pipeline performs repository-isolation and privacy scans before validation and again immediately before publication. A separate all-ref history audit also scans reachable Git history on every development push without printing matched sensitive content.
 
 ## Repair scope
 
@@ -45,6 +45,7 @@ See `docs/interrupted-setup-recovery.md` for the recovery model and its current 
 - Native desktop host
 - Tailscale-only repair engine
 - Optional automatic repair monitor
+- Local-only passive startup health
 - Read-only advanced diagnostics
 - Native self-updater
 - Native Setup / repair-integration host

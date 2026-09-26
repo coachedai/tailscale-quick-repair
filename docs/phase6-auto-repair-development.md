@@ -1,14 +1,13 @@
 # Phase 6: Auto Repair 2.0
 
-## Current candidate
+## Phase 6 release baseline
 
-**3.0.0-rc.2 / 30001002** is the current **unpublished** Early-access candidate. The live Early-access release remains **3.0.0-rc.1** and Stable remains **3.0.0-phase5.2.1**.
+**3.0.0-rc.2 / 30001002** is the live Early-access Phase 6 baseline. Stable remains **3.0.0-phase5.2.1**.
 
-RC2 deliberately receives a new version identity because its bytes differ from RC1. Its narrow product change removes Unicode literals from the protected-update transform so Windows PowerShell 5.1 cannot turn the update-success separator into mojibake. The packaged runtime now rejects the UTF-8 mojibake lead character, and protected restart acknowledgement requires the exact ASCII-safe success text.
+RC2 closed the Phase 6 release-candidate packaging gap: it uses the normal published-RC1 -> current-candidate Preview upgrade gate, fixes protected-update status encoding, preserves the full native/recovery/permissions suite, and keeps real-machine evidence off GitHub.
 
-RC2 does **not** change Auto Repair authority, Tailscale repair scope, VPN handling, retry policy, diagnostics authority, protected permissions or update trust. It also replaces the retired “current field pack” candidate gate with a synthetic **published RC1 -> current candidate** Early-access upgrade gate using the native RC1 updater and refreshed protected Setup path.
+New product work continues in **Phase 7: Startup / Passive Health**. See `docs/phase7-passive-startup-health.md`.
 
-The one-time RC1 field bridge remains separately pinned to the exact already-published RC1 assets for bootstrap acceptance. Real-machine evidence remains off GitHub under the repository privacy policy.
 ## What Phase 6 now includes
 
 Automatic repair is local-only. Policy inputs are limited to the Tailscale service, service startup mode, the local Tailscale client and local backend state. Peer reachability, latency, routes, diagnostics and arbitrary error text cannot authorise automatic recovery.

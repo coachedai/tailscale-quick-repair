@@ -1,10 +1,10 @@
 {
   "publish": false,
   "channel": "preview",
-  "version": "3.0.0-rc.2",
-  "versionCode": 30001002,
+  "version": "3.0.0-rc.3",
+  "versionCode": 30001003,
   "requiresSetup": false,
   "publicInstaller": true,
-  "notes": "3.0.0 RC2: RC1 plus ASCII-safe protected-update status text, packaged mojibake regression coverage, and a synthetic published-RC1-to-RC2 Early-access upgrade gate. Repair and VPN/network policy are unchanged. Early access only.",
+  "notes": "3.0.0 RC3: Phase 7 local-only passive startup health, typed actionable tray notifications, silent healthy startup, and continuous full-history privacy auditing. No remote peer check is added at startup and repair authority is unchanged. Early access only.",
   "protectedHandoff": true
 }

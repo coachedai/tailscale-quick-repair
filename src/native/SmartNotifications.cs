@@ -192,6 +192,13 @@ namespace Tqr
                 case "update_installed": title = "Quick Repair updated"; body = "The updater reported success. Open Maintenance to check the new installation."; break;
                 case "update_attention": title = "Quick Repair update needs attention"; body = "The updater reported a problem. Open Maintenance to review the result before retrying."; warning = true; break;
                 case "integrity_attention": title = "Quick Repair integrity needs attention"; body = "An integrity check found an issue. Open Maintenance to review it."; warning = true; break;
+                case "startup_maintenance": title = "Quick Repair needs maintenance"; body = "Passive startup health found a local Quick Repair installation issue. Open Maintenance to review it."; warning = true; break;
+                case "startup_config_attention": title = "Quick Repair target needs attention"; body = "Passive startup health could not validate the local target configuration. Open Quick Repair to review it."; warning = true; break;
+                case "startup_tailscale_missing": title = "Tailscale is unavailable"; body = "Passive startup health could not find the local Tailscale service. Open Quick Repair to review it."; warning = true; break;
+                case "startup_service_disabled": title = "Tailscale service is disabled"; body = "Passive startup health found the Tailscale service disabled and left it unchanged."; warning = true; break;
+                case "startup_sign_in": title = "Tailscale sign-in needed"; body = "Passive startup health found that Tailscale needs sign-in. Open Tailscale when ready."; warning = true; break;
+                case "startup_approval": title = "Tailscale approval needed"; body = "Passive startup health found that this Tailscale device needs approval."; warning = true; break;
+                case "startup_other_user": title = "Tailscale is active for another user"; body = "Passive startup health found Tailscale active under another Windows user and left it unchanged."; warning = true; break;
                 case "test": title = "Quick Repair notification test"; body = "Notifications are enabled. Only meaningful events observed while the app is running can alert you."; break;
                 default: return null;
             }
