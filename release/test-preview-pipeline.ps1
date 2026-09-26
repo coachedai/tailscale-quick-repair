@@ -13,9 +13,13 @@ function Count([string]$Needle){return ([regex]::Matches($workflow,[regex]::Esca
 try{
     Check ([int]$config.schema -eq 1 -and $config.publish -is [bool] -and $config.prerelease -is [bool] -and [bool]$config.prerelease) 'Preview publication intent has the fixed guarded schema'
     Check ((Count '  preview-publish:') -eq 1) 'Exactly one Preview publisher job exists'
-    Check ($workflow.Contains('needs: [verify, released-upgrade]') -and
+    Check ($workflow.Contains('needs: [verify, released-upgrade, history-privacy]') -and
            $workflow.Contains("needs.verify.outputs.preview_publish == 'true'") -and
-           $workflow.Contains("needs.released-upgrade.result == 'success'")) 'Preview publication is blocked on both exact development jobs'
+           $workflow.Contains("needs.released-upgrade.result == 'success'") -and
+           $workflow.Contains("needs.history-privacy.result == 'success'")) 'Preview publication is blocked on exact Windows jobs and zero-finding history acceptance'
+    Check ($workflow.Contains('test-git-history-audit.py') -and $workflow.Contains('Require zero history privacy findings')) 'Same-workflow history acceptance runs audited synthetic tests and the actual full-history scan'
+    Check ((Count 'test-source-syntax.ps1') -eq 2) 'Native source parsing runs before build and before upgrade fixture mutation'
+    Check ($workflow.Contains("if: always() && steps.source_privacy.outcome == 'success'")) 'A rejected source snapshot is not reuploaded as evidence'
     Check ($workflow.Contains('Validate published RC1 to current Early-access candidate') -and
            $workflow.Contains('test-preview-upgrade.ps1')) 'Preview publication is gated by the normal published-RC1 to current-candidate upgrade path'
     Check (-not $workflow.Contains('Assemble current candidate field pack') -and

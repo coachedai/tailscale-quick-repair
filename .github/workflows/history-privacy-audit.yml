@@ -36,7 +36,13 @@ jobs:
           set -euo pipefail
           git fetch --prune --no-recurse-submodules origin \
             '+refs/heads/*:refs/remotes/origin/*' \
-            '+refs/tags/*:refs/tags/*'
+            '+refs/tags/*:refs/tags/*' \
+            '+refs/pull/*/head:refs/tqr-audit/pull/*/head' \
+            '+refs/pull/*/merge:refs/tqr-audit/pull/*/merge'
+
+      - name: Test history audit against synthetic local repositories
+        shell: bash
+        run: python3 release/test-git-history-audit.py
 
       - name: Scan all reachable Git history without printing matched content
         shell: bash

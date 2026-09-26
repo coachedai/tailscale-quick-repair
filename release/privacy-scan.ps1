@@ -14,7 +14,12 @@ function Add-Finding {
         [string]$Reason
     )
 
-    $List.Add("$Path :: $Reason")
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($Path))
+        $pathId = ([BitConverter]::ToString($digest)).Replace('-', '').ToLowerInvariant()
+        $List.Add("file-sha256=$pathId :: $Reason")
+    } finally { $hasher.Dispose() }
 }
 
 $findings = New-Object 'System.Collections.Generic.List[string]'
@@ -24,7 +29,7 @@ if (-not $SkipRepositoryIdentity) {
         -not [string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY) -and
         $env:GITHUB_REPOSITORY -ne $ExpectedRepository
     ) {
-        throw "Repository isolation check failed. Expected $ExpectedRepository, got $($env:GITHUB_REPOSITORY)."
+        throw 'Repository isolation check failed; unexpected repository.'
     }
 
     try {
@@ -34,7 +39,7 @@ if (-not $SkipRepositoryIdentity) {
             $origin -and
             $origin -notmatch '(?i)(github\.com[:/])coachedai/tailscale-quick-repair(?:\.git)?$'
         ) {
-            throw "Repository isolation check failed. Unexpected origin: $origin"
+            throw 'Repository isolation check failed; unexpected origin.'
         }
     }
     catch {
@@ -207,7 +212,7 @@ foreach ($relative in $tracked) {
             $email -notmatch '(?i)@users\.noreply\.github\.com$' -and
             $email -cne 'noreply@github.com'
         ) {
-            Add-Finding $findings $relativeNormalized "Email address detected: $email"
+            Add-Finding $findings $relativeNormalized 'Email address detected; value withheld.'
         }
     }
 
@@ -243,7 +248,7 @@ foreach ($relative in $tracked) {
             continue
         }
 
-        Add-Finding $findings $relativeNormalized "Literal IPv4 address detected: $value"
+        Add-Finding $findings $relativeNormalized 'Literal IPv4 address detected; value withheld.'
     }
 
     foreach ($match in [regex]::Matches($content, $escapedIpv4Pattern)) {

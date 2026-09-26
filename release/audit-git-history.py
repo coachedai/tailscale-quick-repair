@@ -41,7 +41,7 @@ ALLOWED_IPV4 = {"0.0.0.0","127.0.0.1","2.0.0.0","3.0.0.0"}
 
 # One pre-isolation README blob is known historical redaction debt. This is
 # identified only by its public Git object ID; the matched cross-project text
-# is intentionally not reproduced here. Any additional finding still fails.
+# is intentionally not reproduced here. All findings, including this debt, fail.
 KNOWN_LEGACY_FINDINGS = {
     ("blob","4d63c9eff326cc8cc48c1251b27fd6852609e25e","cross_project_content")
 }
@@ -143,6 +143,27 @@ def main():
             object_paths[sha].add(path)
     counts["objects"] = len(all_ids)
 
+    # rev-list reports at most one path per object. Inspect every historical
+    # root tree as well, so a safe text blob renamed to an opaque file cannot
+    # evade the path policy. Paths never leave this process except as hashes.
+    trees = set(run_git(["log", "--all", "--format=%T"]).decode("ascii").splitlines())
+    for tree in trees:
+        for entry in run_git(["ls-tree", "-r", "-z", "--full-tree", tree]).split(b"\0"):
+            if not entry:
+                continue
+            info, raw_path = entry.split(b"\t", 1)
+            mode, kind, sha = info.decode("ascii").split()
+            path = raw_path.decode("utf-8", "surrogateescape")
+            if kind == "blob":
+                object_paths.setdefault(sha, set()).add(path)
+                if mode == "120000":
+                    add("path", sha, "historical_symbolic_link", path)
+            elif kind == "commit":
+                add("path", sha, "historical_submodule_not_audited", path)
+
+    for ref in refs:
+        scan_text(ref, add, path_hash(ref), "ref")
+
     batch = subprocess.Popen(
         ["git","cat-file","--batch-check=%(objectname) %(objecttype) %(objectsize)"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -153,10 +174,13 @@ def main():
         raise RuntimeError("git cat-file batch-check failed")
 
     blob_sizes = {}
+    tag_ids = []
     for line in check_out.decode("ascii","replace").splitlines():
         parts = line.split()
         if len(parts) == 3 and parts[1] == "blob":
             blob_sizes[parts[0]] = int(parts[2])
+        elif len(parts) == 3 and parts[1] == "tag":
+            tag_ids.append(parts[0])
     counts["blobs"] = len(blob_sizes)
 
     text_blob_ids = []
@@ -188,21 +212,31 @@ def main():
     counts["text_blobs"] = len(text_blob_ids)
     cat = subprocess.Popen(["git","cat-file","--batch"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert cat.stdin and cat.stdout
-    for sha in text_blob_ids:
-        cat.stdin.write((sha+"\n").encode("ascii"))
-    cat.stdin.close()
     for expected in text_blob_ids:
+        cat.stdin.write((expected+"\n").encode("ascii"))
+        cat.stdin.flush()
         header = cat.stdout.readline().decode("ascii","replace").strip().split()
-        if len(header) < 3 or header[1] != "blob":
+        if len(header) != 3 or header[0] != expected or header[1] != "blob":
             raise RuntimeError("unexpected blob batch header")
         size = int(header[2])
         data = cat.stdout.read(size)
         cat.stdout.read(1)
-        text = data.decode("utf-8","replace")
+        try:
+            text = data.decode("utf-8", "strict")
+        except UnicodeDecodeError:
+            add("blob", expected, "non_utf8_text_blob")
+            continue
+        if "\0" in text:
+            add("blob", expected, "binary_content_in_text_blob")
         scan_text(text, add, expected, "blob")
+    cat.stdin.close()
     cat.wait()
     if cat.returncode != 0:
         raise RuntimeError("git cat-file batch failed")
+
+    for tag_id in tag_ids:
+        tag = run_git(["cat-file", "tag", tag_id]).decode("utf-8", "replace")
+        scan_text(tag, add, tag_id, "tag")
 
     log_bytes = run_git(["log","--all","--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e"])
     records = log_bytes.decode("utf-8","replace").split("\x1e")
@@ -221,6 +255,8 @@ def main():
                 email.lower() == "noreply@github.com"
             ):
                 add("commit",sha,"non_noreply_commit_email")
+        scan_text(author_name, add, sha, "commit")
+        scan_text(committer_name, add, sha, "commit")
         scan_text(message, add, sha, "commit")
 
     # Public commit hashes are safe provenance. Never include matched content
@@ -248,7 +284,7 @@ def main():
 
     result = {
         "schema":2,
-        "passed":len(unexpected)==0,
+        "passed":len(findings)==0,
         "scope":"All reachable Git refs; historical paths/blobs and commit metadata. Findings contain hashes/reason codes/public commit SHAs only, never matched content.",
         "counts":counts,
         "finding_count":len(findings),
@@ -261,10 +297,10 @@ def main():
     with open(args.result,"w",encoding="utf-8") as f:
         json.dump(result,f,indent=2,sort_keys=True)
         f.write("\n")
-    if unexpected:
+    if findings:
         print("HISTORY PRIVACY AUDIT FAILED: %d unexpected generic finding(s); %d known legacy debt finding(s). Matched content is intentionally not printed." % (len(unexpected),len(legacy)))
         return 1
-    print("History privacy audit passed with %d known legacy debt finding(s): %d commits, %d blobs, %d refs. Matched content is intentionally not printed." % (len(legacy),counts["commits"],counts["blobs"],counts["refs"]))
+    print("History privacy audit passed with %d findings: %d commits, %d blobs, %d refs. Matched content is intentionally not printed." % (len(legacy),counts["commits"],counts["blobs"],counts["refs"]))
     return 0
 
 if __name__ == "__main__":

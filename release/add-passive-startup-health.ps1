@@ -9,6 +9,15 @@ function Replace-One([string]$Old,[string]$New){
 }
 
 $functions=@'
+    function Test-PassiveStartupPresentationAllowed {
+        # A passive result must not replace an active operation or any newer
+        # full check. This guard grants no repair or shared-lock authority.
+        if ($global:TqrUiShutdownRequested -or $script:repairActive -or
+            $script:updateDownloadActive -or $script:pendingProtectedUpdateStarted) { return $false }
+        if ($script:lastData) { return $false }
+        return $true
+    }
+
     function Get-PassiveStartupConfigState {
         try {
             if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) { return 'Missing' }
@@ -31,7 +40,7 @@ $functions=@'
     function Update-PassiveTrayStatus {
         param($Decision)
         if (-not $Decision -or -not $script:trayStatusItem) { return }
-        if ($script:lastData -and [bool]$script:lastData.done) { return }
+        if (-not (Test-PassiveStartupPresentationAllowed)) { return }
         try {
             $status='Local status unknown'
             $color=[System.Drawing.Color]::FromArgb(70,80,92)
@@ -50,6 +59,7 @@ $functions=@'
 
     function Apply-PassiveStartupPresentation {
         param($Decision,$Health,$EngineCheck)
+        if (-not $Decision -or -not (Test-PassiveStartupPresentationAllowed)) { return }
         try {
             if($Health){
                 $LocalAppValue.Text=[string]$Health.Client
@@ -79,6 +89,7 @@ $functions=@'
     }
 
     function Invoke-PassiveStartupHealth {
+        if (-not (Test-PassiveStartupPresentationAllowed)) { return $null }
         try {
             Initialize-OperationGate
             $engine=Test-RepairEngine
@@ -103,6 +114,7 @@ $functions=@'
             }
 
             $decision=[Tqr.PassiveStartupHealth]::Evaluate($observation)
+            if (-not (Test-PassiveStartupPresentationAllowed)) { return $null }
             Apply-PassiveStartupPresentation $decision $health $engine
 
             if(-not [string]::IsNullOrWhiteSpace([string]$decision.NotificationCode)){
@@ -110,6 +122,7 @@ $functions=@'
             }
             return $decision
         } catch {
+            if (-not (Test-PassiveStartupPresentationAllowed)) { return $null }
             try {
                 Set-Badge $LocalBadge $LocalBadgeText 'LOCAL UNKNOWN' 'idle'
                 if(-not ($script:lastData -and [bool]$script:lastData.done)){

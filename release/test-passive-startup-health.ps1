@@ -68,10 +68,33 @@ try{
     $text=[IO.File]::ReadAllText($uiPath,[Text.Encoding]::UTF8)
     $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)
     Check ($errors.Count -eq 0) 'Delivered passive-health UI parses on Windows PowerShell 5.1'
-    foreach($name in @('Get-PassiveStartupConfigState','Test-PassiveStartupAppFiles','Update-PassiveTrayStatus','Apply-PassiveStartupPresentation','Invoke-PassiveStartupHealth')){
+    foreach($name in @('Test-PassiveStartupPresentationAllowed','Get-PassiveStartupConfigState','Test-PassiveStartupAppFiles','Update-PassiveTrayStatus','Apply-PassiveStartupPresentation','Invoke-PassiveStartupHealth')){
         $nodes=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true))
         Check ($nodes.Count -eq 1) ('Exactly one delivered '+$name)
     }
+    $guard=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Test-PassiveStartupPresentationAllowed'},$true))
+    Check ($guard.Count -eq 1) 'Delivered passive presentation has one operation and freshness guard'
+    . ([scriptblock]::Create($guard[0].Extent.Text))
+    $global:TqrUiShutdownRequested=$false
+    $script:repairActive=$false
+    $script:updateDownloadActive=$false
+    $script:pendingProtectedUpdateStarted=$false
+    $script:lastData=$null
+    Check (Test-PassiveStartupPresentationAllowed) 'Idle startup permits a local presentation'
+    foreach($flag in @('repairActive','updateDownloadActive','pendingProtectedUpdateStarted')){
+        Set-Variable -Name $flag -Value $true -Scope Script
+        Check (-not (Test-PassiveStartupPresentationAllowed)) ('Active '+$flag+' prevents passive presentation')
+        Set-Variable -Name $flag -Value $false -Scope Script
+    }
+    $global:TqrUiShutdownRequested=$true
+    Check (-not (Test-PassiveStartupPresentationAllowed)) 'Shutdown prevents passive presentation'
+    $global:TqrUiShutdownRequested=$false
+    foreach($done in @($false,$true)){
+        $script:lastData=[pscustomobject]@{done=$done}
+        Check (-not (Test-PassiveStartupPresentationAllowed)) 'A newer full-check result is not overwritten by startup health'
+    }
+    $script:lastData=$null
+
     $invoke=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Invoke-PassiveStartupHealth'},$true))[0].Extent.Text
     foreach($forbidden in @('Start-Repair','Invoke-AutoRepairMonitorNow','Advanced-Diagnostics','Repair-Backend.ps1','tailscale ping','peerReachable','RemoteStatus','route','latency')){
         Check (-not $invoke.Contains($forbidden)) ('Passive startup path excludes '+$forbidden)

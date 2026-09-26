@@ -9,6 +9,54 @@ concurrency:
   group: tqr-auto-repair-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  history-privacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          submodules: false
+      - name: Require exact isolated history source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "coachedai/tailscale-quick-repair"
+          test "$GITHUB_REF_NAME" = "work/6.1-auto-repair-safety"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          origin="$(git remote get-url origin)"
+          case "$origin" in
+            https://github.com/coachedai/tailscale-quick-repair|https://github.com/coachedai/tailscale-quick-repair.git) ;;
+            *) echo "Unexpected origin" >&2; exit 2 ;;
+          esac
+      - name: Test history audit against synthetic local repositories
+        shell: bash
+        run: python3 release/test-git-history-audit.py
+      - name: Fetch Tailscale refs read-only without submodules
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --prune --no-recurse-submodules origin \
+            '+refs/heads/*:refs/remotes/origin/*' \
+            '+refs/tags/*:refs/tags/*' \
+            '+refs/pull/*/head:refs/tqr-audit/pull/*/head' \
+            '+refs/pull/*/merge:refs/tqr-audit/pull/*/merge'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Require zero history privacy findings
+        shell: bash
+        run: python3 release/audit-git-history.py --result history-privacy-results.json
+      - name: Preserve hashed history audit result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-history-privacy-results
+          path: history-privacy-results.json
+          if-no-files-found: error
   verify:
     runs-on: windows-latest
     timeout-minutes: 25
@@ -43,8 +91,12 @@ jobs:
           }
           "publish=$(([bool]$intent.publish).ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
       - name: Privacy and repository preflight
+        id: source_privacy
         shell: powershell
         run: .\release\privacy-scan.ps1 -Root .
+      - name: Parse all PowerShell source before build and native tests
+        shell: powershell
+        run: .\release\test-source-syntax.ps1 -EvidenceDirectory .\test-evidence
       - name: Release publication pipeline contract
         shell: powershell
         run: .\release\test-release-pipeline.ps1 -EvidenceDirectory .\test-evidence
@@ -108,7 +160,7 @@ jobs:
           git diff --exit-code
           if ($LASTEXITCODE -ne 0) { throw 'Validation unexpectedly changed source.' }
       - name: Preserve exact source snapshot
-        if: always()
+        if: always() && steps.source_privacy.outcome == 'success'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path test-evidence -Force | Out-Null
@@ -148,6 +200,9 @@ jobs:
       - name: Recheck source privacy and isolation
         shell: powershell
         run: .\release\privacy-scan.ps1 -Root .
+      - name: Parse upgrade source before any fixture mutation
+        shell: powershell
+        run: .\release\test-source-syntax.ps1 -EvidenceDirectory .\upgrade-evidence
       - name: Preserve one-time published RC1 field bridge acceptance
         shell: powershell
         env:
@@ -212,8 +267,8 @@ jobs:
           path: upgrade-evidence/*
           if-no-files-found: error
   preview-publish:
-    needs: [verify, released-upgrade]
-    if: needs.verify.outputs.preview_publish == 'true' && needs.released-upgrade.result == 'success'
+    needs: [verify, released-upgrade, history-privacy]
+    if: needs.verify.outputs.preview_publish == 'true' && needs.released-upgrade.result == 'success' && needs.history-privacy.result == 'success'
     permissions:
       contents: write
     runs-on: windows-latest
@@ -385,4 +440,3 @@ jobs:
           finally {
             git worktree remove $worktree --force 2>$null
           }
-
