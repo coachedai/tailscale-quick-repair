@@ -47,8 +47,7 @@ $backendSource = [IO.File]::ReadAllText(
 )
 
 if (
-    $backendSource -match '(?m)^\s*\$Peer\s*=\s*[''\"]\d{1,3}(?:\.\d{1,3}){3}[''\"]' -or
-    $backendSource -match '100\.106\.128\.84'
+    $backendSource -match '(?m)^\s*\$Peer\s*=\s*[''\"]\d{1,3}(?:\.\d{1,3}){3}[''\"]'
 ) {
     throw 'Public repair backend still contains a baked-in peer address.'
 }

@@ -34,6 +34,8 @@ WINDOWS_USER_PATH = re.compile(r"\b[A-Z]:\\Users\\([^\\\r\n]+)", re.I)
 DEVICE_NAME = re.compile(r"\bvmi\d{5,}\b", re.I)
 EMAIL = re.compile(r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", re.I)
 IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+IPV4_ESCAPED = re.compile(r"(?<!\d)(?:\d{1,3}\\\.){3}\d{1,3}(?!\d)")
+IPV4_BRACKETED = re.compile(r"(?<!\d)(?:\d{1,3}\[\.\]){3}\d{1,3}(?!\d)")
 OTHER_PROJECT = "coach" + "intake"
 ALLOWED_IPV4 = {"0.0.0.0","127.0.0.1","2.0.0.0","3.0.0.0"}
 
@@ -93,6 +95,15 @@ def scan_text(text, add, object_id, kind):
         if value in ALLOWED_IPV4 or not valid_ipv4(value) or is_assembly_version_line(text, m.start(), value):
             continue
         add(kind, object_id, "literal_ipv4")
+    for pattern, reason in (
+        (IPV4_ESCAPED, "escaped_literal_ipv4"),
+        (IPV4_BRACKETED, "bracket_encoded_literal_ipv4"),
+    ):
+        for m in pattern.finditer(text):
+            value = m.group(0).replace("\\.", ".").replace("[.]", ".")
+            if value in ALLOWED_IPV4 or not valid_ipv4(value):
+                continue
+            add(kind, object_id, reason)
 
 def main():
     ap = argparse.ArgumentParser()

@@ -46,7 +46,7 @@ Do not record a per-user or per-machine acceptance result in this public reposit
 
 If a real-machine observation reveals a product issue, record only the generalized product behavior or bug necessary to fix it, with all user/machine context removed.
 
-The privacy scanner fails closed on unreviewed non-text/binary repository files. Evidence-like media, screen captures, logs, dumps, registry/event exports, packet captures, opaque archives, office/PDF documents, databases/backups and arbitrary binary blobs are forbidden. Expanded release packages may contain only the expected compiled native executable/library binaries in addition to scanned text files.
+The privacy scanner fails closed on unreviewed non-text/binary repository files. Evidence-like media, screen captures, logs, dumps, registry/event exports, packet captures, opaque archives, office/PDF documents, databases/backups and arbitrary binary blobs are forbidden. Expanded release packages may contain only the expected compiled native executable/library binaries in addition to scanned text files. Literal network identifiers are blocked in normal, regex-escaped and bracket-encoded dotted forms so a defensive pattern cannot accidentally preserve a machine-specific address in source history.
 
 
 ## Historical audit

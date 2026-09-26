@@ -121,6 +121,8 @@ $windowsUserPathPattern = '(?i)\b[A-Z]:\\Users\\([^\\\r\n]+)'
 $deviceNamePattern = '(?i)\bvmi\d{5,}\b'
 $emailPattern = '(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b'
 $ipv4Pattern = '(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])'
+$escapedIpv4Pattern = '(?<!\d)(?:\d{1,3}\\\.){3}\d{1,3}(?!\d)'
+$bracketIpv4Pattern = '(?<!\d)(?:\d{1,3}\[\.\]){3}\d{1,3}(?!\d)'
 
 foreach ($relative in $tracked) {
     if ([string]::IsNullOrWhiteSpace($relative)) { continue }
@@ -242,6 +244,30 @@ foreach ($relative in $tracked) {
         }
 
         Add-Finding $findings $relativeNormalized "Literal IPv4 address detected: $value"
+    }
+
+    foreach ($match in [regex]::Matches($content, $escapedIpv4Pattern)) {
+        $value = $match.Value -replace '\\\.', '.'
+        $octets = @($value.Split('.') | ForEach-Object { [int]$_ })
+        if (
+            $value -notin @('0.0.0.0', '127.0.0.1', '2.0.0.0', '3.0.0.0') -and
+            $octets.Count -eq 4 -and
+            ($octets | Where-Object { $_ -gt 255 }).Count -eq 0
+        ) {
+            Add-Finding $findings $relativeNormalized 'Escaped literal IPv4 address detected.'
+        }
+    }
+
+    foreach ($match in [regex]::Matches($content, $bracketIpv4Pattern)) {
+        $value = $match.Value.Replace('[.]','.')
+        $octets = @($value.Split('.') | ForEach-Object { [int]$_ })
+        if (
+            $value -notin @('0.0.0.0', '127.0.0.1', '2.0.0.0', '3.0.0.0') -and
+            $octets.Count -eq 4 -and
+            ($octets | Where-Object { $_ -gt 255 }).Count -eq 0
+        ) {
+            Add-Finding $findings $relativeNormalized 'Bracket-encoded literal IPv4 address detected.'
+        }
     }
 }
 

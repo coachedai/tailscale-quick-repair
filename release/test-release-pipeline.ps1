@@ -44,6 +44,14 @@ try{
         Check $blocked 'Privacy scanner rejects synthetic screenshot, archive and opaque binary evidence'
         Remove-Item -LiteralPath $privacyLab -Recurse -Force
         New-Item -ItemType Directory -Path $privacyLab|Out-Null
+        $slash=[char]92
+        $encodedAddress='192'+$slash+'.0'+$slash+'.2'+$slash+'.45'
+        Set-Content -LiteralPath (Join-Path $privacyLab 'encoded-address-fixture.ps1') -Value $encodedAddress -Encoding ASCII
+        $encodedBlocked=$false
+        try{& $privacyScan -Root $privacyLab -SkipRepositoryIdentity}catch{$encodedBlocked=$true}
+        Check $encodedBlocked 'Privacy scanner rejects escaped literal network addresses'
+        Remove-Item -LiteralPath $privacyLab -Recurse -Force
+        New-Item -ItemType Directory -Path $privacyLab|Out-Null
         [IO.File]::WriteAllBytes((Join-Path $privacyLab 'fixture.exe'),[byte[]](1,2,3,4))
         [IO.File]::WriteAllBytes((Join-Path $privacyLab 'fixture.dll'),[byte[]](5,6,7,8))
         Set-Content -LiteralPath (Join-Path $privacyLab 'fixture.txt') -Value 'synthetic package fixture' -Encoding ASCII
