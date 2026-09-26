@@ -1,0 +1,39 @@
+name: One-time Actions artifact privacy scrub
+
+on:
+  push:
+    branches: [work/6.1-auto-repair-safety]
+    paths:
+      - release/scrub-actions-artifacts.py
+      - .github/workflows/artifact-privacy-scrub.yml
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  scrub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require isolated Tailscale source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "coachedai/tailscale-quick-repair"
+          test "$GITHUB_REF_NAME" = "work/6.1-auto-repair-safety"
+          origin="$(git remote get-url origin)"
+          case "$origin" in
+            https://github.com/coachedai/tailscale-quick-repair|https://github.com/coachedai/tailscale-quick-repair.git) ;;
+            *) echo "Unexpected origin" >&2; exit 2 ;;
+          esac
+      - name: Delete only matching Tailscale Actions artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 release/scrub-actions-artifacts.py
+      - name: Show privacy-safe result
+        shell: bash
+        run: cat artifact-privacy-scrub-result.json
