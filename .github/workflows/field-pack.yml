@@ -1,0 +1,186 @@
+name: Assemble verified RC1 field pack
+
+on:
+  push:
+    branches: [work/6.1-auto-repair-safety]
+    paths:
+      - .github/workflows/field-pack.yml
+
+permissions:
+  contents: read
+
+jobs:
+  pack:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Require isolated disarmed source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-quick-repair' -or
+              $env:GITHUB_REF_NAME -cne 'work/6.1-auto-repair-safety') {
+            throw 'Wrong repository or branch.'
+          }
+          $origin=(git remote get-url origin).Trim()
+          if ($origin -cne 'https://github.com/coachedai/tailscale-quick-repair' -and
+              $origin -cne 'https://github.com/coachedai/tailscale-quick-repair.git') {
+            throw 'Unexpected origin.'
+          }
+          $intent=Get-Content release/preview-publish.json -Raw|ConvertFrom-Json
+          if ($intent.publish -isnot [bool] -or [bool]$intent.publish) {
+            throw 'Preview publication must remain disarmed while assembling a field pack.'
+          }
+          .\release\privacy-scan.ps1 -Root .
+
+      - name: Download exact published RC1 assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag='v3.0.0-rc.1'
+          $expectedTarget='2555bf4af30845d2c722964e289cfdfe15a412bf'
+          $expected=[ordered]@{
+            'TailscaleQuickRepair-3.0.0-rc.1.zip'=@{size=[int64]134104;sha256='dcf715e2289dff3c0077f6de43c7195750ec81066c82fcf9e5d6a8eff7d8423d'}
+            'TailscaleQuickRepair-3.0.0-rc.1.zip.sha256'=@{size=[int64]66;sha256='cdbcf48eeddc01a591f4ac9ebb911220e351a68c7e233cafe3cd8040408b25aa'}
+            'TailscaleQuickRepair-SetupPackage-3.0.0-rc.1.zip'=@{size=[int64]184330;sha256='e6097330a68153c3db65a3f33dad23508e2c6cb18da85ddc88c773594ecfa05c'}
+            'TailscaleQuickRepair-SetupPackage-3.0.0-rc.1.zip.sha256'=@{size=[int64]66;sha256='8162b50689de28c40de1975eb077be49c22734d8911e5acb5f2e428c1dd992b1'}
+          }
+
+          $releaseJson=& gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($releaseJson)) { throw 'Published RC1 release could not be read.' }
+          $release=$releaseJson|ConvertFrom-Json
+          if ([string]$release.tag_name -cne $tag -or [bool]$release.draft -or -not [bool]$release.prerelease -or
+              [string]$release.target_commitish -cne $expectedTarget) {
+            throw 'Published RC1 release identity drifted.'
+          }
+          if (@($release.assets).Count -ne $expected.Count) { throw 'Published RC1 asset set changed.' }
+
+          $pack=Join-Path $PWD 'field-pack'
+          if(Test-Path $pack){Remove-Item $pack -Recurse -Force}
+          New-Item -ItemType Directory -Path $pack|Out-Null
+
+          foreach($name in $expected.Keys){
+            $meta=$expected[$name]
+            $remote=@($release.assets|Where-Object {[string]$_.name -ceq $name})
+            if($remote.Count -ne 1){throw ('Missing or duplicated published asset: '+$name)}
+            if([int64]$remote[0].size -ne [int64]$meta.size -or
+               [string]$remote[0].digest -cne ('sha256:'+([string]$meta.sha256))){
+              throw ('Published asset metadata drifted: '+$name)
+            }
+
+            & gh release download $tag --repo $env:GITHUB_REPOSITORY --pattern $name --dir $pack
+            if($LASTEXITCODE -ne 0){throw ('Could not download published asset: '+$name)}
+            $path=Join-Path $pack $name
+            $file=Get-Item -LiteralPath $path
+            $hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if([int64]$file.Length -ne [int64]$meta.size -or $hash -cne [string]$meta.sha256){
+              throw ('Downloaded asset differs from frozen published identity: '+$name)
+            }
+          }
+
+          foreach($pair in @(
+            @('TailscaleQuickRepair-3.0.0-rc.1.zip','TailscaleQuickRepair-3.0.0-rc.1.zip.sha256'),
+            @('TailscaleQuickRepair-SetupPackage-3.0.0-rc.1.zip','TailscaleQuickRepair-SetupPackage-3.0.0-rc.1.zip.sha256')
+          )){
+            $zip=Join-Path $pack $pair[0]
+            $sidecar=Join-Path $pack $pair[1]
+            $declared=(Get-Content -LiteralPath $sidecar -Raw).Trim().ToLowerInvariant()
+            $actual=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+            if($declared -cne $actual){throw ('Sidecar mismatch: '+$pair[0])}
+            $scan=Join-Path $env:RUNNER_TEMP ('tqr-field-pack-scan-'+[Guid]::NewGuid().ToString('N'))
+            Expand-Archive -LiteralPath $zip -DestinationPath $scan
+            .\release\privacy-scan.ps1 -Root $scan -SkipRepositoryIdentity
+            Remove-Item -LiteralPath $scan -Recurse -Force
+          }
+
+      - name: Add tested developer bridge and instructions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $pack=Join-Path $PWD 'field-pack'
+          Copy-Item .\release\field-preview.ps1 $pack
+          Copy-Item .\docs\phase6.4-field-acceptance.md $pack
+
+          @(
+            'Tailscale Quick Repair 3.0.0 RC1 - one-time field bridge',
+            '',
+            'Validated starting preview: 3.0.0-phase6.4.1-preview / 30000741 (plus the other explicitly accepted baselines in the acceptance notes).',
+            '',
+            '1. In Quick Repair, make sure Auto Repair is OFF.',
+            '2. Exit Quick Repair from the tray icon (do not just close the window).',
+            '3. Right-click START-RC1-FIELD-BRIDGE.ps1 and choose Run with PowerShell.',
+            '4. Approve the Windows administrator prompt using the SAME Windows account.',
+            '5. Quick Repair should relaunch as 3.0.0-rc.1.',
+            '6. Leave Auto Repair OFF until the initial RC1 status/integrity check is confirmed.',
+            '',
+            'The bridge verifies the published package hashes and installed trusted baseline before mutation.',
+            'It refuses unknown previous versions or a mismatched Guardian integrity baseline.'
+          ) | Set-Content -LiteralPath (Join-Path $pack 'START-HERE.txt') -Encoding UTF8
+
+          @(
+            '$ErrorActionPreference=''Stop''',
+            '$here=Split-Path -Parent $MyInvocation.MyCommand.Path',
+            '$result=Join-Path $here ''phase6.4-field-result.json''',
+            'if(Test-Path -LiteralPath $result){Remove-Item -LiteralPath $result -Force}',
+            '$args=@(''-NoLogo'',''-NoProfile'',''-ExecutionPolicy'',''Bypass'',''-File'',(Join-Path $here ''field-preview.ps1''),''-OutputDirectory'',$here,''-ResultPath'',$result)',
+            '$child=Start-Process -FilePath (Join-Path $PSHOME ''powershell.exe'') -ArgumentList $args -Wait -PassThru',
+            'Write-Host ''''',
+            'Write-Host ''Tailscale Quick Repair RC1 field bridge result'' -ForegroundColor Cyan',
+            'Write-Host (''Exit code: '' + $child.ExitCode)',
+            'if(Test-Path -LiteralPath $result){',
+            '  try{',
+            '    $r=Get-Content -LiteralPath $result -Raw|ConvertFrom-Json',
+            '    Write-Host (''Stage: '' + [string]$r.stage)',
+            '    Write-Host (''Passed: '' + [string]$r.passed)',
+            '    if(-not [string]::IsNullOrWhiteSpace([string]$r.error)){Write-Host (''Reason: '' + [string]$r.error) -ForegroundColor Yellow}',
+            '  }catch{Write-Host ''The result file exists but could not be read.'' -ForegroundColor Yellow}',
+            '}else{',
+            '  Write-Host ''No result file was produced.'' -ForegroundColor Yellow',
+            '}',
+            'Write-Host ''''',
+            'if($child.ExitCode -eq 0){Write-Host ''Bridge completed. Leave Auto Repair OFF until RC1 is checked.'' -ForegroundColor Green}else{Write-Host ''Bridge stopped before completion. Nothing should be guessed from this screen; use the Stage/Reason above.'' -ForegroundColor Yellow}',
+            '[void](Read-Host ''Press Enter to close'')'
+          ) | Set-Content -LiteralPath (Join-Path $pack 'START-RC1-FIELD-BRIDGE.ps1') -Encoding UTF8
+
+          [ordered]@{
+            schema=1
+            rcVersion='3.0.0-rc.1'
+            rcVersionCode=[int64]30001001
+            rcReleaseTarget='2555bf4af30845d2c722964e289cfdfe15a412bf'
+            helperSource=$env:GITHUB_SHA
+            stableUnchanged='3.0.0-phase5.2.1'
+          }|ConvertTo-Json -Depth 4|Set-Content -LiteralPath (Join-Path $pack 'FIELD-PACK-IDENTITY.json') -Encoding UTF8
+
+      - name: Final expanded field-pack privacy and integrity check
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $pack=Join-Path $PWD 'field-pack'
+          .\release\privacy-scan.ps1 -Root $pack -SkipRepositoryIdentity
+
+          $required=@(
+            'field-preview.ps1',
+            'phase6.4-field-acceptance.md',
+            'START-HERE.txt',
+            'START-RC1-FIELD-BRIDGE.ps1',
+            'FIELD-PACK-IDENTITY.json',
+            'TailscaleQuickRepair-3.0.0-rc.1.zip',
+            'TailscaleQuickRepair-3.0.0-rc.1.zip.sha256',
+            'TailscaleQuickRepair-SetupPackage-3.0.0-rc.1.zip',
+            'TailscaleQuickRepair-SetupPackage-3.0.0-rc.1.zip.sha256'
+          )
+          $actual=@(Get-ChildItem -LiteralPath $pack -File|Select-Object -ExpandProperty Name|Sort-Object)
+          $expected=@($required|Sort-Object)
+          if(($actual -join [char]0) -cne ($expected -join [char]0)){throw 'Field pack contains an unexpected file set.'}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rc1-published-field-pack
+          path: field-pack/*
+          if-no-files-found: error

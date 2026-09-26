@@ -8,7 +8,7 @@ This repository is the public source and update channel for **Tailscale Quick Re
 
 New users install with the native Windows Setup release asset. Setup asks for the Tailscale target this PC should check — either a Tailscale IP or a MagicDNS device name — and can optionally start Quick Repair with Windows.
 
-Existing installs update from **Details → Maintenance → Check again → Update now**. Ordinary app updates stay user-level. Releases that update the protected repair engine hand off to the native Setup host and request normal Windows administrator approval.
+Existing installs update from **Details → Maintenance → Check again → Update now**. Ordinary app updates stay user-level. Releases that update the protected repair engine hand off to the native Setup host and request normal Windows administrator approval. For protected updates, approve the Windows prompt with the same Windows account that launched Quick Repair; using separate administrator credentials is intentionally refused so per-user settings are never migrated into the wrong profile.
 
 See `docs/INSTALL.md` for the full installation and upgrade flow.
 
@@ -20,13 +20,13 @@ Machine-specific values such as peer addresses, usernames, local paths and setti
 
 The target can be changed later inside Quick Repair. It is not uploaded to GitHub.
 
-The release pipeline performs repository-isolation and privacy scans before validation and again immediately before publication.
+The release pipeline performs repository-isolation and privacy scans before validation and again immediately before publication. A separate all-ref history audit also scans reachable Git history on every development push without printing matched sensitive content.
 
 ## Repair scope
 
 The repair engine is intentionally narrow. Quick Repair checks local Tailscale health and the configured remote peer. It may recycle the Tailscale service when the peer is reported online by Tailscale but cannot actually be reached. An offline peer does not trigger that recovery.
 
-The product does not perform broad Windows network resets as part of normal repair.
+The product does not perform broad Windows network resets as part of normal repair. It does not reconfigure unrelated VPN clients, adapters, routes or DNS. The manual adapter-recovery step is fail-closed to the exact Tailscale tunnel interface; if that interface cannot be identified safely, Quick Repair falls back to Tailscale service recovery rather than touching another adapter. VPN software shown by Advanced diagnostics is best-effort, read-only context only; recognised or unrecognised VPN software never becomes a repair trigger.
 
 ## Updates and verification
 
@@ -36,13 +36,16 @@ Before installation it verifies the published package size and SHA-256. The pack
 
 The release pipeline then extracts the finished package again and repeats those checks before publication. Protected-engine releases also build and verify a separate full Setup package.
 
-Updates are applied transactionally with rollback protection. The update path is native and does not use the retired encoded-PowerShell/BAT bridge.
+Updates use protected transaction recovery for payload files. If Setup is interrupted after the new payload is already verified, its Windows integration steps are safe to replay to the same release state. The update path is native and does not use the retired encoded-PowerShell/BAT bridge.
+
+See `docs/interrupted-setup-recovery.md` for the recovery model and its current limits.
 
 ## Main components
 
 - Native desktop host
 - Tailscale-only repair engine
 - Optional automatic repair monitor
+- Local-only passive startup health
 - Read-only advanced diagnostics
 - Native self-updater
 - Native Setup / repair-integration host

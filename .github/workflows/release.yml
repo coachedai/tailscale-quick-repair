@@ -27,10 +27,11 @@ jobs:
     permissions:
       contents: read
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     outputs:
       should_publish: ${{ steps.publish.outputs.should_publish }}
       requires_setup: ${{ steps.publish.outputs.requires_setup }}
+      protected_handoff: ${{ steps.publish.outputs.protected_handoff }}
       build_setup: ${{ steps.publish.outputs.build_setup }}
       version: ${{ steps.meta.outputs.version }}
       safe_version: ${{ steps.meta.outputs.safe_version }}
@@ -73,12 +74,26 @@ jobs:
             throw 'release/publish.json does not match version.json.'
           }
           $requiresSetup = $false
-          if ($publish.PSObject.Properties.Name -contains 'requiresSetup') { $requiresSetup = [bool]$publish.requiresSetup }
+          if ($publish.PSObject.Properties.Name -contains 'requiresSetup') {
+            if ($publish.requiresSetup -isnot [bool]) { throw 'requiresSetup must be a boolean.' }
+            $requiresSetup = [bool]$publish.requiresSetup
+          }
+          $protectedHandoff = $false
+          if ($publish.PSObject.Properties.Name -contains 'protectedHandoff') {
+            if ($publish.protectedHandoff -isnot [bool]) { throw 'protectedHandoff must be a boolean.' }
+            $protectedHandoff = [bool]$publish.protectedHandoff
+          }
+          if ($requiresSetup -and $protectedHandoff) {
+            throw 'A release cannot use direct Setup routing and the legacy-compatible protected handoff at the same time.'
+          }
           "should_publish=$(([bool]$publish.publish).ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "requires_setup=$($requiresSetup.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "protected_handoff=$($protectedHandoff.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "build_setup=true" >> $env:GITHUB_OUTPUT
       - name: Build and round-trip validate routed update package
         shell: powershell
+        env:
+          TQR_UPDATER_SELFTEST_TOKEN: ${{ github.token }}
         run: |
           .\release\build.ps1 -OutputDirectory .\dist
           .\release\finalize-package.ps1 -OutputDirectory .\dist
@@ -91,13 +106,55 @@ jobs:
       - name: Native packaged runtime regression gates
         shell: powershell
         run: .\release\test-packaged-runtime.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Update channel trust and preference gates
+        shell: powershell
+        run: .\release\test-update-channels.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Native Auto Repair policy and state gates
+        shell: powershell
+        run: .\release\test-auto-repair-policy.ps1 -EvidenceDirectory .\test-evidence
+      - name: Native bounded local status gates
+        shell: powershell
+        run: .\release\test-auto-repair-local-status.ps1 -EvidenceDirectory .\test-evidence
+      - name: Real installed Windows service and recurrence gates
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+          TQR_RELEASE_VALIDATION: ${{ github.run_id }}
+        run: .\release\test-native-windows.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Require independent clock and exact trigger attribution
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . .\release\trace-native-recurrence.ps1
+          $trace = Get-Content .\test-evidence\native-recurrence-trace.json -Raw | ConvertFrom-Json
+          if ($trace.source -cne $env:GITHUB_SHA -or -not $trace.channelRestored -or -not (Test-NativeRecurrenceAttribution $trace)) {
+            throw 'Independent recurrence attribution did not pass. Do not publish.'
+          }
+      - name: Ordinary-user protected file and task gates
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+          TQR_RELEASE_VALIDATION: ${{ github.run_id }}
+        run: .\release\test-native-permissions.ps1 -EvidenceDirectory .\test-evidence
+      - name: Protected migration and evidence-preserving refusal gates
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+          TQR_RELEASE_VALIDATION: ${{ github.run_id }}
+        run: .\release\test-protected-migration.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Preserve exact validation source marker
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path test-evidence -Force | Out-Null
+          $env:GITHUB_SHA | Set-Content test-evidence/source-commit.txt
       - name: Preserve runtime gate evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: runtime-evidence-${{ steps.meta.outputs.safe_version }}
-          path: test-evidence/*.json
-          if-no-files-found: warn
+          path: test-evidence/*
+          if-no-files-found: error
       - name: Require matching fresh-install and migration assets
         if: steps.publish.outputs.build_setup == 'true'
         shell: pwsh
@@ -115,9 +172,78 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  publish:
-    if: needs.validate.outputs.should_publish == 'true' && github.ref == 'refs/heads/main'
+  release_compatibility:
+    name: Release compatibility
+    if: github.ref == 'refs/heads/main'
     needs: validate
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout the exact validated source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require exact main source and repository
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-quick-repair' -or $env:GITHUB_REF_NAME -cne 'main') {
+            throw 'Release compatibility must run only for this repository on main.'
+          }
+          if ((git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA) { throw 'Release compatibility source mismatch.' }
+          $origin=(git remote get-url origin).Trim()
+          if ($origin -cne 'https://github.com/coachedai/tailscale-quick-repair' -and $origin -cne 'https://github.com/coachedai/tailscale-quick-repair.git') {
+            throw 'Unexpected release origin.'
+          }
+      - name: Recheck source privacy
+        shell: powershell
+        run: .\release\privacy-scan.ps1 -Root .
+      - name: Download the exact native-tested packages
+        uses: actions/download-artifact@v4
+        with:
+          name: quick-repair-${{ needs.validate.outputs.safe_version }}
+          path: dist
+      - name: Download the exact native evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-evidence-${{ needs.validate.outputs.safe_version }}
+          path: upstream-evidence
+      - name: Upgrade genuine released 5.2.1 files and tasks
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+          TQR_RELEASE_VALIDATION: ${{ github.run_id }}
+        run: .\release\test-released-upgrade.ps1 -OutputDirectory .\dist -UpstreamEvidence .\upstream-evidence -EvidenceDirectory .\compatibility-evidence
+      - name: Recover files after killed Setup and killed recovery
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+          TQR_RELEASE_VALIDATION: ${{ github.run_id }}
+        run: .\release\test-interrupted-setup-recovery.ps1 -OutputDirectory .\dist -EvidenceDirectory .\compatibility-evidence
+      - name: Verify the published 5.2.1 protected-update handoff
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+          TQR_RELEASE_VALIDATION: ${{ github.run_id }}
+        run: .\release\test-protected-update-handoff.ps1 -OutputDirectory .\dist -EvidenceDirectory .\compatibility-evidence
+      - name: Final privacy and unchanged-source gate
+        shell: powershell
+        run: |
+          .\release\privacy-scan.ps1 -Root .
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw 'Compatibility validation unexpectedly changed source.' }
+      - name: Preserve compatibility evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-compatibility-${{ needs.validate.outputs.safe_version }}
+          path: compatibility-evidence/*
+          if-no-files-found: error
+
+  publish:
+    if: needs.validate.outputs.should_publish == 'true' && github.ref == 'refs/heads/main' && needs.release_compatibility.result == 'success'
+    needs: [validate, release_compatibility]
     permissions:
       contents: write
     runs-on: windows-latest
@@ -174,6 +300,7 @@ jobs:
         shell: powershell
         env:
           REQUIRES_SETUP: ${{ needs.validate.outputs.requires_setup }}
+          PROTECTED_HANDOFF: ${{ needs.validate.outputs.protected_handoff }}
         run: |
           $zip = Get-ChildItem dist -Filter 'TailscaleQuickRepair-*.zip' -File | Where-Object { $_.Name -notlike '*SetupPackage*' } | Select-Object -First 1
           $scanRoot = Join-Path $env:RUNNER_TEMP ('tqr-package-scan-' + [Guid]::NewGuid().ToString('N'))
@@ -258,6 +385,7 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
           VERSION_CODE: ${{ needs.validate.outputs.version_code }}
           REQUIRES_SETUP: ${{ needs.validate.outputs.requires_setup }}
+          PROTECTED_HANDOFF: ${{ needs.validate.outputs.protected_handoff }}
         run: |
           $remoteHead = ((git ls-remote origin refs/heads/main) -split '\s+')[0]
           if ($LASTEXITCODE -ne 0 -or $remoteHead -ne $env:GITHUB_SHA) { throw 'Main changed during publication; keep the previous update channel.' }
@@ -277,6 +405,7 @@ jobs:
             publishedAt = [DateTime]::UtcNow.ToString('o')
             mandatory = $false
             requiresSetup = ($env:REQUIRES_SETUP -eq 'true')
+            protectedHandoff = ($env:PROTECTED_HANDOFF -eq 'true')
             notes = [string]$publish.notes
             package = [ordered]@{
               url = "$assetBase/$($zip.Name)"

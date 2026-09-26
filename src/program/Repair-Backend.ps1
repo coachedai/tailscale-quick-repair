@@ -474,6 +474,17 @@ function Restart-TailscaleService {
     return $false
 }
 
+function Get-TailscaleNetworkAdapters {
+    # Fail closed to the vendor-controlled interface description. Friendly
+    # adapter names are user-editable and must never widen repair scope.
+    return @(
+        Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue |
+            Where-Object {
+                ([string]$_.InterfaceDescription) -ieq 'Tailscale Tunnel'
+            }
+    )
+}
+
 function Repair-TailscaleAdapter {
     param([string]$Cli)
 
@@ -482,18 +493,12 @@ function Repair-TailscaleAdapter {
         'Refreshing only the Tailscale network adapter. Other Windows networking is left alone.' `
         70 'repairing' 'Adapter recovery'
 
-    $adapters = @(
-        Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.Name -match 'Tailscale' -or
-                $_.InterfaceDescription -match 'Tailscale'
-            }
-    )
+    $adapters = @(Get-TailscaleNetworkAdapters)
 
     if ($adapters.Count -gt 0) {
         foreach ($adapter in $adapters) {
             Disable-NetAdapter `
-                -InterfaceDescription $adapter.InterfaceDescription `
+                -InputObject $adapter `
                 -Confirm:$false `
                 -ErrorAction SilentlyContinue
         }
@@ -502,7 +507,7 @@ function Repair-TailscaleAdapter {
 
         foreach ($adapter in $adapters) {
             Enable-NetAdapter `
-                -InterfaceDescription $adapter.InterfaceDescription `
+                -InputObject $adapter `
                 -Confirm:$false `
                 -ErrorAction SilentlyContinue
         }

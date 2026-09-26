@@ -17,8 +17,12 @@ using System.Windows.Forms;
 
 internal static class Program
 {
-    private const string ManifestApiUrl =
+    private const string StableManifestApiUrl =
         "https://api.github.com/repos/coachedai/tailscale-quick-repair/contents/updates/latest.json?ref=main";
+    private const string PreviewManifestApiUrl =
+        "https://api.github.com/repos/coachedai/tailscale-quick-repair/contents/updates/preview.json?ref=preview";
+    private const string StableManifestPath = "updates/latest.json";
+    private const string PreviewManifestPath = "updates/preview.json";
 
     private const string TrustedHost = "github.com";
     private const string TrustedReleasePrefix =
@@ -51,6 +55,8 @@ internal static class Program
         bool silent = HasSwitch(args, "--silent");
         int currentPid = ReadIntArg(args, "--current-pid", 0);
         long currentCode = ReadLongArg(args, "--current-code", ReadInstalledVersionCode());
+        long targetCode = ReadLongArg(args, "--target-code", 0);
+        string channel = NormalizeChannel(ReadArg(args, "--channel"));
 
         string workDir = Path.Combine(
             Path.GetTempPath(),
@@ -67,7 +73,7 @@ internal static class Program
 
             operationAcquired = true;
 
-            UpdateManifest manifest = FetchManifest();
+            UpdateManifest manifest = FetchManifest(channel);
 
             if (!manifest.Published)
             {
@@ -77,6 +83,11 @@ internal static class Program
                     "No update is currently published.",
                     MessageBoxIcon.Information
                 );
+            }
+
+            if (targetCode > 0 && manifest.VersionCode != targetCode)
+            {
+                throw new InvalidDataException("The selected update changed. Check for updates again.");
             }
 
             if (manifest.VersionCode <= currentCode)
@@ -154,6 +165,7 @@ internal static class Program
             }
 
             List<VerifiedFile> files = VerifyPackageFiles(extractDir, package);
+            ValidatePackageChannelBinding(files, channel, manifest.VersionCode);
 
             if (files.Count == 0)
             {
@@ -217,15 +229,48 @@ internal static class Program
         return code;
     }
 
-    private static UpdateManifest FetchManifest()
+    internal static string NormalizeChannel(string value)
     {
-        string apiJson = DownloadString(ManifestApiUrl, true);
+        if (String.IsNullOrWhiteSpace(value) ||
+            String.Equals(value, "stable", StringComparison.OrdinalIgnoreCase))
+        {
+            return "stable";
+        }
+
+        if (String.Equals(value, "preview", StringComparison.OrdinalIgnoreCase))
+        {
+            return "preview";
+        }
+
+        throw new InvalidDataException("Unsupported Quick Repair update channel.");
+    }
+
+    internal static string GetManifestApiUrl(string channel)
+    {
+        return NormalizeChannel(channel) == "preview"
+            ? PreviewManifestApiUrl
+            : StableManifestApiUrl;
+    }
+
+    private static string GetExpectedManifestPath(string channel)
+    {
+        return NormalizeChannel(channel) == "preview"
+            ? PreviewManifestPath
+            : StableManifestPath;
+    }
+
+    private static UpdateManifest FetchManifest(string channel)
+    {
+        channel = NormalizeChannel(channel);
+        string apiJson = DownloadString(GetManifestApiUrl(channel), true);
         Dictionary<string, object> api = DeserializeObject(apiJson);
 
         string encoding = ReadString(api, "encoding");
+        string apiPath = ReadString(api, "path");
         string content = ReadString(api, "content").Replace("\n", String.Empty).Replace("\r", String.Empty);
 
         if (!String.Equals(encoding, "base64", StringComparison.OrdinalIgnoreCase) ||
+            !String.Equals(apiPath, GetExpectedManifestPath(channel), StringComparison.Ordinal) ||
             String.IsNullOrWhiteSpace(content))
         {
             throw new InvalidDataException("GitHub returned an unexpected update-channel response.");
@@ -237,6 +282,12 @@ internal static class Program
         if (ReadInt(root, "schema") != 1)
         {
             throw new InvalidDataException("Unsupported update manifest schema.");
+        }
+
+        if (channel == "preview" &&
+            !String.Equals(ReadString(root, "channel"), "preview", StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("The Early-access manifest channel is invalid.");
         }
 
         UpdateManifest result = new UpdateManifest();
@@ -271,7 +322,6 @@ internal static class Program
 
         return result;
     }
-
     private static PackageManifest ReadPackageManifest(string root)
     {
         string path = Path.Combine(root, "package-manifest.json");
@@ -382,6 +432,50 @@ internal static class Program
         }
 
         return verified;
+    }
+
+    private static void ValidatePackageChannelBinding(List<VerifiedFile> files, string channel, long versionCode)
+    {
+        channel = NormalizeChannel(channel);
+        List<VerifiedFile> markers = files.FindAll(delegate(VerifiedFile file)
+        {
+            return String.Equals(file.RelativePath.Replace('\\', '/'), "app/protected-update.json", StringComparison.OrdinalIgnoreCase);
+        });
+
+        if (markers.Count == 0) return;
+        if (markers.Count != 1) throw new InvalidDataException("Update package contains an invalid protected handoff marker set.");
+
+        ValidateProtectedHandoffMarker(
+            File.ReadAllText(markers[0].SourcePath, Encoding.UTF8),
+            channel,
+            versionCode
+        );
+    }
+
+    internal static void ValidateProtectedHandoffMarker(string markerJson, string channel, long versionCode)
+    {
+        channel = NormalizeChannel(channel);
+        Dictionary<string, object> marker = DeserializeObject(markerJson);
+        int schema = ReadInt(marker, "schema");
+        if (ReadLong(marker, "versionCode") != versionCode)
+            throw new InvalidDataException("Protected handoff marker version does not match the selected update.");
+
+        if (schema == 1)
+        {
+            if (marker.Count != 2 || channel != "stable")
+                throw new InvalidDataException("Legacy protected handoff marker is valid only on Stable.");
+            return;
+        }
+
+        if (schema == 2)
+        {
+            string markerChannel = NormalizeChannel(ReadString(marker, "channel"));
+            if (marker.Count != 3 || !String.Equals(markerChannel, channel, StringComparison.Ordinal))
+                throw new InvalidDataException("Protected handoff marker channel does not match the selected update.");
+            return;
+        }
+
+        throw new InvalidDataException("Unsupported protected handoff marker schema.");
     }
 
     private static string ResolveTarget(string relativePath)

@@ -294,7 +294,21 @@ $text = Replace-ExactOnce `
     -Text $text `
     -Find @'
     if ($ownsWpfApp) {
-        [void]$wpfApp.Run($window)
+        if ($StartInTray) {
+            [void]$wpfApp.Run()
+        }
+        else {
+            [void]$wpfApp.Run($window)
+        }
+    }
+    elseif ($StartInTray) {
+        # NativeHost normally owns the WPF Application. Preserve a hidden
+        # startup path if hosted inside an already-running WPF dispatcher.
+        $frame = New-Object System.Windows.Threading.DispatcherFrame
+        $window.Add_Closed({
+            try { $frame.Continue = $false } catch {}
+        })
+        [System.Windows.Threading.Dispatcher]::PushFrame($frame)
     }
     else {
         [void]$window.ShowDialog()
@@ -302,7 +316,21 @@ $text = Replace-ExactOnce `
 '@ `
     -Replace @'
     if ($ownsWpfApp) {
-        [void]$wpfApp.Run($window)
+        if ($StartInTray) {
+            [void]$wpfApp.Run()
+        }
+        else {
+            [void]$wpfApp.Run($window)
+        }
+    }
+    elseif ($StartInTray) {
+        # NativeHost normally owns the WPF Application. Preserve a hidden
+        # startup path if hosted inside an already-running WPF dispatcher.
+        $frame = New-Object System.Windows.Threading.DispatcherFrame
+        $window.Add_Closed({
+            try { $frame.Continue = $false } catch {}
+        })
+        [System.Windows.Threading.Dispatcher]::PushFrame($frame)
     }
     else {
         [void]$window.ShowDialog()

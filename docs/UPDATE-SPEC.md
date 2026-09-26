@@ -17,6 +17,8 @@ The client compares `versionCode`, not display-version text.
 - `published`: only `true` manifests are installable.
 - `publishedAt`: UTC ISO-8601 timestamp.
 - `mandatory`: reserved for critical future releases; the client still asks the user before installing unless explicitly changed later.
+- `requiresSetup`: when `true`, clients that understand protected updates launch Setup directly instead of applying the ordinary package.
+- `protectedHandoff`: transitional flag for older clients. When `true`, `requiresSetup` must be `false`; the ordinary package updates only user-level files, then the refreshed application hands protected work to the refreshed Setup program.
 - `notes`: concise release notes.
 - `package.url`: public GitHub Release asset URL.
 - `package.sha256`: lowercase SHA-256 of the ZIP.
@@ -43,5 +45,9 @@ Each ZIP contains a `package-manifest.json` plus application files.
 11. Verify installed files.
 12. Relaunch Quick Repair.
 13. Restore the rollback checkpoint if commit or verification fails.
+
+For a protected handoff, the ordinary package may also contain a short-lived `app/protected-update.json` marker with only the protocol schema and target `versionCode`. The outer package manifest protects its exact bytes. The permanent application integrity manifest does not require the marker because Setup removes it after the protected installation completes.
+
+`requiresSetup` and `protectedHandoff` must never both be `true` for the same release.
 
 The update channel never contains credentials and the public client never embeds a GitHub token.

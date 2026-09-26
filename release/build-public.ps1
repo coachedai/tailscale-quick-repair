@@ -47,8 +47,7 @@ $backendSource = [IO.File]::ReadAllText(
 )
 
 if (
-    $backendSource -match '(?m)^\s*\$Peer\s*=\s*[''\"]\d{1,3}(?:\.\d{1,3}){3}[''\"]' -or
-    $backendSource -match '100\.106\.128\.84'
+    $backendSource -match '(?m)^\s*\$Peer\s*=\s*[''\"]\d{1,3}(?:\.\d{1,3}){3}[''\"]'
 ) {
     throw 'Public repair backend still contains a baked-in peer address.'
 }
@@ -218,6 +217,9 @@ try {
     if ($baseZip.Count -ne 1) { throw "Expected one validated base update ZIP; found $($baseZip.Count)." }
     Expand-Archive -LiteralPath $baseZip[0].FullName -DestinationPath $packageRoot -Force
     Remove-Item -LiteralPath (Join-Path $packageRoot 'package-manifest.json') -Force -ErrorAction SilentlyContinue
+    # The handoff marker belongs only to the ordinary user-level bridge. A full
+    # Setup package is already the protected installer and must not carry it.
+    Remove-Item -LiteralPath (Join-Path $packageApp 'protected-update.json') -Force -ErrorAction SilentlyContinue
 
     $nativeHost = Join-Path $packageApp 'TailscaleQuickRepair.exe'
     $setupHostInstalled = Join-Path $packageApp 'TailscaleQuickRepairSetup.exe'

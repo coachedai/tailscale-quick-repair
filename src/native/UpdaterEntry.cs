@@ -7,8 +7,6 @@ using System.Threading;
 
 internal static class UpdaterEntry
 {
-    private const string NetworkTestUrl =
-        "https://api.github.com/repos/coachedai/tailscale-quick-repair/contents/updates/latest.json?ref=main";
 
     [STAThread]
     private static int Main(string[] args)
@@ -17,7 +15,15 @@ internal static class UpdaterEntry
 
         if (HasSwitch(args, "--network-self-test"))
         {
-            return RunNetworkSelfTest();
+            try
+            {
+                string channel = Program.NormalizeChannel(ReadArg(args, "--channel"));
+                return RunNetworkSelfTest(channel);
+            }
+            catch (InvalidDataException)
+            {
+                return 26;
+            }
         }
 
         try
@@ -67,10 +73,36 @@ internal static class UpdaterEntry
         ServicePointManager.Expect100Continue = false;
     }
 
-    private static int RunNetworkSelfTest()
+    private static int RunNetworkSelfTest(string channel)
+    {
+        bool rateLimited;
+        int result = RunNetworkSelfTestCore(channel, null, out rateLimited);
+
+        if (result == 0 || result == 25 || !rateLimited)
+        {
+            return result;
+        }
+
+        // GitHub-hosted runners share outbound API capacity. Always exercise
+        // the real unauthenticated product request first. Only when GitHub
+        // explicitly identifies rate limiting may CI repeat the same endpoint
+        // with its read-only Actions token. TLS/trust failures never fall back.
+        string token = Environment.GetEnvironmentVariable("TQR_UPDATER_SELFTEST_TOKEN");
+        if (String.IsNullOrWhiteSpace(token))
+        {
+            return result;
+        }
+
+        bool authenticatedRateLimit;
+        return RunNetworkSelfTestCore(channel, token.Trim(), out authenticatedRateLimit);
+    }
+
+    private static int RunNetworkSelfTestCore(string channel, string bearerToken, out bool rateLimited)
     {
         int lastFailure = 24;
+        string networkTestUrl = Program.GetManifestApiUrl(channel);
         bool endpointWasReachable = false;
+        rateLimited = false;
 
         for (int attempt = 1; attempt <= 3; attempt++)
         {
@@ -78,11 +110,15 @@ internal static class UpdaterEntry
             {
                 ConfigureTls12();
 
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(NetworkTestUrl);
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(networkTestUrl);
                 request.Method = "GET";
                 request.UserAgent = "TailscaleQuickRepairUpdater-SelfTest/3.0";
                 request.Accept = "application/vnd.github+json";
                 request.Headers["X-GitHub-Api-Version"] = "2022-11-28";
+                if (!String.IsNullOrWhiteSpace(bearerToken))
+                {
+                    request.Headers["Authorization"] = "Bearer " + bearerToken;
+                }
                 request.Timeout = 12000;
                 request.ReadWriteTimeout = 12000;
                 request.Proxy = WebRequest.DefaultWebProxy;
@@ -145,11 +181,36 @@ internal static class UpdaterEntry
 
                 if (ex.Status == WebExceptionStatus.ProtocolError)
                 {
-                    // GitHub answered, so the endpoint is reachable. A bad HTTP
-                    // result should remain a hard failure instead of being
-                    // misclassified as a runner outage.
                     endpointWasReachable = true;
-                    lastFailure = 21;
+                    HttpWebResponse response = ex.Response as HttpWebResponse;
+                    try
+                    {
+                        if (response != null)
+                        {
+                            int status = (int)response.StatusCode;
+                            string remaining = response.Headers["X-RateLimit-Remaining"];
+                            string retryAfter = response.Headers["Retry-After"];
+                            bool explicitRateLimit =
+                                status == 429 ||
+                                (status == 403 &&
+                                    (String.Equals(remaining, "0", StringComparison.Ordinal) ||
+                                     !String.IsNullOrWhiteSpace(retryAfter)));
+
+                            if (explicitRateLimit)
+                            {
+                                rateLimited = true;
+                                return 26;
+                            }
+                        }
+
+                        // GitHub answered, but not with an identified rate-limit
+                        // response. Preserve the hard protocol failure.
+                        lastFailure = 21;
+                    }
+                    finally
+                    {
+                        if (response != null) response.Dispose();
+                    }
                 }
                 else
                 {
@@ -171,6 +232,19 @@ internal static class UpdaterEntry
         // That is not evidence of a TLS regression in this executable. If the
         // endpoint was reachable and the response was invalid, keep failing.
         return endpointWasReachable ? lastFailure : 0;
+    }
+
+    private static string ReadArg(string[] args, string name)
+    {
+        for (int i = 0; i < args.Length - 1; i++)
+        {
+            if (String.Equals(args[i], name, StringComparison.OrdinalIgnoreCase))
+            {
+                return args[i + 1];
+            }
+        }
+
+        return String.Empty;
     }
 
     private static bool HasSwitch(string[] args, string name)

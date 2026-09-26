@@ -71,6 +71,20 @@ public static class FixtureCli {
         $worker=[IO.File]::ReadAllText($WorkerPath,[Text.Encoding]::UTF8);$tk=$null;$er=$null
         $wa=[Management.Automation.Language.Parser]::ParseInput($worker,[ref]$tk,[ref]$er)
         Check ($er.Count -eq 0) 'Delivered diagnostic worker parses on Windows PowerShell 5.1'
+        $vpnNode=@($wa.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Match-VpnSoftware'},$true))
+        Check ($vpnNode.Count -eq 1) 'Delivered diagnostics has one fixed-label VPN software matcher'
+        . ([scriptblock]::Create($vpnNode[0].Extent.Text))
+        $vpnFixture=@(Match-VpnSoftware @('ProtonVPNService','vpnagent','PanGPS','OpenVPNServiceInteractive','pia-service','WireGuardManager','AcmeVPNService','UnrelatedAudioService'))
+        Check ($vpnFixture.Count -eq 7 -and
+            $vpnFixture -contains 'Proton VPN' -and
+            $vpnFixture -contains 'Cisco Secure Client' -and
+            $vpnFixture -contains 'GlobalProtect' -and
+            $vpnFixture -contains 'OpenVPN' -and
+            $vpnFixture -contains 'Private Internet Access' -and
+            $vpnFixture -contains 'WireGuard' -and
+            $vpnFixture -contains 'Other VPN software') 'Read-only VPN context covers consumer, protocol, corporate and unknown VPN families without raw-name output'
+        Check (@(Match-VpnSoftware @('ProtonVPN','ProtonVPNService')|Where-Object {$_ -eq 'Proton VPN'}).Count -eq 1) 'Multiple components from one VPN collapse to one fixed public label'
+        Check ($worker -match 'Detected VPN software is not evidence of an active conflict\.') 'VPN presence is explicitly informational and cannot be presented as a diagnosed conflict'
         $cliNode=@($wa.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-TailscaleCli'},$true))
         Check ($cliNode.Count -eq 1) 'Worker CLI discovery has one injectable fixture boundary'
         $replacement="function Get-TailscaleCli { return '"+$fake.Replace("'","''")+"' }"

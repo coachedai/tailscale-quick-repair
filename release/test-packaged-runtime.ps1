@@ -31,8 +31,13 @@ try {
     Expand-Archive -LiteralPath $setupZip[0].FullName -DestinationPath $setup
     $normalUi = [IO.File]::ReadAllText((Join-Path $normal 'app\Tailscale-Repair-UI.ps1'))
     $setupUi = [IO.File]::ReadAllText((Join-Path $setup 'app\Tailscale-Repair-UI.ps1'))
+    $mojibakeLead = [string][char]0x00C2
+    Assert-That (-not $normalUi.Contains($mojibakeLead) -and -not $setupUi.Contains($mojibakeLead)) 'Delivered UI contains no UTF-8 mojibake lead character'
     Assert-That ($normalUi -ceq $setupUi) 'Update and protected Setup deliver the same final UI'
-    Assert-That ($normalUi.Contains('x:Name="ChangeTargetButton"') -and $normalUi.Contains("'--upgrade'")) 'Both delivery paths retain Change Target and protected-update routing'
+    Assert-That ($normalUi.Contains('x:Name="ChangeTargetButton"') -and
+        $normalUi.Contains('--upgrade --channel "') -and
+        $normalUi.Contains('--target-code ') -and
+        $normalUi.Contains('$script:updateManifestChannel')) 'Both delivery paths retain Change Target and channel-bound protected-update routing'
     $dll = Join-Path $normal 'app\TailscaleQuickRepair.Operations.dll'
     Add-Type -Path $dll
     $expectedVersion = Get-Content (Join-Path $normal 'version.json') -Raw | ConvertFrom-Json
@@ -249,6 +254,11 @@ try {
     & (Join-Path $PSScriptRoot 'test-diagnostics-polish.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -LibraryPath $dll -WorkerPath (Join-Path $normal 'app\Advanced-Diagnostics.ps1') -EvidenceDirectory $EvidenceDirectory
     & (Join-Path $PSScriptRoot 'test-progress-reset.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -EvidenceDirectory $EvidenceDirectory
     & (Join-Path $PSScriptRoot 'test-support-export.ps1') -UiPath (Join-Path $normal 'app\Tailscale-Repair-UI.ps1') -LibraryPath $dll -EvidenceDirectory $EvidenceDirectory
+    # Isolate assembly identity: the protected package is a separate native build.
+    & (Join-Path $PSHOME 'powershell.exe') -NoProfile -NonInteractive -STA -File (Join-Path $PSScriptRoot 'test-auto-repair-worker.ps1') -OutputDirectory ([IO.Path]::GetFullPath($OutputDirectory)) -EvidenceDirectory ([IO.Path]::GetFullPath($EvidenceDirectory))
+    if ($LASTEXITCODE -ne 0) { throw 'Integrated automatic worker gates failed.' }
+    & (Join-Path $PSHOME 'powershell.exe') -NoProfile -NonInteractive -STA -File (Join-Path $PSScriptRoot 'test-auto-background.ps1') -OutputDirectory ([IO.Path]::GetFullPath($OutputDirectory)) -EvidenceDirectory ([IO.Path]::GetFullPath($EvidenceDirectory))
+    if ($LASTEXITCODE -ne 0) { throw 'Automatic background lifecycle gates failed.' }
     Json-Write (Join-Path $EvidenceDirectory 'native-results.json') @{passed=$true;runtime='Windows PowerShell 5.1 / WPF / .NET Framework';scope='Packaged Guardian event and real process ownership; OS integration probes are fixture stubs';cases=$script:results.ToArray()}
     Write-Host "Native package gates passed: $($script:results.Count) assertions."
 } catch {

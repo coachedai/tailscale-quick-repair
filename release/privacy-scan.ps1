@@ -14,7 +14,12 @@ function Add-Finding {
         [string]$Reason
     )
 
-    $List.Add("$Path :: $Reason")
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($Path))
+        $pathId = ([BitConverter]::ToString($digest)).Replace('-', '').ToLowerInvariant()
+        $List.Add("file-sha256=$pathId :: $Reason")
+    } finally { $hasher.Dispose() }
 }
 
 $findings = New-Object 'System.Collections.Generic.List[string]'
@@ -24,7 +29,7 @@ if (-not $SkipRepositoryIdentity) {
         -not [string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY) -and
         $env:GITHUB_REPOSITORY -ne $ExpectedRepository
     ) {
-        throw "Repository isolation check failed. Expected $ExpectedRepository, got $($env:GITHUB_REPOSITORY)."
+        throw 'Repository isolation check failed; unexpected repository.'
     }
 
     try {
@@ -34,7 +39,7 @@ if (-not $SkipRepositoryIdentity) {
             $origin -and
             $origin -notmatch '(?i)(github\.com[:/])coachedai/tailscale-quick-repair(?:\.git)?$'
         ) {
-            throw "Repository isolation check failed. Unexpected origin: $origin"
+            throw 'Repository isolation check failed; unexpected origin.'
         }
     }
     catch {
@@ -82,9 +87,31 @@ $textExtensions = @(
     '.ps1', '.psm1', '.psd1',
     '.cs', '.vbs', '.py',
     '.json', '.yml', '.yaml',
-    '.md', '.txt', '.gitignore',
-    '.xml', '.config'
+    '.md', '.txt',
+    '.xml', '.config', '.ini', '.cfg', '.conf', '.toml', '.properties', '.csv'
 )
+
+$textLeafNames = @(
+    '.gitignore',
+    '.gitattributes'
+)
+
+# Real-machine evidence and opaque containers are forbidden from public
+# source and release payloads. Do not add user-specific deny-list values here:
+# the policy must remain generic and must never contain private identifiers.
+$forbiddenEvidenceExtensions = @(
+    '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff',
+    '.mp4', '.mov', '.webm', '.avi',
+    '.log', '.dmp', '.mdmp', '.evtx', '.etl', '.reg',
+    '.pcap', '.pcapng', '.har',
+    '.zip', '.7z', '.rar', '.tar', '.gz', '.tgz',
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+    '.db', '.sqlite', '.sqlite3', '.bak'
+)
+
+# Expanded release payloads legitimately contain the compiled native hosts.
+# Public repository source itself is text-only.
+$allowedExpandedBinaryExtensions = @('.exe', '.dll')
 
 $secretPatterns = @(
     @{ Name = 'GitHub token'; Pattern = '(?i)\bgh[pousr]_[A-Za-z0-9]{20,}\b' },
@@ -99,6 +126,8 @@ $windowsUserPathPattern = '(?i)\b[A-Z]:\\Users\\([^\\\r\n]+)'
 $deviceNamePattern = '(?i)\bvmi\d{5,}\b'
 $emailPattern = '(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b'
 $ipv4Pattern = '(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])'
+$escapedIpv4Pattern = '(?<!\d)(?:\d{1,3}\\\.){3}\d{1,3}(?!\d)'
+$bracketIpv4Pattern = '(?<!\d)(?:\d{1,3}\[\.\]){3}\d{1,3}(?!\d)'
 
 foreach ($relative in $tracked) {
     if ([string]::IsNullOrWhiteSpace($relative)) { continue }
@@ -119,10 +148,20 @@ foreach ($relative in $tracked) {
 
     $extension = [IO.Path]::GetExtension($leaf).ToLowerInvariant()
 
+    if ($forbiddenEvidenceExtensions -contains $extension) {
+        Add-Finding $findings $relativeNormalized 'Real-machine evidence, opaque archive, or document file type is forbidden.'
+        continue
+    }
+
     if (
         -not ($textExtensions -contains $extension) -and
-        $leaf -ne '.gitignore'
+        -not ($textLeafNames -contains $leaf)
     ) {
+        if ($SkipRepositoryIdentity -and $allowedExpandedBinaryExtensions -contains $extension) {
+            continue
+        }
+
+        Add-Finding $findings $relativeNormalized 'Unreviewed non-text/binary file type is forbidden by the public-repository privacy policy.'
         continue
     }
 
@@ -169,8 +208,11 @@ foreach ($relative in $tracked) {
     foreach ($match in [regex]::Matches($content, $emailPattern)) {
         $email = $match.Value
 
-        if ($email -notmatch '(?i)@users\.noreply\.github\.com$') {
-            Add-Finding $findings $relativeNormalized "Email address detected: $email"
+        if (
+            $email -notmatch '(?i)@users\.noreply\.github\.com$' -and
+            $email -cne 'noreply@github.com'
+        ) {
+            Add-Finding $findings $relativeNormalized 'Email address detected; value withheld.'
         }
     }
 
@@ -206,7 +248,31 @@ foreach ($relative in $tracked) {
             continue
         }
 
-        Add-Finding $findings $relativeNormalized "Literal IPv4 address detected: $value"
+        Add-Finding $findings $relativeNormalized 'Literal IPv4 address detected; value withheld.'
+    }
+
+    foreach ($match in [regex]::Matches($content, $escapedIpv4Pattern)) {
+        $value = $match.Value -replace '\\\.', '.'
+        $octets = @($value.Split('.') | ForEach-Object { [int]$_ })
+        if (
+            $value -notin @('0.0.0.0', '127.0.0.1', '2.0.0.0', '3.0.0.0') -and
+            $octets.Count -eq 4 -and
+            ($octets | Where-Object { $_ -gt 255 }).Count -eq 0
+        ) {
+            Add-Finding $findings $relativeNormalized 'Escaped literal IPv4 address detected.'
+        }
+    }
+
+    foreach ($match in [regex]::Matches($content, $bracketIpv4Pattern)) {
+        $value = $match.Value.Replace('[.]','.')
+        $octets = @($value.Split('.') | ForEach-Object { [int]$_ })
+        if (
+            $value -notin @('0.0.0.0', '127.0.0.1', '2.0.0.0', '3.0.0.0') -and
+            $octets.Count -eq 4 -and
+            ($octets | Where-Object { $_ -gt 255 }).Count -eq 0
+        ) {
+            Add-Finding $findings $relativeNormalized 'Bracket-encoded literal IPv4 address detected.'
+        }
     }
 }
 

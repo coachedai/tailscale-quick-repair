@@ -16,7 +16,8 @@ if ($zips.Count -ne 1) {
 
 $requiredSources = @(
     'src\native\PublicSetupHost.cs',
-    'src\native\PublicSetupEntry.cs'
+    'src\native\PublicSetupEntry.cs',
+    'src\native\PassiveStartupHealth.cs'
 )
 
 foreach ($relative in $requiredSources) {
@@ -138,10 +139,17 @@ try {
     $libraryArgs = @('/nologo','/target:library','/platform:anycpu','/optimize+',
         ('/out:"{0}"' -f $operationsDll),
         ('/reference:"{0}"' -f (Join-Path $frameworkDir 'System.Web.Extensions.dll')),
+        ('/reference:"{0}"' -f (Join-Path $frameworkDir 'System.ServiceProcess.dll')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\AutoRepairPolicy.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\AutoRepairLocalStatus.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\AutoRepairWorker.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\AutoRepairBackground.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\WindowsAutoRepairMachine.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\OperationGate.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\LocalHistory.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\ConnectionQuality.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\SmartNotifications.cs')),
+        ('"{0}"' -f (Join-Path $repo 'src\native\PassiveStartupHealth.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\DiagnosticAnalysis.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\SupportReport.cs')),
         ('"{0}"' -f (Join-Path $repo 'src\native\SupportReportWindow.cs')))
@@ -152,7 +160,7 @@ try {
     $libraryBuild = Start-Process -FilePath $compiler -ArgumentList ($libraryArgs -join ' ') `
         -RedirectStandardOutput $compileOut -RedirectStandardError $compileErr -WindowStyle Hidden -Wait -PassThru
     if ($libraryBuild.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $operationsDll)) {
-        throw 'Operations library compilation failed.'
+        throw ('Operations library compilation failed. ' + [IO.File]::ReadAllText($compileOut))
     }
 
     # Normal and protected delivery must start from the SAME fully featured UI.
@@ -202,6 +210,19 @@ try {
         }
 
         if ($requiresSetup) {
+            $selectedChannel = Get-UpdateChannel
+            if (
+                [string]::IsNullOrWhiteSpace([string]$script:updateManifestChannel) -or
+                $script:updateManifestChannel -notin @('stable','preview') -or
+                $script:updateManifestChannel -cne $selectedChannel
+            ) {
+                $script:updateManifest = $null
+                $script:updateManifestChannel = ''
+                $UpdateNowButton.Visibility = [System.Windows.Visibility]::Collapsed
+                Start-UpdateCheck
+                return
+            }
+
             if (-not (Test-Path -LiteralPath $SetupHostPath)) {
                 $UpdateStatusText.Text = 'Setup component is missing'
                 $UpdateStatusText.Foreground = Get-Brush 'Amber'
@@ -213,7 +234,7 @@ try {
             try {
                 $psi = New-Object System.Diagnostics.ProcessStartInfo
                 $psi.FileName = $SetupHostPath
-                $psi.Arguments = '--upgrade'
+                $psi.Arguments = '--upgrade --channel "' + $selectedChannel + '" --target-code ' + [string][int64]$script:updateManifest.versionCode
                 $psi.UseShellExecute = $true
                 $setupProcess = [System.Diagnostics.Process]::Start($psi)
 
@@ -309,7 +330,8 @@ try {
     foreach ($required in @(
         '$SetupHostPath',
         '$requiresSetup = $false',
-        "$psi.Arguments = '--upgrade'",
+        '--channel "',
+        '--target-code ',
         "$psi.Arguments = '--repair'"
     )) {
         if ($ui -notmatch [regex]::Escape($required)) {
@@ -348,11 +370,52 @@ try {
     & (Join-Path $PSScriptRoot 'add-diagnostics-polish.ps1') -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-progress-reset.ps1') -Path $uiPath
     & (Join-Path $PSScriptRoot 'add-support-export.ps1') -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-auto-repair-worker.ps1') -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-passive-startup-health.ps1') -Path $uiPath
+    & (Join-Path $PSScriptRoot 'add-protected-update-handoff.ps1') -Path $uiPath
     Copy-Item -LiteralPath (Join-Path $repo 'src\app\Advanced-Diagnostics.ps1') -Destination (Join-Path $appDir 'Advanced-Diagnostics.ps1') -Force
 
     $version = Get-Content -LiteralPath $versionPath -Raw | ConvertFrom-Json
+    $publish = Get-Content -LiteralPath (Join-Path $repo 'release\publish.json') -Raw | ConvertFrom-Json
+    if ([string]$publish.version -cne [string]$version.version -or [int64]$publish.versionCode -ne [int64]$version.versionCode) {
+        throw 'Protected update metadata does not match version.json.'
+    }
 
+    $deliveryChannel = [string]$publish.channel
+    if ($deliveryChannel -notin @('stable','preview')) {
+        throw 'publish.channel must be stable or preview.'
+    }
+
+    $protectedHandoff = $false
+    if ($publish.PSObject.Properties.Name -contains 'protectedHandoff') {
+        if ($publish.protectedHandoff -isnot [bool]) {
+            throw 'protectedHandoff must be a boolean.'
+        }
+        $protectedHandoff = [bool]$publish.protectedHandoff
+    }
+    $requiresSetup = [bool]$publish.requiresSetup
+    if ($protectedHandoff -and $requiresSetup) {
+        throw 'protectedHandoff and requiresSetup cannot both be enabled for the same release.'
+    }
+
+    $protectedMarkerPath = Join-Path $appDir 'protected-update.json'
+    if (Test-Path -LiteralPath $protectedMarkerPath) {
+        Remove-Item -LiteralPath $protectedMarkerPath -Force
+    }
+
+    # The handoff marker is transient. Generate the permanent app integrity
+    # manifest first, then add the marker so the outer package manifest protects
+    # its exact bytes without requiring it to remain after Setup completes.
     & (Join-Path $PSScriptRoot 'write-integrity-manifest.ps1') -AppDirectory $appDir -VersionPath $versionPath -Profile 'update'
+
+    if ($requiresSetup -or $protectedHandoff) {
+        [ordered]@{
+            schema = 2
+            versionCode = [int64]$version.versionCode
+            channel = $deliveryChannel
+        } | ConvertTo-Json -Compress |
+            Set-Content -LiteralPath $protectedMarkerPath -Encoding UTF8
+    }
 
     $entries = @(
         Get-ChildItem -LiteralPath $root -File -Recurse |

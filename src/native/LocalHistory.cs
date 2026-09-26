@@ -30,11 +30,19 @@ namespace Tqr
         private static readonly HashSet<string> Codes = new HashSet<string>(StringComparer.Ordinal) {
             "check_healthy", "check_attention", "repair_completed", "route_direct", "route_relay",
             "latency_up", "latency_down", "update_installed", "update_failed", "integrity_ok",
-            "integrity_attention", "target_changed", "environment_changed", "recovery_observed"
+            "integrity_attention", "target_changed", "environment_changed", "recovery_observed", "auto_attempt", "auto_client_opened",
+            "auto_service_started", "auto_service_stopped", "auto_recovered", "auto_unconfirmed", "auto_interrupted"
         };
         private static string Root(string directory)
         {
             string root = Path.GetFullPath(directory);
+            if (!Path.IsPathRooted(directory) || root.StartsWith(@"\\",StringComparison.Ordinal) || root.IndexOf(':',2)>=0)
+                throw new IOException("Local history path required.");
+            for (string p=root; !String.IsNullOrEmpty(p); p=Path.GetDirectoryName(p))
+            {
+                try { if((File.GetAttributes(p) & FileAttributes.ReparsePoint)!=0) throw new IOException("History ancestor is a reparse point."); }
+                catch(FileNotFoundException) { } catch(DirectoryNotFoundException) { }
+            }
             Directory.CreateDirectory(root);
             foreach (string path in new [] { root, Path.Combine(root,"health-history.json"),
                 Path.Combine(root,"health-history.previous.json"), Path.Combine(root,"health-history.gate") })
@@ -58,12 +66,21 @@ namespace Tqr
         private static List<HistoryEntry> Load(string root)
         {
             string path = Path.Combine(root,"health-history.json");
-            if (!File.Exists(path)) return new List<HistoryEntry>();
+            try { return LoadFile(path); }
+            catch(FileNotFoundException)
+            {
+                string previous=Path.Combine(root,"health-history.previous.json");
+                if(File.Exists(previous) || Directory.Exists(previous)) throw new InvalidDataException("Primary history missing.");
+                return new List<HistoryEntry>();
+            }
+        }
+        private static List<HistoryEntry> LoadFile(string path)
+        {
             long size = new FileInfo(path).Length;
             if (size < 2 || size > ByteLimit) throw new InvalidDataException("History size is invalid.");
             Dictionary<string,object> doc = Json().Deserialize<Dictionary<string,object>>(File.ReadAllText(path,Utf8));
             if (doc == null || doc.Count != 2 || !doc.ContainsKey("schema") ||
-                Convert.ToInt32(doc["schema"]) != 1 || !doc.ContainsKey("entries"))
+                !(doc["schema"] is int) || (int)doc["schema"] != 1 || !doc.ContainsKey("entries"))
                 throw new InvalidDataException("History schema is invalid.");
             object[] array = doc["entries"] as object[];
             if (array == null) {
@@ -79,6 +96,8 @@ namespace Tqr
                 if (fields == null || fields.Count != 5 || !fields.ContainsKey("id") || !fields.ContainsKey("utc") ||
                     !fields.ContainsKey("code") || !fields.ContainsKey("before") || !fields.ContainsKey("after"))
                     throw new InvalidDataException("History fields are invalid.");
+                if (!(fields["id"] is string) || !(fields["utc"] is string) || !(fields["code"] is string) ||
+                    !(fields["before"] is int) || !(fields["after"] is int)) throw new InvalidDataException("History types are invalid.");
                 HistoryEntry entry = new HistoryEntry { id=Convert.ToString(fields["id"]), utc=Convert.ToString(fields["utc"]),
                     code=Convert.ToString(fields["code"]), before=Convert.ToInt32(fields["before"]), after=Convert.ToInt32(fields["after"]) };
                 Guid id; DateTime stamp;
@@ -127,27 +146,86 @@ namespace Tqr
                     entries.Add(new HistoryEntry { id=Guid.NewGuid().ToString("N"), utc=DateTime.UtcNow.ToString("o"),
                         code=code, before=before, after=after });
                     Prune(entries);
-                    Dictionary<string,object> doc=new Dictionary<string,object>();
-                    doc["schema"]=1; doc["entries"]=entries.ToArray();
-                    byte[] data=Utf8.GetBytes(Json().Serialize(doc));
-                    if (data.Length > ByteLimit) return false;
-                    string path=Path.Combine(root,"health-history.json");
-                    string temp=path+"."+Guid.NewGuid().ToString("N")+".tmp";
-                    try {
-                        using (FileStream stream=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {
-                            stream.Write(data,0,data.Length); stream.Flush(true);
-                        }
-                        if (File.Exists(path)) File.Replace(temp,path,Path.Combine(root,"health-history.previous.json"));
-                        else File.Move(temp,path);
-                    } finally { if(File.Exists(temp)) File.Delete(temp); }
+                    Save(root,entries);
                     return true;
                 }
             } catch { return false; } // Secondary history must never break a repair.
+        }
+        private static void Save(string root,List<HistoryEntry> entries)
+        {
+            string predecessor=Path.Combine(root,"health-history.previous.json");
+            try { LoadFile(predecessor); } catch(FileNotFoundException) { }
+            Dictionary<string,object> doc=new Dictionary<string,object>();
+            doc["schema"]=1; doc["entries"]=entries.ToArray();
+            byte[] data=Utf8.GetBytes(Json().Serialize(doc));
+            if (data.Length > ByteLimit) throw new InvalidDataException("History too large.");
+            string path=Path.Combine(root,"health-history.json");
+            string temp=path+"."+Guid.NewGuid().ToString("N")+".tmp";
+            try {
+                using (FileStream stream=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {
+                    stream.Write(data,0,data.Length); stream.Flush(true);
+                }
+                if (File.Exists(path)) File.Replace(temp,path,Path.Combine(root,"health-history.previous.json"));
+                else File.Move(temp,path);
+            } finally { if(File.Exists(temp)) File.Delete(temp); }
+        }
+        // Stable event IDs make replay after a worker exit or an interrupted write
+        // idempotent while keeping the existing five-field history schema.
+        public static bool RecordBatch(string directory,HistoryEntry[] batch)
+        {
+            if(batch==null || batch.Length>6) return false;
+            if(batch.Length==0) return true;
+            try
+            {
+                DateTime now=DateTime.UtcNow;
+                HashSet<string> ids=new HashSet<string>(StringComparer.Ordinal);
+                foreach(HistoryEntry e in batch)
+                {
+                    Guid id; DateTime stamp;
+                    if(e==null || !Guid.TryParseExact(e.id,"N",out id) || !ids.Add(e.id) || !Codes.Contains(e.code) ||
+                        !ValidValue(e.before) || !ValidValue(e.after) ||
+                        !DateTime.TryParseExact(e.utc,"o",CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind,out stamp) ||
+                        stamp.Kind!=DateTimeKind.Utc || stamp>now.AddSeconds(5)) return false;
+                }
+                string root=Root(directory);
+                using(FileStream guard=Gate(root))
+                {
+                    List<HistoryEntry> entries=Load(root);Prune(entries);
+                    bool changed=false;
+                    foreach(HistoryEntry e in batch)
+                    {
+                        DateTime stamp=DateTime.ParseExact(e.utc,"o",CultureInfo.InvariantCulture,DateTimeStyles.RoundtripKind);
+                        if(stamp<now.AddDays(-30)) continue;
+                        HistoryEntry same=entries.Find(delegate(HistoryEntry x){return x.id==e.id;});
+                        if(same!=null)
+                        {
+                            if(same.code!=e.code || same.utc!=e.utc || same.before!=e.before || same.after!=e.after) return false;
+                            continue;
+                        }
+                        // Never resurrect activity already evicted by the 40-event limit.
+                        if(entries.Count>=Limit && StringComparer.Ordinal.Compare(e.utc,entries[0].utc)<0) continue;
+                        int at=entries.FindIndex(delegate(HistoryEntry x){return StringComparer.Ordinal.Compare(x.utc,e.utc)>0;});
+                        HistoryEntry copy=new HistoryEntry { id=e.id,utc=e.utc,code=e.code,before=e.before,after=e.after };
+                        if(at<0) entries.Add(copy);else entries.Insert(at,copy);
+                        Prune(entries);changed=true;
+                    }
+                    if(changed) Save(root,entries);
+                    return true;
+                }
+            }
+            catch { return false; }
         }
         public static string Describe(HistoryEntry entry)
         {
             if (entry == null || !Codes.Contains(entry.code)) return "";
             switch (entry.code) {
+                case "auto_attempt": return "Automatic local recovery attempt reserved";
+                case "auto_client_opened": return "Automatic repair opened the Tailscale client";
+                case "auto_service_started": return "Automatic repair started the Tailscale service";
+                case "auto_service_stopped": return "Automatic repair stopped the Tailscale service";
+                case "auto_recovered": return "Automatic local recovery confirmed";
+                case "auto_unconfirmed": return "Automatic recovery ended without confirmation";
+                case "auto_interrupted": return "Previous automatic recovery has no recorded completion";
                 case "check_healthy": return "Connection check passed";
                 case "check_attention": return "Connection check needs attention";
                 case "repair_completed": return "Repair actions performed";

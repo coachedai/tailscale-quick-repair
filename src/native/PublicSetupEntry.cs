@@ -59,17 +59,11 @@ internal static class PublicSetupEntry
 
             if (HasSwitch(args, "--upgrade"))
             {
-                string peer = ReadConfiguredPeer();
-                bool startup = IsStartupEnabled();
-
-                args = new string[]
-                {
-                    "--peer",
-                    peer,
-                    "--startup",
-                    startup ? "true" : "false"
-                };
-
+                // Preserve the complete verified handoff across Setup's own
+                // self-relocation. PublicSetupHost resolves peer/startup for
+                // upgrade mode; channel, target code and requester SID must
+                // survive unchanged.
+                args = PreserveUpgradeArguments(args);
                 repairOnly = false;
             }
 
@@ -118,6 +112,14 @@ internal static class PublicSetupEntry
             catch { }
             return 34;
         }
+    }
+
+    internal static string[] PreserveUpgradeArguments(string[] args)
+    {
+        if (args == null) return new string[0];
+        string[] copy = new string[args.Length];
+        Array.Copy(args, copy, args.Length);
+        return copy;
     }
 
     private static int InvokeSetupHost(string[] args)

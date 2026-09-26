@@ -167,9 +167,11 @@ Replace-One @'
 Replace-One '$AutoRepairStatusText.Text = "Enabled · repaired · $fresh"' '$AutoRepairStatusText.Text = "Enabled · recovery started · $fresh"'
 Replace-One @'
                         $script:updateManifest = $manifest
+                        $script:updateManifestChannel = $script:updateCheckChannel
                         $UpdateNowButton.Visibility
 '@ @'
                         $script:updateManifest = $manifest
+                        $script:updateManifestChannel = $script:updateCheckChannel
                         if ([int64]$manifest.versionCode -ne $script:notificationUpdateCode) {
                             $script:notificationUpdateCode=[int64]$manifest.versionCode
                             [void](Request-SmartNotification 'update_available')

@@ -44,21 +44,66 @@ function Read-Probe {
     if($remaining -lt 100){$r=New-Object Tqr.DiagnosticCommand;$r.TimedOut=$true;return $r}
     return [Tqr.DiagnosticAnalysis]::Run($Cli,$Type,$Peer,[Math]::Min($LimitMs,$remaining))
 }
-function Detect-OtherVpns {
-    # Presence only: installed services do not prove a VPN is connected or conflicting.
-    $known=[ordered]@{
-        ProtonVPN=@('protonvpn','protonvpnservice');NordVPN=@('nordvpn','nordvpn-service')
-        WireGuard=@('wireguard');OpenVPN=@('openvpn','openvpnservice');Mullvad=@('mullvad','mullvad-daemon')
-    }
-    $found=@()
-    foreach($label in $known.Keys){
-        foreach($name in $known[$label]){
-            if((Get-Process -Name $name -ErrorAction SilentlyContinue) -or (Get-Service -Name $name -ErrorAction SilentlyContinue)){
-                $found+=$label;break
+function Match-VpnSoftware {
+    param([string[]]$Names)
+    # Fixed labels only. Raw process/service names never leave this function.
+    # Detection is best-effort context for Diagnostics and is never a health or repair input.
+    $rules=@(
+        [pscustomobject]@{label='Proton VPN';patterns=@('^protonvpn(?:service|\.wireguardservice)?$','^proton vpn(?: service)?$')}
+        [pscustomobject]@{label='NordVPN';patterns=@('^nordvpn(?:-service|service)?$','^nordvpn(?: service)?$')}
+        [pscustomobject]@{label='Mullvad';patterns=@('^mullvad(?:-daemon|daemon)?$','^mullvad vpn(?: service)?$')}
+        [pscustomobject]@{label='ExpressVPN';patterns=@('^expressvpn(?:service|systemservice)?$','^expressvpn(?: service)?$')}
+        [pscustomobject]@{label='Surfshark';patterns=@('^surfshark(?:service| service)?$')}
+        [pscustomobject]@{label='Private Internet Access';patterns=@('^(?:pia-client|pia-service|private internet access(?: service)?)$')}
+        [pscustomobject]@{label='Windscribe';patterns=@('^windscribe(?:service| service)?$')}
+        [pscustomobject]@{label='IVPN';patterns=@('^ivpn(?:service|-service| client| service)?$')}
+        [pscustomobject]@{label='TunnelBear';patterns=@('^tunnelbear.*$')}
+        [pscustomobject]@{label='CyberGhost';patterns=@('^cyberghost.*$')}
+        [pscustomobject]@{label='OpenVPN';patterns=@('^openvpn(?:service.*|serv.*| connect)?$')}
+        [pscustomobject]@{label='WireGuard';patterns=@('^wireguard(?:manager|service.*| manager)?$')}
+        [pscustomobject]@{label='Cisco Secure Client';patterns=@('^(?:vpnagent|csc_vpnagent|cisco secure client(?: vpn)?)$')}
+        [pscustomobject]@{label='GlobalProtect';patterns=@('^(?:pangps|pangpa|globalprotect|globalprotect service)$')}
+        [pscustomobject]@{label='FortiClient VPN';patterns=@('^forti(?:client|vpn).*$')}
+        [pscustomobject]@{label='Ivanti Secure Access';patterns=@('^(?:pulsesvc|pulseui|ivanti secure access.*)$')}
+    )
+    $found=New-Object 'Collections.Generic.List[string]'
+    $seen=New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach($raw in @($Names)){
+        if([string]::IsNullOrWhiteSpace([string]$raw)){continue}
+        $name=([string]$raw).Trim()
+        $matched=$false
+        foreach($rule in $rules){
+            foreach($pattern in @($rule.patterns)){
+                if($name -match $pattern){
+                    if($seen.Add([string]$rule.label)){$found.Add([string]$rule.label)}
+                    $matched=$true
+                    break
+                }
             }
+            if($matched){break}
+        }
+        if(-not $matched -and $name -match '(?i)vpn|wireguard|openvpn'){
+            if($seen.Add('Other VPN software')){$found.Add('Other VPN software')}
         }
     }
-    return $found
+    return @($found.ToArray())
+}
+function Detect-OtherVpns {
+    # Presence only: installed/running software does not prove a VPN is connected or conflicting.
+    # Inventory is read-only and raw process/service names are not persisted.
+    $names=New-Object 'Collections.Generic.List[string]'
+    foreach($process in @(Get-Process -ErrorAction SilentlyContinue)){
+        try {$names.Add([string]$process.ProcessName)} catch {}
+        finally {try{$process.Dispose()}catch{}}
+    }
+    foreach($service in @(Get-Service -ErrorAction SilentlyContinue)){
+        try {
+            $names.Add([string]$service.Name)
+            $names.Add([string]$service.DisplayName)
+        } catch {}
+        finally {try{$service.Dispose()}catch{}}
+    }
+    return @(Match-VpnSoftware -Names @($names.ToArray()))
 }
 try {
     Publish 'Finding Tailscale' 5
