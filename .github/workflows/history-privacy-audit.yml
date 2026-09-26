@@ -1,0 +1,54 @@
+name: Repository history privacy audit
+
+on:
+  push:
+    branches: [work/6.1-auto-repair-safety]
+    paths:
+      - release/audit-git-history.py
+      - .github/workflows/history-privacy-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  history-privacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Require isolated public Tailscale repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "coachedai/tailscale-quick-repair"
+          test "$GITHUB_REF_NAME" = "work/6.1-auto-repair-safety"
+          origin="$(git remote get-url origin)"
+          case "$origin" in
+            https://github.com/coachedai/tailscale-quick-repair|https://github.com/coachedai/tailscale-quick-repair.git) ;;
+            *) echo "Unexpected origin" >&2; exit 2 ;;
+          esac
+
+      - name: Fetch all Tailscale branches and tags read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --prune --no-recurse-submodules origin \
+            '+refs/heads/*:refs/remotes/origin/*' \
+            '+refs/tags/*:refs/tags/*'
+
+      - name: Scan all reachable Git history without printing matched content
+        shell: bash
+        run: python3 release/audit-git-history.py --result history-privacy-results.json
+
+      - name: Preserve privacy-safe audit result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-privacy-results
+          path: history-privacy-results.json
+          if-no-files-found: error
