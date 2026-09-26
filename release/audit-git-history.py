@@ -10,7 +10,7 @@ import sys
 TEXT_EXTENSIONS = {
     ".ps1",".psm1",".psd1",".cs",".vbs",".py",".json",".yml",".yaml",
     ".md",".txt",".xml",".config",".ini",".cfg",".conf",".toml",
-    ".properties",".csv",".gitignore",".gitattributes"
+    ".properties",".csv",".patch",".diff",".gitignore",".gitattributes"
 }
 TEXT_LEAFS = {".gitignore",".gitattributes"}
 FORBIDDEN_EVIDENCE_EXTENSIONS = {
@@ -194,7 +194,10 @@ def main():
         sha, author_name, author_email, committer_name, committer_email, message = parts
         counts["commits"] += 1
         for email in (author_email,committer_email):
-            if email and not re.search(r"@users\.noreply\.github\.com$",email,re.I):
+            if email and not (
+                re.search(r"@users\.noreply\.github\.com$",email,re.I) or
+                email.lower() == "noreply@github.com"
+            ):
                 add("commit",sha,"non_noreply_commit_email")
         scan_text(message, add, sha, "commit")
 
