@@ -201,7 +201,10 @@ foreach ($relative in $tracked) {
     foreach ($match in [regex]::Matches($content, $emailPattern)) {
         $email = $match.Value
 
-        if ($email -notmatch '(?i)@users\.noreply\.github\.com$') {
+        if (
+            $email -notmatch '(?i)@users\.noreply\.github\.com$' -and
+            $email -cne 'noreply@github.com'
+        ) {
             Add-Finding $findings $relativeNormalized "Email address detected: $email"
         }
     }
